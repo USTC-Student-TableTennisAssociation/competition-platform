@@ -1,0 +1,434 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
+}
+
+enum UserRole {
+  user
+  admin
+}
+
+enum MatchType {
+  single
+  double
+  team
+}
+
+enum MatchStatus {
+  registration
+  ongoing
+  finished
+}
+
+enum CompetitionFormat {
+  group_only
+  group_then_knockout
+}
+
+enum RegistrationRole {
+  player
+  captain
+  substitute
+}
+
+enum RegistrationStatus {
+  registered
+  cancelled
+  confirmed
+}
+
+enum PointsTransactionType {
+  earn
+  spend
+  adjustment
+  refund
+}
+
+enum RewardType {
+  physical
+  digital
+  coupon
+}
+
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  nickname        String
+  bio             String?
+  avatarUrl       String?
+  points          Int       @default(0)
+  eloRating       Int       @default(1200)
+  isBanned        Boolean   @default(false)
+  role            UserRole  @default(user)
+  wins            Int       @default(0)
+  losses          Int       @default(0)
+  matchesPlayed   Int       @default(0)
+  authProviderId  String?   @unique
+  hashedPassword  String?
+  emailVerifiedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  createdMatches  Match[]             @relation("MatchCreator")
+  registrations   Registration[]
+  wonResults      MatchResult[]       @relation("ResultWinner")
+  lostResults     MatchResult[]       @relation("ResultLoser")
+  reportedResults MatchResult[]       @relation("ResultReporter")
+  verifiedResults MatchResult[]       @relation("ResultVerifier")
+  eloHistory      EloHistory[]
+  pointsLedger    PointsTransaction[]
+  redemptions     RewardRedemption[]
+  awardedBadges   UserBadge[]
+  reviewsGiven    Review[]            @relation("Reviewer")
+  reviewsReceived Review[]            @relation("Reviewee")
+  auditLogs       AuditLog[]
+
+  verificationTokens EmailVerificationToken[]
+
+  adminTrustedDevices AdminTrustedDevice[]
+  identity            UserIdentity?
+  certificates        ParticipationCertificate[]
+  doublesTeamsCreated MatchDoublesTeam[]    @relation("DoublesTeamCreator")
+  doublesTeamMembers  MatchDoublesTeamMember[]
+  doublesInvitesSent  MatchDoublesInvite[]  @relation("DoublesInviteInviter")
+  doublesInvitesReceived MatchDoublesInvite[] @relation("DoublesInviteInvitee")
+}
+
+model AdminTrustedDevice {
+  id         String    @id @default(cuid())
+  userId     String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model SiteSetting {
+  id        Int      @id @default(1)
+  isClosed  Boolean  @default(false)
+  updatedAt DateTime @updatedAt
+}
+
+model Match {
+  id                   String            @id @default(cuid())
+  title                String
+  description          String?
+  dateTime             DateTime
+  location             String?
+  isQuickMatch         Boolean           @default(false)
+  type                 MatchType
+  status               MatchStatus       @default(registration)
+  maxParticipants      Int
+  createdBy            String
+  rule                 Json?
+  format               CompetitionFormat @default(group_only)
+  registrationDeadline DateTime
+  groupingGeneratedAt  DateTime?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+
+  creator        User                       @relation("MatchCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+  registrations  Registration[]
+  results        MatchResult[]
+  eloHistory     EloHistory[]
+  reviews        Review[]
+  groupingResult MatchGrouping?
+  certificates   ParticipationCertificate[]
+  doublesTeams   MatchDoublesTeam[]
+  doublesTeamMembers MatchDoublesTeamMember[]
+  doublesInvites MatchDoublesInvite[]
+
+  @@index([isQuickMatch])
+}
+
+model MatchDoublesTeam {
+  id          String    @id @default(cuid())
+  matchId     String    @map("match_id")
+  createdById String    @map("created_by_id")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  registeredAt DateTime? @map("registered_at")
+
+  match   Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  creator User  @relation("DoublesTeamCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  members MatchDoublesTeamMember[]
+
+  @@index([matchId, createdAt])
+  @@map("match_doubles_team")
+}
+
+model MatchDoublesTeamMember {
+  id      String @id @default(cuid())
+  teamId  String @map("team_id")
+  matchId String @map("match_id")
+  userId  String @map("user_id")
+  slot    Int
+
+  team  MatchDoublesTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  match Match            @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  user  User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, slot])
+  @@unique([teamId, userId])
+  @@index([matchId, userId])
+  @@map("match_doubles_team_member")
+}
+
+model MatchDoublesInvite {
+  id        String   @id @default(cuid())
+  matchId   String   @map("match_id")
+  inviterId String   @map("inviter_id")
+  inviteeId String   @map("invitee_id")
+  status    String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @map("updated_at")
+
+  match   Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  inviter User  @relation("DoublesInviteInviter", fields: [inviterId], references: [id], onDelete: Cascade)
+  invitee User  @relation("DoublesInviteInvitee", fields: [inviteeId], references: [id], onDelete: Cascade)
+
+  @@index([matchId, status])
+  @@index([inviteeId, status])
+  @@index([inviterId, status])
+  @@map("match_doubles_invite")
+}
+
+model UserIdentity {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  nameHash      String
+  studentIdHash String
+  createdAt     DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ParticipationCertificate {
+  id            String   @id @default(cuid())
+  matchId       String
+  userId        String
+  certificateNo String   @unique
+  createdAt     DateTime @default(now())
+
+  match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([matchId, userId])
+  @@index([userId, createdAt])
+}
+
+model Registration {
+  id        String             @id @default(cuid())
+  matchId   String
+  userId    String
+  role      RegistrationRole   @default(player)
+  status    RegistrationStatus @default(registered)
+  createdAt DateTime           @default(now())
+
+  match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([matchId, userId])
+  @@index([userId])
+}
+
+model MatchResult {
+  id               String    @id @default(cuid())
+  matchId          String
+  winnerId         String?
+  loserId          String?
+  winnerTeamIds    String[]  @default([])
+  loserTeamIds     String[]  @default([])
+  score            Json
+  reportedBy       String
+  confirmed        Boolean   @default(false)
+  resultVerifiedAt DateTime?
+  verifierId       String?
+  createdAt        DateTime  @default(now())
+
+  match      Match        @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  winner     User?        @relation("ResultWinner", fields: [winnerId], references: [id], onDelete: SetNull)
+  loser      User?        @relation("ResultLoser", fields: [loserId], references: [id], onDelete: SetNull)
+  reporter   User         @relation("ResultReporter", fields: [reportedBy], references: [id], onDelete: Cascade)
+  verifier   User?        @relation("ResultVerifier", fields: [verifierId], references: [id], onDelete: SetNull)
+  eloHistory EloHistory[]
+
+  @@index([winnerId])
+  @@index([loserId])
+  @@index([matchId, createdAt])
+}
+
+model EloHistory {
+  id            String   @id @default(cuid())
+  userId        String
+  matchId       String?
+  matchResultId String?
+  eloBefore     Int
+  eloAfter      Int
+  delta         Int
+  createdAt     DateTime @default(now())
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  match       Match?       @relation(fields: [matchId], references: [id], onDelete: SetNull)
+  matchResult MatchResult? @relation(fields: [matchResultId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+}
+
+model PointsTransaction {
+  id           String                @id @default(cuid())
+  userId       String
+  amount       Int
+  balanceAfter Int
+  type         PointsTransactionType
+  reason       String
+  referenceId  String?
+  createdAt    DateTime              @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([referenceId])
+}
+
+model Reward {
+  id          String     @id @default(cuid())
+  title       String
+  description String?
+  pointsCost  Int
+  stock       Int?
+  type        RewardType
+  metadata    Json?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  redemptions RewardRedemption[]
+}
+
+model RewardRedemption {
+  id          String   @id @default(cuid())
+  rewardId    String
+  userId      String
+  pointsSpent Int
+  status      String   @default("created")
+  createdAt   DateTime @default(now())
+
+  reward Reward @relation(fields: [rewardId], references: [id])
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([rewardId])
+  @@index([userId, createdAt])
+}
+
+model Badge {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  iconUrl     String?
+  createdAt   DateTime @default(now())
+
+  userBadges UserBadge[]
+}
+
+model UserBadge {
+  id        String   @id @default(cuid())
+  userId    String
+  badgeId   String
+  awardedAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badge Badge @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, badgeId])
+  @@index([badgeId])
+}
+
+model Review {
+  id         String   @id @default(cuid())
+  reviewerId String
+  revieweeId String
+  matchId    String
+  scores     Json
+  comment    String?
+  createdAt  DateTime @default(now())
+
+  reviewer User  @relation("Reviewer", fields: [reviewerId], references: [id], onDelete: Cascade)
+  reviewee User  @relation("Reviewee", fields: [revieweeId], references: [id], onDelete: Cascade)
+  match    Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewerId, revieweeId, matchId])
+  @@index([revieweeId, createdAt])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String
+  ip         String?
+  userAgent  String?
+  details    Json?
+  createdAt  DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+model LeaderboardCache {
+  id            String   @id @default(cuid())
+  scope         String
+  rank          Int
+  userId        String
+  points        Int
+  eloRating     Int
+  wins          Int
+  losses        Int
+  matchesPlayed Int
+  snapshotAt    DateTime
+
+  @@unique([scope, rank, snapshotAt])
+  @@index([userId, snapshotAt])
+}
+
+model MatchGrouping {
+  id        String   @id @default(cuid())
+  matchId   String   @unique
+  payload   Json
+  createdAt DateTime @default(now())
+
+  match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+}
+
+model RankingSnapshot {
+  id        String   @id @default(cuid())
+  scope     String
+  payload   Json
+  createdAt DateTime @default(now())
+
+  @@index([scope, createdAt])
+}
+
+model EmailVerificationToken {
+  id         String    @id @default(cuid())
+  userId     String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
