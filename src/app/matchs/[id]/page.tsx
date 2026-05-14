@@ -1,4 +1,4 @@
-import { Calendar, MapPin, Users } from "lucide-react";
+import { Calendar, MapPin, Pencil, Users } from "lucide-react";
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
@@ -30,6 +30,7 @@ import {
   resolveFilledKnockoutRounds,
 } from "@/lib/match-detail";
 import {
+  buildAdminConfirmedResults,
   buildAdminPendingResults,
   buildInitialAdminFormContext,
   extractPageParam,
@@ -255,6 +256,10 @@ export default async function MatchDetailPage({
     results: match.results,
     registrations: match.registrations,
   });
+  const adminConfirmedResults = buildAdminConfirmedResults({
+    results: match.results,
+    registrations: match.registrations,
+  });
 
   const {
     initialAdminPhase,
@@ -303,47 +308,58 @@ export default async function MatchDetailPage({
   const statusLabel =
     statusLabelMap[match.status as keyof typeof statusLabelMap] ?? "状态未知";
 
+  const statusTone = {
+    registration: "bg-emerald-400/12 text-emerald-100 ring-emerald-300/16",
+    ongoing: "bg-sky-400/12 text-sky-100 ring-sky-300/16",
+    finished: "bg-slate-500/12 text-slate-300 ring-slate-300/12",
+  } as const;
+
   return (
     <div className="mx-auto max-w-5xl space-y-5 sm:space-y-8">
       <BackLinkButton fallbackHref="/matchs" />
 
-      <div className="rounded-2xl border border-slate-700 bg-slate-900/80 p-4 sm:p-6 md:p-8">
-        <div className="mb-4 flex items-start justify-between gap-3 sm:mb-6 sm:gap-4">
+      <div className="surface-panel relative overflow-hidden rounded-3xl p-4 sm:p-6 md:p-8">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_88%_6%,rgba(45,212,191,0.1),transparent_36%)]" />
+        <div className="relative mb-5 flex items-start justify-between gap-3 sm:mb-6 sm:gap-4">
           <div>
-            <span className="rounded-full bg-cyan-500/20 px-2.5 py-1 text-xs font-medium text-cyan-100 sm:px-3 sm:text-sm">
+            <span
+              className={`status-pill ring-1 ${statusTone[match.status as keyof typeof statusTone]}`}
+            >
               {statusLabel}
             </span>
-            <h1 className="mt-2 text-2xl font-bold text-white sm:mt-3 sm:text-3xl">
+            <h1 className="mt-3 text-2xl font-black tracking-tight text-white sm:text-4xl">
               {match.title}
             </h1>
-            <p className="mt-2 text-sm text-slate-300 sm:text-base">
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-400 sm:text-base">
               {match.description || "暂无描述"}
             </p>
-            <p className="mt-2 text-xs text-slate-400 sm:text-sm">
-              赛制：
-              {match.format === "group_only"
-                ? "分组比赛"
-                : "前期分组后期淘汰赛"}
-            </p>
-            <p className="text-xs text-slate-400 sm:text-sm">
-              报名截止：{match.registrationDeadline.toLocaleString("zh-CN")}
-            </p>
+            <div className="mt-4 flex flex-wrap gap-2 text-xs text-slate-300">
+              <span className="rounded-full bg-white/[0.045] px-3 py-1 ring-1 ring-white/8">
+                {match.format === "group_only"
+                  ? "分组比赛"
+                  : "前期分组后期淘汰赛"}
+              </span>
+              <span className="rounded-full bg-white/[0.045] px-3 py-1 ring-1 ring-white/8">
+                报名截止：{match.registrationDeadline.toLocaleString("zh-CN")}
+              </span>
+            </div>
             {(isCreator || isAdmin) &&
               now < match.registrationDeadline &&
               !adminViewBlocked && (
                 <Link
                   href={`/matchs/${match.id}/edit`}
-                  className="mt-3 inline-block rounded-lg border border-cyan-400/40 px-3 py-1.5 text-xs text-cyan-100 hover:bg-cyan-500/10"
+                  className="btn-secondary mt-4 inline-flex items-center gap-1.5 rounded-2xl px-3 py-1.5 text-xs font-bold"
                 >
+                  <Pencil className="h-3.5 w-3.5" />
                   修改比赛
                 </Link>
               )}
           </div>
         </div>
 
-        <div className="grid gap-3 text-slate-200 sm:grid-cols-2 lg:grid-cols-3 sm:gap-4">
-          <div className="flex items-center gap-2">
-            <Calendar className="h-5 w-5 text-cyan-300" />
+        <div className="relative grid gap-3 text-slate-200 sm:grid-cols-2 lg:grid-cols-3 sm:gap-4">
+          <div className="rounded-2xl bg-slate-950/34 p-3 ring-1 ring-white/8 flex items-center gap-3">
+            <Calendar className="h-5 w-5 text-teal-200" />
             <div>
               <p className="text-xs text-slate-400">时间</p>
               <p className="text-sm sm:text-base">
@@ -351,15 +367,15 @@ export default async function MatchDetailPage({
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <MapPin className="h-5 w-5 text-cyan-300" />
+          <div className="rounded-2xl bg-slate-950/34 p-3 ring-1 ring-white/8 flex items-center gap-3">
+            <MapPin className="h-5 w-5 text-teal-200" />
             <div>
               <p className="text-xs text-slate-400">地点</p>
               <p className="text-sm sm:text-base">{match.location ?? "待定"}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Users className="h-5 w-5 text-cyan-300" />
+          <div className="rounded-2xl bg-slate-950/34 p-3 ring-1 ring-white/8 flex items-center gap-3">
+            <Users className="h-5 w-5 text-teal-200" />
             <div>
               <p className="text-xs text-slate-400">
                 {isDoubleMatch ? "参赛小队" : "参赛人数"}
@@ -373,7 +389,7 @@ export default async function MatchDetailPage({
           </div>
         </div>
 
-        <div className="mt-5 sm:mt-8">
+        <div className="relative mt-5 sm:mt-8">
           {!currentUser ? (
             <p className="text-sm text-slate-300">请先登录后报名。</p>
           ) : isCreator && !alreadyRegistered ? (
@@ -616,6 +632,7 @@ export default async function MatchDetailPage({
           initialAdminWinnerId={initialAdminWinnerId}
           initialAdminLoserId={initialAdminLoserId}
           adminPendingResults={adminPendingResults}
+          adminConfirmedResults={adminConfirmedResults}
           filledKnockoutRounds={filledKnockoutRounds}
         />
       )}

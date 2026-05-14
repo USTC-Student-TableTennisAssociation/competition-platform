@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
 import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
@@ -9,8 +8,6 @@ import { getCurrentUser } from "@/lib/auth";
 import { cookies } from "next/headers";
 
 const ADMIN_MODE_COOKIE = "ustc_tta_admin_mode";
-
-const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "USTC TTA",
@@ -44,13 +41,11 @@ export default async function RootLayout({
 
   return (
     <html lang="zh-CN" className="overflow-x-hidden">
-      <body
-        className={`${inter.className} min-h-screen overflow-x-hidden bg-slate-950 text-slate-100`}
-      >
+      <body className="min-h-screen overflow-x-hidden bg-slate-950 text-slate-100">
         <CsrfFormInjector />
         <div className="min-h-screen min-w-0">
           <Sidebar />
-          <div className="flex min-h-screen min-w-0 flex-col md:pl-72">
+          <div className="flex min-h-screen min-w-0 flex-col md:pl-64 xl:pl-72">
             <Header
               isLoggedIn={Boolean(currentUser)}
               adminViewEnabled={adminViewEnabled}
@@ -66,7 +61,7 @@ export default async function RootLayout({
                   : null
               }
             />
-            <main className="mx-auto w-full max-w-7xl min-w-0 flex-1 px-3 py-4 sm:px-4 sm:py-6 md:px-6 md:py-8 lg:px-8">
+            <main className="mx-auto w-full max-w-[1440px] min-w-0 flex-1 px-3 py-4 sm:px-5 sm:py-6 md:px-7 md:py-8 xl:px-10">
               {children}
             </main>
             <Footer />

@@ -603,9 +603,111 @@ async function refundRegistrationRewardPoints(
   }
 }
 
+function getPossibleKValues(eloRating: number) {
+  const baseCandidates = [40, 28, 20]
+  const adjust = eloRating >= 2200 ? -8 : eloRating >= 2000 ? -4 : 0
+  return Array.from(new Set(baseCandidates.map((base) => Math.max(12, Math.min(48, base + adjust)))))
+}
+
+function inferKFromDelta(params: {
+  eloRating: number
+  expected: number
+  oldDelta: number
+  wasWinner: boolean
+}) {
+  const { eloRating, expected, oldDelta, wasWinner } = params
+  const ks = getPossibleKValues(eloRating)
+  const target = wasWinner ? 1 - expected : 0 - expected
+  const matched = ks.filter((k) => Math.round(k * target) === oldDelta)
+  if (matched.length > 0) {
+    return matched[0]
+  }
+  return null
+}
+
+async function revokeMatchRewardPointsForEvent(
+  tx: Prisma.TransactionClient,
+  params: {
+    userId: string
+    matchId: string
+    eventKey: string
+    reason: string
+  },
+) {
+  const { userId, matchId, eventKey, reason } = params
+  const referenceId = `${MATCH_POINTS_REFERENCE_PREFIX}${matchId}:${eventKey}`
+  const matchReferencePrefix = `${MATCH_POINTS_REFERENCE_PREFIX}${matchId}:`
+
+  const [eventSummary, matchSummary, user] = await Promise.all([
+    tx.pointsTransaction.aggregate({
+      where: {
+        userId,
+        referenceId,
+      },
+      _sum: { amount: true },
+    }),
+    tx.pointsTransaction.aggregate({
+      where: {
+        userId,
+        referenceId: {
+          startsWith: matchReferencePrefix,
+        },
+      },
+      _sum: { amount: true },
+    }),
+    tx.user.findUnique({ where: { id: userId }, select: { points: true } }),
+  ])
+
+  const eventAwarded = eventSummary._sum.amount ?? 0
+  const netMatchAwarded = matchSummary._sum.amount ?? 0
+
+  if (!user || eventAwarded <= 0) {
+    return {
+      deducted: 0,
+      totalAwarded: netMatchAwarded,
+    }
+  }
+
+  const deduction = Math.min(eventAwarded, user.points)
+  if (deduction <= 0) {
+    return {
+      deducted: 0,
+      totalAwarded: netMatchAwarded,
+    }
+  }
+
+  const balanceAfter = user.points - deduction
+
+  await tx.user.update({
+    where: { id: userId },
+    data: {
+      points: {
+        decrement: deduction,
+      },
+    },
+  })
+
+  await tx.pointsTransaction.create({
+    data: {
+      userId,
+      amount: -deduction,
+      balanceAfter,
+      type: 'refund',
+      reason,
+      referenceId: `${referenceId}:revoke:${Date.now()}`,
+    },
+  })
+
+  return {
+    deducted: deduction,
+    totalAwarded: netMatchAwarded - deduction,
+  }
+}
+
 
 async function applyConfirmedResult(tx: Prisma.TransactionClient, payload: {
   matchId: string
+  matchResultId?: string
   winnerTeamIds: string[]
   loserTeamIds: string[]
 }) {
@@ -645,6 +747,7 @@ async function applyConfirmedResult(tx: Prisma.TransactionClient, payload: {
       data: {
         userId: delta.userId,
         matchId: payload.matchId,
+        matchResultId: payload.matchResultId,
         eloBefore: delta.before,
         eloAfter: delta.after,
         delta: delta.delta,
@@ -1352,6 +1455,7 @@ export async function confirmMatchResultAction(matchId: string, resultId: string
 
       await applyConfirmedResult(tx, {
         matchId,
+        matchResultId: latest.id,
         winnerTeamIds: latest.winnerTeamIds,
         loserTeamIds: latest.loserTeamIds,
       })
@@ -1474,6 +1578,280 @@ export async function confirmMatchResultAction(matchId: string, resultId: string
 
 export async function confirmMatchResultVoidAction(matchId: string, resultId: string, formData: FormData): Promise<void> {
   await confirmMatchResultAction(matchId, resultId, formData)
+}
+
+function expectedScoreByRating(selfRating: number, oppRating: number) {
+  return 1 / (1 + 10 ** ((oppRating - selfRating) / 400))
+}
+
+export async function swapConfirmedMatchResultWinnerLoserAction(
+  matchId: string,
+  resultId: string,
+  formData: FormData,
+): Promise<MatchFormState> {
+  const csrfError = await validateCsrfToken(formData)
+  if (csrfError) return { error: csrfError }
+
+  const currentUser = await getCurrentUser()
+  if (!currentUser) return { error: '请先登录。' }
+
+  const auditContext = await getAuditContext()
+
+  const result = await prisma.matchResult.findUnique({
+    where: { id: resultId },
+    include: { match: true },
+  })
+
+  if (!result || result.matchId !== matchId) return { error: '赛果不存在。' }
+  if (!result.confirmed) return { error: '仅支持纠错已确认赛果。' }
+
+  const isManager = result.match.createdBy === currentUser.id || currentUser.role === 'admin'
+  if (!isManager) return { error: '仅发起人或管理员可执行纠错。' }
+
+  if (result.winnerTeamIds.length === 0 || result.loserTeamIds.length === 0) {
+    return { error: '当前赛果缺少胜负方成员，无法自动纠错。' }
+  }
+
+  const participantIdSet = new Set([...result.winnerTeamIds, ...result.loserTeamIds])
+  if (participantIdSet.size !== result.winnerTeamIds.length + result.loserTeamIds.length) {
+    return { error: '当前赛果成员异常，无法自动纠错。' }
+  }
+
+  const participantIds = Array.from(participantIdSet)
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      const latest = await tx.matchResult.findUnique({
+        where: { id: resultId },
+      })
+
+      if (!latest || latest.matchId !== matchId) {
+        throw new Error('赛果不存在。')
+      }
+      if (!latest.confirmed) {
+        throw new Error('仅支持纠错已确认赛果。')
+      }
+
+      const oldWinnerTeamIds = [...latest.winnerTeamIds]
+      const oldLoserTeamIds = [...latest.loserTeamIds]
+      const newWinnerTeamIds = [...oldLoserTeamIds]
+      const newLoserTeamIds = [...oldWinnerTeamIds]
+
+      const users = await tx.user.findMany({
+        where: { id: { in: participantIds } },
+        select: { id: true, eloRating: true, wins: true, losses: true },
+      })
+
+      if (users.length !== participantIds.length) {
+        throw new Error('存在无效选手，无法自动纠错。')
+      }
+
+      const userMap = new Map(users.map((user) => [user.id, user]))
+      const anchorTime = latest.resultVerifiedAt ?? latest.createdAt
+
+      const linkedHistories = await tx.eloHistory.findMany({
+        where: {
+          userId: { in: participantIds },
+          matchResultId: latest.id,
+        },
+        orderBy: { createdAt: 'desc' },
+      })
+
+      let selectedHistoryByUserId = new Map<string, (typeof linkedHistories)[number]>()
+
+      if (linkedHistories.length > 0) {
+        for (const history of linkedHistories) {
+          if (!selectedHistoryByUserId.has(history.userId)) {
+            selectedHistoryByUserId.set(history.userId, history)
+          }
+        }
+      }
+
+      if (selectedHistoryByUserId.size !== participantIds.length) {
+        const fallbackHistories = await tx.eloHistory.findMany({
+          where: {
+            userId: { in: participantIds },
+            matchId,
+          },
+          orderBy: { createdAt: 'desc' },
+        })
+
+        const grouped = new Map<string, typeof fallbackHistories>()
+        for (const history of fallbackHistories) {
+          const arr = grouped.get(history.userId) ?? []
+          arr.push(history)
+          grouped.set(history.userId, arr)
+        }
+
+        selectedHistoryByUserId = new Map()
+        for (const userId of participantIds) {
+          const candidates = grouped.get(userId) ?? []
+          if (candidates.length === 0) {
+            throw new Error('未找到可回溯的 ELO 历史记录，无法自动纠错。')
+          }
+
+          const nearest = [...candidates].sort((a, b) => {
+            const da = Math.abs(a.createdAt.getTime() - anchorTime.getTime())
+            const db = Math.abs(b.createdAt.getTime() - anchorTime.getTime())
+            return da - db
+          })[0]
+
+          if (!nearest || Math.abs(nearest.createdAt.getTime() - anchorTime.getTime()) > 60 * 60 * 1000) {
+            throw new Error('ELO 历史记录无法准确匹配到该赛果，已阻止自动纠错。')
+          }
+
+          selectedHistoryByUserId.set(userId, nearest)
+        }
+      }
+
+      const oldWinnerAvgElo =
+        oldWinnerTeamIds.reduce((sum, id) => {
+          const history = selectedHistoryByUserId.get(id)
+          if (!history) throw new Error('ELO 历史不完整，无法自动纠错。')
+          return sum + history.eloBefore
+        }, 0) / oldWinnerTeamIds.length
+      const oldLoserAvgElo =
+        oldLoserTeamIds.reduce((sum, id) => {
+          const history = selectedHistoryByUserId.get(id)
+          if (!history) throw new Error('ELO 历史不完整，无法自动纠错。')
+          return sum + history.eloBefore
+        }, 0) / oldLoserTeamIds.length
+
+      const winnerExpected = expectedScoreByRating(oldWinnerAvgElo, oldLoserAvgElo)
+      const loserExpected = expectedScoreByRating(oldLoserAvgElo, oldWinnerAvgElo)
+
+      const nextDeltaByUserId = new Map<string, number>()
+
+      for (const userId of participantIds) {
+        const history = selectedHistoryByUserId.get(userId)
+        if (!history) throw new Error('ELO 历史不完整，无法自动纠错。')
+
+        const wasWinner = oldWinnerTeamIds.includes(userId)
+        const expected = wasWinner ? winnerExpected : loserExpected
+        const inferredK = inferKFromDelta({
+          eloRating: history.eloBefore,
+          expected,
+          oldDelta: history.delta,
+          wasWinner,
+        })
+
+        if (!inferredK) {
+          throw new Error('无法推断原始 ELO K 值，已阻止自动纠错。')
+        }
+
+        const nextDelta = wasWinner
+          ? Math.round(inferredK * (0 - expected))
+          : Math.round(inferredK * (1 - expected))
+
+        nextDeltaByUserId.set(userId, nextDelta)
+      }
+
+      for (const userId of participantIds) {
+        const history = selectedHistoryByUserId.get(userId)
+        const baseUser = userMap.get(userId)
+        const nextDelta = nextDeltaByUserId.get(userId)
+
+        if (!history || !baseUser || nextDelta === undefined) {
+          throw new Error('数据不完整，无法自动纠错。')
+        }
+
+        const wasWinner = oldWinnerTeamIds.includes(userId)
+
+        if (wasWinner && baseUser.wins <= 0) {
+          throw new Error('当前胜负统计异常（胜场不足），已阻止自动纠错。')
+        }
+        if (!wasWinner && baseUser.losses <= 0) {
+          throw new Error('当前胜负统计异常（负场不足），已阻止自动纠错。')
+        }
+
+        const eloDeltaAdjust = nextDelta - history.delta
+
+        await tx.user.update({
+          where: { id: userId },
+          data: {
+            eloRating: {
+              increment: eloDeltaAdjust,
+            },
+            wins: {
+              increment: wasWinner ? -1 : 1,
+            },
+            losses: {
+              increment: wasWinner ? 1 : -1,
+            },
+          },
+        })
+
+        await tx.eloHistory.update({
+          where: { id: history.id },
+          data: {
+            matchResultId: latest.id,
+            eloBefore: history.eloBefore,
+            eloAfter: history.eloBefore + nextDelta,
+            delta: nextDelta,
+          },
+        })
+      }
+
+      for (const oldWinnerId of [...new Set(oldWinnerTeamIds)]) {
+        await revokeMatchRewardPointsForEvent(tx, {
+          userId: oldWinnerId,
+          matchId,
+          eventKey: `win:${latest.id}:${oldWinnerId}`,
+          reason: '管理员纠错：交换胜负后回收胜场奖励',
+        })
+      }
+
+      for (const newWinnerId of [...new Set(newWinnerTeamIds)]) {
+        await grantMatchRewardPoints(tx, {
+          userId: newWinnerId,
+          matchId,
+          eventKey: `win:${latest.id}:${newWinnerId}`,
+          desiredAmount: 1,
+          reason: '管理员纠错：交换胜负后补发胜场奖励',
+        })
+      }
+
+      await tx.matchResult.update({
+        where: { id: latest.id },
+        data: {
+          winnerId: newWinnerTeamIds[0] ?? null,
+          loserId: newLoserTeamIds[0] ?? null,
+          winnerTeamIds: newWinnerTeamIds,
+          loserTeamIds: newLoserTeamIds,
+          verifierId: currentUser.id,
+          resultVerifiedAt: new Date(),
+        },
+      })
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '交换胜负纠错失败。'
+    console.error('swapConfirmedMatchResultWinnerLoserAction failed', error)
+    return { error: message }
+  }
+
+  revalidatePath('/rankings')
+  revalidatePath('/profile')
+  revalidatePath(`/matchs/${matchId}`)
+
+  await writeAuditLog({
+    actorId: currentUser.id,
+    action: 'match.result.swap_winner_loser',
+    entityType: 'MatchResult',
+    entityId: resultId,
+    details: { matchId, targetLabel: result.match.title },
+    ip: auditContext.ip,
+    userAgent: auditContext.userAgent,
+  })
+
+  return { success: '纠错成功：已交换该赛果胜负并同步修正统计与积分。' }
+}
+
+export async function swapConfirmedMatchResultWinnerLoserVoidAction(
+  matchId: string,
+  resultId: string,
+  formData: FormData,
+): Promise<void> {
+  await swapConfirmedMatchResultWinnerLoserAction(matchId, resultId, formData)
 }
 
 export async function removeRegistrationByManagerAction(matchId: string, userId: string, formData: FormData): Promise<MatchFormState> {

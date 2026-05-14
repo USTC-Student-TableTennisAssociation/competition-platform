@@ -2,6 +2,7 @@ import AdminResultEntryForm from "@/components/match/AdminResultEntryForm";
 import {
   confirmMatchResultVoidAction,
   rejectMatchResultVoidAction,
+  swapConfirmedMatchResultWinnerLoserVoidAction,
 } from "@/app/matchs/actions";
 import type { AdminGroupBattleTable } from "@/lib/match-detail";
 
@@ -34,6 +35,17 @@ type AdminEligibleOptions = {
   }>;
 };
 
+type ConfirmedResultItem = {
+  id: string;
+  reporterName: string;
+  winnerLabel: string;
+  loserLabel: string;
+  scoreText: string;
+  phaseLabel: string;
+  groupName: string;
+  knockoutRound: string;
+};
+
 export default function AdminResultsSection({
   matchId,
   matchType,
@@ -47,6 +59,7 @@ export default function AdminResultsSection({
   initialAdminWinnerId,
   initialAdminLoserId,
   adminPendingResults,
+  adminConfirmedResults,
   filledKnockoutRounds,
 }: {
   matchId: string;
@@ -61,6 +74,7 @@ export default function AdminResultsSection({
   initialAdminWinnerId?: string;
   initialAdminLoserId?: string;
   adminPendingResults: PendingResultItem[];
+  adminConfirmedResults: ConfirmedResultItem[];
   filledKnockoutRounds: Array<{
     name: string;
     matches: Array<{
@@ -175,6 +189,56 @@ export default function AdminResultsSection({
                     className="rounded-md border border-rose-500/40 px-3 py-1 text-xs text-rose-300 hover:bg-rose-500/10"
                   >
                     否决
+                  </button>
+                </form>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      <h2 className="mb-2 mt-8 text-xl font-bold text-white">
+        已确认赛果（支持纠错）
+      </h2>
+      <p className="mb-3 text-xs text-slate-400 sm:mb-4 sm:text-sm">
+        若录入胜负方向反了，可直接交换胜负并同步修正统计。
+      </p>
+      <div className="space-y-3">
+        {adminConfirmedResults.length === 0 ? (
+          <p className="text-sm text-slate-400">当前没有已确认赛果。</p>
+        ) : (
+          adminConfirmedResults.map((item) => (
+            <div
+              key={item.id}
+              className="rounded-lg border border-slate-700 bg-slate-800/50 p-3"
+            >
+              <p className="text-sm text-slate-200">
+                {item.winnerLabel} 胜 {item.loserLabel}
+              </p>
+              <p className="mt-1 text-xs text-slate-400">
+                登记人：{item.reporterName}
+                {item.phaseLabel === "group" && item.groupName
+                  ? ` · 小组 ${item.groupName}`
+                  : ""}
+                {item.phaseLabel === "knockout" && item.knockoutRound
+                  ? ` · 淘汰赛 ${item.knockoutRound}`
+                  : ""}
+                {item.scoreText ? ` · 比分 ${item.scoreText}` : ""}
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <form
+                  action={swapConfirmedMatchResultWinnerLoserVoidAction.bind(
+                    null,
+                    matchId,
+                    item.id,
+                  )}
+                >
+                  <input type="hidden" name="csrfToken" defaultValue="" />
+                  <button
+                    type="submit"
+                    className="rounded-md border border-amber-500/40 px-3 py-1 text-xs text-amber-300 hover:bg-amber-500/10"
+                  >
+                    交换胜负（纠错）
                   </button>
                 </form>
               </div>

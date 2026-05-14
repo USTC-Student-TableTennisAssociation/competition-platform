@@ -59,16 +59,28 @@ export default async function Sidebar() {
   const avatarUrl = normalizeAvatarUrl(currentUser?.avatarUrl);
 
   return (
-    <aside className="hidden md:fixed md:inset-y-0 md:left-0 md:z-30 md:flex md:w-72 md:flex-col">
-      <div className="h-screen w-full overflow-y-auto border-r border-slate-700/70 bg-slate-900/90 px-5 py-6 backdrop-blur-xl">
-        <section className="rounded-2xl border border-slate-700/70 bg-slate-950/20 p-4">
+    <aside className="hidden md:fixed md:inset-y-0 md:left-0 md:z-30 md:flex md:w-64 md:flex-col xl:w-72">
+      <div className="h-screen w-full overflow-y-auto border-r border-white/8 bg-slate-950/72 px-4 py-5 backdrop-blur-2xl xl:px-5 xl:py-6">
+        <section className="surface-card rounded-3xl p-3.5 xl:p-4">
+          <Link href="/" className="mb-4 flex items-center gap-3 px-2">
+            <div className="grid h-10 w-10 place-items-center rounded-2xl bg-teal-400/12 text-teal-100 ring-1 ring-teal-300/16">
+              <ShieldCheck className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="text-sm font-black tracking-[0.18em] text-slate-50">
+                USTC TTA
+              </p>
+              <p className="text-[11px] text-slate-500">竞技积分平台</p>
+            </div>
+          </Link>
+
           {currentUser ? (
             <Link
               href="/profile"
-              className="group flex items-center gap-3 rounded-xl border border-transparent p-2 transition hover:border-cyan-400/30 hover:bg-slate-800/40"
+              className="group flex items-center gap-3 rounded-2xl p-2 transition hover:bg-white/5"
               aria-label="查看个人中心"
             >
-              <div className="relative grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full bg-cyan-500/15 text-sm font-semibold text-cyan-100 ring-1 ring-cyan-400/25">
+              <div className="relative grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full bg-teal-400/12 text-sm font-semibold text-teal-100 ring-1 ring-white/10">
                 {avatarUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
@@ -85,13 +97,13 @@ export default async function Sidebar() {
                 <p className="truncate text-sm font-semibold text-slate-50">
                   {currentUser.nickname}
                 </p>
-                <p className="mt-0.5 text-xs text-slate-400">我的主页</p>
+                <p className="mt-0.5 text-xs text-slate-500">我的竞技档案</p>
               </div>
 
-              <ChevronRight className="h-4 w-4 text-slate-500 transition group-hover:text-slate-200" />
+              <ChevronRight className="h-4 w-4 text-slate-600 transition group-hover:text-teal-200" />
             </Link>
           ) : (
-            <div className="rounded-xl border border-dashed border-slate-600 bg-slate-800/40 p-3">
+            <div className="rounded-2xl border border-dashed border-white/12 bg-white/[0.03] p-3">
               <p className="text-sm font-semibold text-slate-100">
                 当前状态：待登录
               </p>
@@ -100,7 +112,7 @@ export default async function Sidebar() {
               </p>
               <Link
                 href="/auth"
-                className="mt-3 inline-block rounded-lg bg-cyan-500/20 px-3 py-1.5 text-xs text-cyan-100 hover:bg-cyan-500/30"
+                className="btn-secondary mt-3 inline-block rounded-xl px-3 py-1.5 text-xs"
               >
                 去登录 / 注册
               </Link>
@@ -109,15 +121,15 @@ export default async function Sidebar() {
 
           {currentUser && (
             <div className="mt-4 grid grid-cols-2 gap-3">
-              <div className="rounded-xl border border-slate-700/60 bg-slate-950/30 px-3 py-2">
+              <div className="rounded-2xl bg-white/[0.035] px-3 py-2 ring-1 ring-white/8">
                 <p className="text-[11px] text-slate-400">ELO</p>
-                <p className="mt-1 text-base font-bold tabular-nums text-slate-100">
+                <p className="mt-1 text-base font-black tabular-nums text-teal-100">
                   {currentUser.eloRating}
                 </p>
               </div>
-              <div className="rounded-xl border border-slate-700/60 bg-slate-950/30 px-3 py-2">
+              <div className="rounded-2xl bg-white/[0.035] px-3 py-2 ring-1 ring-white/8">
                 <p className="text-[11px] text-slate-400">积分</p>
-                <p className="mt-1 text-base font-bold tabular-nums text-slate-100">
+                <p className="mt-1 text-base font-black tabular-nums text-sky-100">
                   {currentUser.points}
                 </p>
               </div>
@@ -129,14 +141,14 @@ export default async function Sidebar() {
           ) : null}
         </section>
 
-        <nav className="mt-6 space-y-2">
+        <nav className="mt-6 space-y-1.5">
           {resolvedNavItems.map(({ href, label, icon: Icon }) => (
             <Link
               key={href}
               href={href}
-              className="group flex items-center gap-3 rounded-xl border border-transparent px-3 py-2.5 text-slate-200 transition hover:border-cyan-400/40 hover:bg-slate-800/70 hover:text-white"
+              className="group flex items-center gap-3 rounded-2xl px-3 py-2.5 text-slate-300 transition hover:bg-white/[0.055] hover:text-white"
             >
-              <Icon className="h-4 w-4 text-cyan-300 transition group-hover:scale-105" />
+              <Icon className="h-4 w-4 text-slate-500 transition group-hover:text-teal-200" />
               <span className="text-sm font-medium">{label}</span>
               {label === "组队信息" && hasPendingInvites ? (
                 <span

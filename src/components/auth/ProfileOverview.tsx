@@ -298,7 +298,10 @@ export default function ProfileOverview({
                           ? `日期：${point.dateLabel}`
                           : point.nthLabel;
                       }}
-                      formatter={(value: number) => [`${value}`, "ELO"]}
+                      formatter={(value: number | undefined) => [
+                        `${value ?? "-"}`,
+                        "ELO",
+                      ]}
                     />
                     <Line
                       type="monotone"

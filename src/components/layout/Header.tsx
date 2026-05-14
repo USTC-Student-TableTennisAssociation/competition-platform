@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Menu, Trophy } from "lucide-react";
+import { Menu, Trophy, X } from "lucide-react";
 import { useState } from "react";
 import { normalizeAvatarUrl } from "@/lib/utils";
 import AdminModeToggle from "@/components/layout/AdminModeToggle";
@@ -47,24 +47,24 @@ export default function Header({
   ];
 
   return (
-    <header className="sticky top-0 z-50 border-b border-slate-700/70 bg-slate-900/90 backdrop-blur-xl lg:hidden">
+    <header className="sticky top-0 z-50 border-b border-white/8 bg-slate-950/82 backdrop-blur-2xl md:hidden">
       <nav className="mx-auto max-w-7xl px-4">
-        <div className="flex h-16 items-center justify-between">
+        <div className="flex h-14 items-center justify-between">
           <Link
             href="/"
-            className="flex items-center gap-2 font-bold text-white"
+            className="flex items-center gap-2 font-black tracking-[0.14em] text-white"
           >
-            <Trophy className="text-cyan-300" />
+            <Trophy className="h-5 w-5 text-teal-200" />
             <span>USTC TTA</span>
           </Link>
 
           <button
             type="button"
-            className="rounded-lg border border-slate-600 p-2 text-slate-200"
+            className="btn-secondary rounded-xl p-2 text-slate-200"
             aria-label="打开菜单"
             onClick={() => setIsMenuOpen((prev) => !prev)}
           >
-            <Menu className="h-5 w-5" />
+            {isMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
         </div>
 
@@ -72,9 +72,9 @@ export default function Header({
           <div className="mb-3 flex items-center gap-2">
             <Link
               href="/profile"
-              className="flex min-w-0 flex-1 items-center gap-3 rounded-xl border border-cyan-400/25 bg-slate-800/70 px-3 py-2"
+              className="surface-card flex min-w-0 flex-1 items-center gap-3 rounded-2xl px-3 py-2"
             >
-              <div className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full bg-cyan-500/15 text-sm font-semibold text-cyan-100 ring-1 ring-cyan-400/25">
+              <div className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full bg-teal-400/12 text-sm font-semibold text-teal-100 ring-1 ring-white/10">
                 {avatarUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
@@ -91,7 +91,7 @@ export default function Header({
                 <p className="truncate text-sm font-semibold text-slate-100">
                   {currentUser.nickname}
                 </p>
-                <p className="text-xs text-cyan-200">
+                <p className="text-xs text-teal-200">
                   ELO {currentUser.eloRating}
                 </p>
               </div>
@@ -110,9 +110,9 @@ export default function Header({
         {isMenuOpen && (
           <div className="space-y-2 pb-4">
             {!isLoggedIn && (
-              <div className="rounded-lg border border-dashed border-slate-600 bg-slate-800/50 px-3 py-2 text-xs text-slate-300">
+              <div className="rounded-2xl border border-dashed border-white/12 bg-white/[0.03] px-3 py-2 text-xs text-slate-300">
                 当前状态：待登录
-                <Link href="/auth" className="ml-2 text-cyan-300">
+                <Link href="/auth" className="ml-2 text-teal-200">
                   去登录
                 </Link>
               </div>
@@ -121,7 +121,7 @@ export default function Header({
               <Link
                 key={item.href}
                 href={item.href}
-                className="block rounded-lg bg-slate-800 px-3 py-2 text-sm text-slate-200"
+                className="block rounded-2xl bg-white/[0.045] px-3 py-2.5 text-sm text-slate-200 transition hover:bg-white/8"
                 onClick={() => setIsMenuOpen(false)}
               >
                 {item.label}

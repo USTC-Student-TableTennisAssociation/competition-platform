@@ -40,20 +40,25 @@ export async function validateCsrfToken(formData: FormData): Promise<string | nu
   const cookieStore = await cookies()
   const cookieToken = cookieStore.get(CSRF_COOKIE_NAME)?.value ?? ''
   const sameOrigin = await isSameOriginRequest()
+  const errorMessage = '安全校验失败，请刷新页面后重试。'
+
+  if (!sameOrigin) {
+    return errorMessage
+  }
 
   if (!submittedToken || !cookieToken) {
-    return sameOrigin ? null : '安全校验失败，请刷新页面后重试。'
+    return errorMessage
   }
 
   const submittedBuffer = Buffer.from(submittedToken)
   const cookieBuffer = Buffer.from(cookieToken)
 
   if (submittedBuffer.length !== cookieBuffer.length) {
-    return sameOrigin ? null : '安全校验失败，请刷新页面后重试。'
+    return errorMessage
   }
 
   if (!timingSafeEqual(submittedBuffer, cookieBuffer)) {
-    return sameOrigin ? null : '安全校验失败，请刷新页面后重试。'
+    return errorMessage
   }
 
   return null

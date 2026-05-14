@@ -229,8 +229,12 @@ export async function loginAction(_: AuthFormState, formData: FormData): Promise
     return { error: '邮箱尚未验证，请先点击邮件中的验证链接。' }
   }
 
+  if (user.isBanned) {
+    return { error: '该账号已被封禁，如有疑问请联系管理员。' }
+  }
+
   try {
-    const sessionToken = createSessionToken(user.id)
+    const sessionToken = createSessionToken(user.id, user.hashedPassword)
     if (!sessionToken) {
       return { error: '登录服务配置异常，请联系管理员检查 AUTH_SECRET。' }
     }

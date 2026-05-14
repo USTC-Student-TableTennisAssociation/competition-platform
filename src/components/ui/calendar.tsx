@@ -9,11 +9,14 @@ import { cn } from "@/lib/utils";
 /* ---------- Override buttons so they don't submit forms ---------- */
 
 function SafeDayButton({ day, modifiers, ...rest }: DayButtonProps) {
+  void day;
+  void modifiers;
   return <button {...rest} type="button" />;
 }
 
 function SafeButton(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   const { type: _type, ...rest } = props;
+  void _type;
   return <button {...rest} type="button" />;
 }
 

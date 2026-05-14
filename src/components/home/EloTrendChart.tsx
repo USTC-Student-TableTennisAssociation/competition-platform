@@ -105,7 +105,7 @@ export default function EloTrendChart({ points }: Props) {
             if (!point) return "";
             return `日期：${point.dateLabel}`;
           }}
-          formatter={(value: number) => [`${value}`, "ELO"]}
+          formatter={(value: number | undefined) => [`${value ?? "-"}`, "ELO"]}
         />
         <Line
           type="monotone"
