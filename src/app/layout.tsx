@@ -41,7 +41,7 @@ export default async function RootLayout({
 
   return (
     <html lang="zh-CN" className="overflow-x-hidden">
-      <body className="min-h-screen overflow-x-hidden bg-slate-950 text-slate-100">
+      <body className="min-h-screen overflow-x-hidden bg-[#070A12] text-slate-100">
         <CsrfFormInjector />
         <div className="min-h-screen min-w-0">
           <Sidebar />
@@ -61,7 +61,7 @@ export default async function RootLayout({
                   : null
               }
             />
-            <main className="mx-auto w-full max-w-[1440px] min-w-0 flex-1 px-3 py-4 sm:px-5 sm:py-6 md:px-7 md:py-8 xl:px-10">
+            <main className="mx-auto w-full max-w-7xl min-w-0 flex-1 px-3 py-4 sm:px-5 sm:py-6 md:px-7 md:py-8 xl:px-9">
               {children}
             </main>
             <Footer />

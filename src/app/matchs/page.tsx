@@ -13,21 +13,15 @@ const statusLabelMap = {
 } as const;
 
 type MatchesPageProps = {
-  searchParams?:
-    | {
-        q?: string | string[];
-      }
-    | Promise<{
-        q?: string | string[];
-      }>;
+  searchParams?: Promise<{
+    q?: string | string[];
+  }>;
 };
 
 export default async function MatchesPage({ searchParams }: MatchesPageProps) {
   const currentUser = await getCurrentUser();
 
-  const resolvedSearchParams = searchParams
-    ? await Promise.resolve(searchParams)
-    : undefined;
+  const resolvedSearchParams = searchParams ? await searchParams : undefined;
 
   const rawQuery = Array.isArray(resolvedSearchParams?.q)
     ? resolvedSearchParams.q[0]

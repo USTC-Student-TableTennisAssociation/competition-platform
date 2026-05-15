@@ -24,9 +24,10 @@ type ChartPoint = {
 
 type Props = {
   points: EloTrendPoint[];
+  compact?: boolean;
 };
 
-export default function EloTrendChart({ points }: Props) {
+export default function EloTrendChart({ points, compact = false }: Props) {
   const chartData = useMemo<ChartPoint[]>(
     () =>
       points.map((point, index) => ({
@@ -49,35 +50,53 @@ export default function EloTrendChart({ points }: Props) {
   }
 
   return (
-    <ResponsiveContainer width="100%" height="100%">
+    <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
       <LineChart
         data={chartData}
-        margin={{ top: 8, right: 8, left: 0, bottom: 4 }}
+        margin={
+          compact
+            ? { top: 10, right: 6, left: 6, bottom: 4 }
+            : { top: 8, right: 8, left: 0, bottom: 4 }
+        }
       >
-        <CartesianGrid stroke="rgba(148,163,184,0.2)" strokeDasharray="3 3" />
-        <XAxis
-          dataKey="index"
-          type="number"
-          tick={{ fill: "rgb(148 163 184)", fontSize: 10 }}
-          axisLine={{ stroke: "rgba(148,163,184,0.35)" }}
-          tickLine={{ stroke: "rgba(148,163,184,0.35)" }}
-          domain={[0, Math.max(chartData.length - 1, 0)]}
-          allowDecimals={false}
-          tickFormatter={(value: number) => chartData[value]?.dateLabel ?? ""}
-          minTickGap={18}
-          interval="preserveStartEnd"
-        />
-        <YAxis
-          width={40}
-          tick={{ fill: "rgb(148 163 184)", fontSize: 10 }}
-          axisLine={{ stroke: "rgba(148,163,184,0.35)" }}
-          tickLine={{ stroke: "rgba(148,163,184,0.35)" }}
-          tickFormatter={(value: number) => `${value}`}
-          domain={[
-            (dataMin: number) => Math.floor((dataMin - 10) / 10) * 10,
-            (dataMax: number) => Math.ceil((dataMax + 10) / 10) * 10,
-          ]}
-        />
+        {!compact ? (
+          <CartesianGrid stroke="rgba(148,163,184,0.2)" strokeDasharray="3 3" />
+        ) : null}
+        {!compact ? (
+          <XAxis
+            dataKey="index"
+            type="number"
+            tick={{ fill: "rgb(148 163 184)", fontSize: 10 }}
+            axisLine={{ stroke: "rgba(148,163,184,0.35)" }}
+            tickLine={{ stroke: "rgba(148,163,184,0.35)" }}
+            domain={[0, Math.max(chartData.length - 1, 0)]}
+            allowDecimals={false}
+            tickFormatter={(value: number) => chartData[value]?.dateLabel ?? ""}
+            minTickGap={18}
+            interval="preserveStartEnd"
+          />
+        ) : null}
+        {!compact ? (
+          <YAxis
+            width={40}
+            tick={{ fill: "rgb(148 163 184)", fontSize: 10 }}
+            axisLine={{ stroke: "rgba(148,163,184,0.35)" }}
+            tickLine={{ stroke: "rgba(148,163,184,0.35)" }}
+            tickFormatter={(value: number) => `${value}`}
+            domain={[
+              (dataMin: number) => Math.floor((dataMin - 10) / 10) * 10,
+              (dataMax: number) => Math.ceil((dataMax + 10) / 10) * 10,
+            ]}
+          />
+        ) : (
+          <YAxis
+            hide
+            domain={[
+              (dataMin: number) => dataMin - 8,
+              (dataMax: number) => dataMax + 8,
+            ]}
+          />
+        )}
         <Tooltip
           contentStyle={{
             backgroundColor: "rgb(15 23 42)",
@@ -112,9 +131,9 @@ export default function EloTrendChart({ points }: Props) {
           dataKey="elo"
           name="ELO"
           stroke="rgb(34,211,238)"
-          strokeWidth={3}
-          dot={{ r: 2, fill: "rgb(34,211,238)" }}
-          activeDot={{ r: 4 }}
+          strokeWidth={compact ? 2.5 : 3}
+          dot={compact ? false : { r: 2, fill: "rgb(34,211,238)" }}
+          activeDot={{ r: compact ? 3 : 4 }}
         />
       </LineChart>
     </ResponsiveContainer>

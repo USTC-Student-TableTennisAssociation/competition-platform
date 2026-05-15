@@ -51,23 +51,15 @@ export default async function MatchDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams?:
-    | {
-        playersPage?: string | string[];
-        groupsPage?: string | string[];
-        inviteQ?: string | string[];
-      }
-    | Promise<{
-        playersPage?: string | string[];
-        groupsPage?: string | string[];
-        inviteQ?: string | string[];
-      }>;
+  searchParams?: Promise<{
+    playersPage?: string | string[];
+    groupsPage?: string | string[];
+    inviteQ?: string | string[];
+  }>;
 }) {
   const { id } = await params;
 
-  const resolvedSearchParams = searchParams
-    ? await Promise.resolve(searchParams)
-    : undefined;
+  const resolvedSearchParams = searchParams ? await searchParams : undefined;
   const rawPlayersPage = extractPageParam(resolvedSearchParams?.playersPage);
   const rawGroupsPage = extractPageParam(resolvedSearchParams?.groupsPage);
   const rawInviteQuery = Array.isArray(resolvedSearchParams?.inviteQ)
