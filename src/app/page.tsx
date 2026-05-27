@@ -346,7 +346,6 @@ function PlayerStatusCard({
   winRate,
   rank,
   termCount,
-  eloDelta,
   eloPoints,
 }: {
   user: PlayerSummary | null;
@@ -544,32 +543,6 @@ function LeaderboardPreview({
           <span className="font-semibold text-slate-100">
             {myRank ? `#${myRank}` : "登录后查看"}
           </span>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function AssociationBrandCard() {
-  return (
-    <section className="px-4 py-5">
-      <div className="flex items-center gap-3">
-        <div className="grid h-14 w-14 shrink-0 place-items-center rounded-lg border border-white/[0.08] bg-white/[0.035]">
-          <Image
-            src="/SVG/乒协徽章.svg"
-            alt="USTC TTA"
-            width={48}
-            height={48}
-            className="h-12 w-12 object-contain"
-          />
-        </div>
-        <div className="min-w-0">
-          <p className="text-lg font-semibold tracking-normal text-white">
-            USTC TTA
-          </p>
-          <p className="mt-0.5 text-xs text-slate-500">
-            乒协赛事平台
-          </p>
         </div>
       </div>
     </section>
@@ -889,7 +862,6 @@ export default async function Home() {
         </main>
 
         <aside className="border-t border-[#30363d] bg-[#0d1117] lg:col-span-2 xl:sticky xl:top-14 xl:col-span-1 xl:min-h-[calc(100vh-3.5rem)] xl:self-start xl:border-l xl:border-t-0">
-          <AssociationBrandCard />
           <LeaderboardPreview players={leaderboardPlayers} myRank={myRank} />
         </aside>
       </div>

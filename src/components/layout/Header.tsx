@@ -67,7 +67,7 @@ export default function Header({
 
   return (
     <header className="sticky top-0 z-50 border-b border-[#30363d] bg-[#010409]/94 backdrop-blur-xl">
-      <nav className="mx-auto max-w-[1440px] px-3 sm:px-5 md:px-7 xl:px-9">
+      <nav className="mx-auto max-w-[3680px] px-3 sm:px-5 md:px-7 xl:px-10">
         <div className="flex h-14 items-center justify-between gap-3">
           <Link
             href="/"
@@ -82,7 +82,14 @@ export default function Header({
                 className="h-6 w-6 object-contain"
               />
             </span>
-            <span className="truncate text-sm sm:text-base">乒协赛事平台</span>
+            <Image
+              src="/SVG/乒协文字.svg"
+              alt="乒协赛事平台"
+              width={132}
+              height={28}
+              className="h-7 w-auto object-contain"
+              priority
+            />
           </Link>
 
           <div className="hidden items-center gap-1 md:flex">
