@@ -1,6 +1,7 @@
 import Link from "next/link";
-import { Trophy } from "lucide-react";
+import { Medal, Shield, Trophy } from "lucide-react";
 import { prisma } from "@/lib/prisma";
+import { normalizeAvatarUrl } from "@/lib/utils";
 
 type TabKey = "elo" | "points" | "honors";
 
@@ -17,13 +18,49 @@ type RankingPlayer = {
 };
 
 function rankBadge(rank: number) {
-  if (rank === 1) return <span className="text-2xl">🥇</span>;
-  if (rank === 2) return <span className="text-2xl">🥈</span>;
-  if (rank === 3) return <span className="text-2xl">🥉</span>;
+  if (rank === 1) return "TOP 1";
+  if (rank === 2) return "TOP 2";
+  if (rank === 3) return "TOP 3";
+  if (rank === 0) return "-";
+  return `#${rank}`;
+}
+
+function rankTone(rank: number) {
+  if (rank === 1) return "from-amber-300/30 to-yellow-500/8 ring-amber-200/18";
+  if (rank === 2) return "from-slate-200/20 to-slate-400/7 ring-slate-200/16";
+  if (rank === 3) return "from-orange-300/22 to-orange-500/7 ring-orange-200/16";
+  return "from-white/[0.045] to-white/[0.02] ring-white/8";
+}
+
+function primaryLabel(tab: TabKey) {
+  if (tab === "elo") return "ELO";
+  if (tab === "points") return "积分";
+  return "徽章";
+}
+
+function secondaryCopy(tab: TabKey) {
+  if (tab === "elo") return "以实时 ELO 为主，积分为同分参考。";
+  if (tab === "points") return "以累计积分为主，ELO 为同分参考。";
+  return "以已获荣誉徽章数量为主，ELO 为同分参考。";
+}
+
+function PlayerAvatar({ player }: { player: RankingPlayer }) {
+  const avatarFallback = (player.nickname.trim().charAt(0) || "?").toUpperCase();
+  const avatarUrl = normalizeAvatarUrl(player.avatarUrl);
+
   return (
-    <span className="w-8 text-center font-mono text-lg text-gray-500">
-      {rank}
-    </span>
+    <div className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-2xl bg-teal-400/12 font-black text-teal-100 ring-1 ring-white/10 sm:h-12 sm:w-12">
+      {avatarUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={avatarUrl}
+          alt={player.nickname}
+          className="h-full w-full object-cover"
+        />
+      ) : (
+        avatarFallback
+      )}
+    </div>
   );
 }
 
@@ -82,15 +119,48 @@ export default async function RankingsPage({
   const topTen = sorted.slice(0, 10);
 
   const displayRanks = buildDisplayRanks(tab, topTen);
+  const podium = topTen.slice(0, 3);
+  const rest = topTen.slice(3);
 
   return (
-    <div className="mx-auto max-w-5xl space-y-8">
-      <div className="flex items-center gap-3">
-        <Trophy className="h-8 w-8 text-yellow-400" />
-        <h1 className="text-3xl font-bold text-white">排行榜</h1>
-      </div>
+    <div className="mx-auto max-w-6xl space-y-6 sm:space-y-8">
+      <section className="surface-panel relative overflow-hidden rounded-3xl p-5 sm:p-7">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_82%_4%,rgba(251,191,36,0.12),transparent_32%)]" />
+        <div className="relative flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
+          <div>
+            <p className="eyebrow">Leaderboard</p>
+            <div className="mt-2 flex items-center gap-3">
+              <Trophy className="h-8 w-8 text-amber-200" />
+              <h1 className="text-3xl font-black text-white sm:text-4xl">
+                排行榜
+              </h1>
+            </div>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">
+              {secondaryCopy(tab)}
+            </p>
+          </div>
+          <div className="grid grid-cols-3 gap-2 sm:min-w-80">
+            <div className="rounded-2xl bg-white/[0.035] px-3 py-2 ring-1 ring-white/8">
+              <p className="text-[11px] text-slate-500">上榜人数</p>
+              <p className="mt-1 text-xl font-black text-white">{topTen.length}</p>
+            </div>
+            <div className="rounded-2xl bg-teal-400/8 px-3 py-2 ring-1 ring-teal-300/12">
+              <p className="text-[11px] text-teal-100/60">当前榜单</p>
+              <p className="mt-1 text-sm font-black text-teal-100">
+                {primaryLabel(tab)}
+              </p>
+            </div>
+            <div className="rounded-2xl bg-amber-400/8 px-3 py-2 ring-1 ring-amber-300/12">
+              <p className="text-[11px] text-amber-100/60">榜首</p>
+              <p className="mt-1 truncate text-sm font-black text-amber-100">
+                {topTen[0]?.nickname ?? "暂无"}
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
 
-      <div className="flex gap-2 border-b border-gray-600">
+      <div className="surface-card flex gap-1 overflow-x-auto rounded-2xl p-1 text-sm">
         {[
           { key: "elo", label: "ELO 排名" },
           { key: "points", label: "积分排名" },
@@ -99,10 +169,10 @@ export default async function RankingsPage({
           <Link
             key={key}
             href={`/rankings?tab=${key}`}
-            className={`-mb-px border-b-2 px-6 py-3 font-medium transition ${
+            className={`shrink-0 rounded-xl px-4 py-2.5 font-bold transition sm:px-6 ${
               tab === key
-                ? "border-cyan-500 text-cyan-400"
-                : "border-transparent text-gray-400 hover:text-gray-300"
+                ? "bg-teal-400/12 text-teal-100"
+                : "text-slate-400 hover:bg-white/[0.035] hover:text-slate-200"
             }`}
           >
             {label}
@@ -110,84 +180,127 @@ export default async function RankingsPage({
         ))}
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-gray-600 bg-gray-700">
-        <table className="w-full">
-          <thead className="bg-gray-800">
-            <tr className="text-sm text-gray-300">
-              <th className="w-16 px-6 py-4 text-left">排名</th>
-              <th className="px-6 py-4 text-left">选手</th>
-              <th className="px-6 py-4 text-center">ELO</th>
-              <th className="px-6 py-4 text-center">积分</th>
-              <th className="px-6 py-4 text-center">胜/负</th>
-              <th className="px-6 py-4 text-center">胜率</th>
-              <th className="px-6 py-4 text-center">徽章</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-600">
-            {topTen.map((player, index) => {
+      {podium.length > 0 ? (
+        <section className="grid gap-3 lg:grid-cols-3">
+          {podium.map((player, index) => {
+            const rank = displayRanks[index];
+            const total = player.matchesPlayed;
+            const winRate =
+              total > 0 ? Math.round((player.wins / total) * 100) : 0;
+
+            return (
+              <Link
+                key={player.id}
+                href={`/profile/${player.id}`}
+                className={`surface-panel group relative overflow-hidden rounded-3xl bg-linear-to-br p-5 ring-1 transition hover:-translate-y-0.5 ${rankTone(rank)}`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <span className="rounded-full bg-white/[0.055] px-3 py-1 text-xs font-black tracking-[0.12em] text-slate-200">
+                    {rankBadge(rank)}
+                  </span>
+                  <Medal className="h-5 w-5 text-amber-200/80" />
+                </div>
+                <div className="mt-6 flex items-center gap-3">
+                  <PlayerAvatar player={player} />
+                  <div className="min-w-0">
+                    <p className="truncate text-lg font-black text-white">
+                      {player.nickname}
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      {player.wins}胜 / {player.losses}负 · 胜率 {winRate}%
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-5 grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-2xl bg-slate-950/32 px-2 py-2 ring-1 ring-white/8">
+                    <p className="text-[11px] text-slate-500">ELO</p>
+                    <p className="text-lg font-black text-teal-100">
+                      {player.eloRating}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl bg-slate-950/32 px-2 py-2 ring-1 ring-white/8">
+                    <p className="text-[11px] text-slate-500">积分</p>
+                    <p className="text-lg font-black text-sky-100">
+                      {player.points}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl bg-slate-950/32 px-2 py-2 ring-1 ring-white/8">
+                    <p className="text-[11px] text-slate-500">徽章</p>
+                    <p className="text-lg font-black text-amber-100">
+                      {player.awardedBadges.length}
+                    </p>
+                  </div>
+                </div>
+              </Link>
+            );
+          })}
+        </section>
+      ) : (
+        <div className="surface-card rounded-3xl p-8 text-center text-sm text-slate-400">
+          暂无排行数据。
+        </div>
+      )}
+
+      {rest.length > 0 ? (
+        <section className="surface-card rounded-3xl p-3 sm:p-4">
+          <div className="mb-3 flex items-center gap-2 px-2">
+            <Shield className="h-4 w-4 text-slate-500" />
+            <h2 className="text-sm font-black tracking-wide text-slate-300">
+              追赶席位
+            </h2>
+          </div>
+          <div className="space-y-2">
+            {rest.map((player, restIndex) => {
+              const index = restIndex + 3;
               const total = player.matchesPlayed;
               const winRate =
                 total > 0 ? Math.round((player.wins / total) * 100) : 0;
-              const avatarFallback = (
-                player.nickname.trim().charAt(0) || "?"
-              ).toUpperCase();
+              const rank = displayRanks[index];
 
               return (
-                <tr
+                <Link
                   key={player.id}
-                  className="text-white transition hover:bg-gray-600"
+                  href={`/profile/${player.id}`}
+                  className="grid gap-3 rounded-2xl bg-white/[0.025] p-3 ring-1 ring-white/7 transition hover:bg-white/[0.045] sm:grid-cols-[72px_1fr_88px_88px_120px_64px] sm:items-center"
                 >
-                  <td className="px-6 py-4">
-                    {displayRanks[index] === 0 ? (
-                      <span className="w-8 text-center font-mono text-lg text-gray-500">
-                        -
-                      </span>
-                    ) : (
-                      rankBadge(displayRanks[index])
-                    )}
-                  </td>
-                  <td className="px-6 py-4">
-                    <Link
-                      href={`/profile/${player.id}`}
-                      className="flex items-center gap-3 transition hover:text-cyan-400"
-                    >
-                      <div className="grid h-10 w-10 place-items-center overflow-hidden rounded-full bg-cyan-600 font-bold text-white">
-                        {player.avatarUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={player.avatarUrl}
-                            alt={player.nickname}
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          avatarFallback
-                        )}
-                      </div>
-                      <span className="font-medium">{player.nickname}</span>
-                    </Link>
-                  </td>
-                  <td className="px-6 py-4 text-center font-bold">
+                  <div className="flex items-center justify-between sm:block">
+                    <span className="text-sm font-black text-slate-400">
+                      {rankBadge(rank)}
+                    </span>
+                    <span className="text-xs text-slate-600 sm:hidden">
+                      胜率 {winRate}%
+                    </span>
+                  </div>
+                  <div className="flex min-w-0 items-center gap-3">
+                    <PlayerAvatar player={player} />
+                    <div className="min-w-0">
+                      <p className="truncate font-bold text-slate-100">
+                        {player.nickname}
+                      </p>
+                      <p className="text-xs text-slate-500 sm:hidden">
+                        ELO {player.eloRating} · 积分 {player.points}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="hidden text-center font-black text-teal-100 sm:block">
                     {player.eloRating}
-                  </td>
-                  <td className="px-6 py-4 text-center font-bold text-cyan-300">
+                  </p>
+                  <p className="hidden text-center font-black text-sky-100 sm:block">
                     {player.points}
-                  </td>
-                  <td className="px-6 py-4 text-center">
-                    <span className="text-green-400">{player.wins}胜</span> /{" "}
-                    <span className="text-red-400">{player.losses}负</span>
-                  </td>
-                  <td className="px-6 py-4 text-center text-sm text-gray-300">
+                  </p>
+                  <p className="hidden text-center text-sm text-slate-300 sm:block">
+                    <span className="text-emerald-300">{player.wins}胜</span> /{" "}
+                    <span className="text-rose-300">{player.losses}负</span>
+                  </p>
+                  <p className="hidden text-center text-sm text-slate-300 sm:block">
                     {winRate}%
-                  </td>
-                  <td className="px-6 py-4 text-center text-amber-300">
-                    {player.awardedBadges.length}
-                  </td>
-                </tr>
+                  </p>
+                </Link>
               );
             })}
-          </tbody>
-        </table>
-      </div>
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }

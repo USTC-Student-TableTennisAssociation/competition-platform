@@ -17,6 +17,8 @@ export default async function QuickMatchPage() {
 
   await cleanupExpiredQuickResultsForUser(currentUser.id);
   const myClubId = toClubId(currentUser.id);
+  const historySince = new Date();
+  historySince.setDate(historySince.getDate() - QUICK_MATCH_HISTORY_DAYS);
 
   const [opponents, pending, history] = await Promise.all([
     prisma.user.findMany({
@@ -67,9 +69,7 @@ export default async function QuickMatchPage() {
     prisma.matchResult.findMany({
       where: {
         createdAt: {
-          gte: new Date(
-            Date.now() - QUICK_MATCH_HISTORY_DAYS * 24 * 60 * 60 * 1000,
-          ),
+          gte: historySince,
         },
         OR: [
           { winnerTeamIds: { has: currentUser.id } },

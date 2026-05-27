@@ -211,9 +211,10 @@ export default function AdminDashboardClient() {
 
   if (!state.unlocked) {
     return (
-      <div className="mx-auto max-w-3xl rounded-2xl border border-slate-700 bg-slate-900/80 p-8">
-        <h1 className="text-2xl font-bold text-white">管理员控制台</h1>
-        <p className="mt-3 text-sm text-slate-300">
+      <div className="surface-panel mx-auto max-w-3xl rounded-3xl p-6 sm:p-8">
+        <p className="eyebrow">Admin Verification</p>
+        <h1 className="mt-2 text-2xl font-black text-white">管理员控制台</h1>
+        <p className="mt-3 text-sm leading-6 text-slate-400">
           出于安全要求，进入管理员页需要邮箱二次验证；验证后可选择信任此设备 7
           天。
         </p>
@@ -224,7 +225,7 @@ export default function AdminDashboardClient() {
           <button
             type="submit"
             disabled={pending}
-            className="rounded-md border border-cyan-500/40 px-4 py-2 text-sm text-cyan-200 hover:bg-cyan-500/10 disabled:opacity-60"
+            className="btn-secondary rounded-2xl px-4 py-2 text-sm font-semibold disabled:opacity-60"
           >
             {pending ? "发送中..." : "发送邮箱验证码"}
           </button>
@@ -247,7 +248,7 @@ export default function AdminDashboardClient() {
                 const target = event.currentTarget;
                 target.value = target.value.replace(/[^0-9]/g, "").slice(0, 6);
               }}
-              className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100"
+              className="input-dark w-full rounded-2xl px-3 py-2 text-slate-100"
               placeholder="请输入 6 位验证码"
             />
           </label>
@@ -265,7 +266,7 @@ export default function AdminDashboardClient() {
           <button
             type="submit"
             disabled={pending}
-            className="rounded-md border border-cyan-500/40 px-4 py-2 text-sm text-cyan-200 hover:bg-cyan-500/10 disabled:opacity-60"
+            className="btn-primary rounded-2xl px-4 py-2 text-sm font-bold disabled:opacity-60"
           >
             {pending ? "验证中..." : "验证并进入管理员控制台"}
           </button>
@@ -283,9 +284,10 @@ export default function AdminDashboardClient() {
 
   return (
     <div className="mx-auto max-w-7xl space-y-8">
-      <section className="rounded-2xl border border-slate-700 bg-slate-900/80 p-6">
-        <h1 className="text-2xl font-bold text-white">管理员控制台</h1>
-        <p className="mt-2 text-sm text-slate-400">
+      <section className="surface-panel rounded-3xl p-5 sm:p-6">
+        <p className="eyebrow">Operations Console</p>
+        <h1 className="mt-2 text-2xl font-black text-white">管理员控制台</h1>
+        <p className="mt-2 text-sm leading-6 text-slate-400">
           可管理用户封禁/删除/资料编辑，批量创建测试账号，并批量加入比赛。
         </p>
         {state.success ? (
@@ -297,13 +299,13 @@ export default function AdminDashboardClient() {
       </section>
 
       <section className="grid gap-6">
-        <div className="rounded-2xl border border-slate-700 bg-slate-900/80 p-6">
-          <h2 className="text-lg font-semibold text-white">网站开关</h2>
+        <div className="surface-card rounded-3xl p-5 sm:p-6">
+          <h2 className="text-lg font-black text-white">网站开关</h2>
           <p className="mt-1 text-xs text-slate-400">
             关闭后普通用户将被引导到站点关闭页面，管理员仍可进入控制台。
           </p>
           <div className="mt-4 flex flex-wrap items-center gap-3">
-            <span className="text-sm text-slate-200">
+            <span className="rounded-full bg-white/[0.045] px-3 py-1 text-sm font-semibold text-slate-200 ring-1 ring-white/8">
               当前状态：{state.siteClosed ? "已关闭" : "运行中"}
             </span>
             <form action={formAction}>
@@ -317,7 +319,7 @@ export default function AdminDashboardClient() {
               <button
                 type="submit"
                 disabled={pending}
-                className="rounded-md border border-amber-500/40 px-4 py-2 text-sm text-amber-200 hover:bg-amber-500/10 disabled:opacity-60"
+                className="rounded-2xl border border-amber-300/24 bg-amber-400/8 px-4 py-2 text-sm font-bold text-amber-100 hover:bg-amber-400/12 disabled:opacity-60"
               >
                 {pending
                   ? "处理中..."
@@ -330,18 +332,18 @@ export default function AdminDashboardClient() {
         </div>
         <form
           action={formAction}
-          className="rounded-2xl border border-slate-700 bg-slate-900/80 p-6"
+          className="surface-card rounded-3xl p-5 sm:p-6"
         >
           <input type="hidden" name="csrfToken" defaultValue="" />
           <input type="hidden" name="intent" value="createTestAccounts" />
-          <h2 className="text-lg font-semibold text-white">批量创建测试账号</h2>
+          <h2 className="text-lg font-black text-white">批量创建测试账号</h2>
           <div className="mt-4 grid gap-3">
             <label className="space-y-1 text-sm text-slate-300">
               <span>邮箱前缀</span>
               <input
                 name="prefix"
                 defaultValue="test"
-                className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100"
+                className="input-dark w-full rounded-2xl px-3 py-2 text-slate-100"
               />
               <span className="text-xs text-slate-500">
                 数量为 1 时，将生成 prefix@mail.ustc.edu.cn（不加数字）。
@@ -355,7 +357,7 @@ export default function AdminDashboardClient() {
                 min={1}
                 max={200}
                 defaultValue={20}
-                className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100"
+                className="input-dark w-full rounded-2xl px-3 py-2 text-slate-100"
               />
             </label>
             <label className="space-y-1 text-sm text-slate-300">
@@ -364,14 +366,14 @@ export default function AdminDashboardClient() {
                 type="password"
                 name="password"
                 required
-                className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100"
+                className="input-dark w-full rounded-2xl px-3 py-2 text-slate-100"
               />
             </label>
           </div>
           <button
             type="submit"
             disabled={pending}
-            className="mt-4 rounded-md border border-cyan-500/40 px-4 py-2 text-sm text-cyan-200 hover:bg-cyan-500/10 disabled:opacity-60"
+            className="btn-primary mt-4 rounded-2xl px-4 py-2 text-sm font-bold disabled:opacity-60"
           >
             {pending ? "创建中..." : "批量创建测试账号"}
           </button>
@@ -389,9 +391,9 @@ export default function AdminDashboardClient() {
         </form>
       </section>
 
-      <section className="rounded-2xl border border-slate-700 bg-slate-900/80 p-6">
-        <h2 className="text-lg font-semibold text-white">用户管理</h2>
-        <p className="mt-1 text-xs text-slate-400">
+      <section className="surface-card rounded-3xl p-5 sm:p-6">
+        <h2 className="text-lg font-black text-white">用户管理</h2>
+        <p className="mt-1 text-xs leading-5 text-slate-400">
           字段：邮箱、昵称、头像、最后活动时间。支持搜索、排序、分页浏览、多选、批量封禁、批量删除、修改昵称和头像、设置管理员。
         </p>
 
@@ -405,7 +407,7 @@ export default function AdminDashboardClient() {
                 setSearchKeyword(event.target.value);
               }}
               placeholder="输入昵称或邮箱关键词"
-              className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100"
+              className="input-dark w-full rounded-2xl px-3 py-2 text-slate-100"
             />
           </label>
           <label className="space-y-1 text-sm text-slate-300">
@@ -423,7 +425,7 @@ export default function AdminDashboardClient() {
                     | "adminFirstLastActivityDesc",
                 );
               }}
-              className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100"
+              className="input-dark w-full rounded-2xl px-3 py-2 text-slate-100"
             >
               <option value="adminFirstLastActivityDesc">
                 管理员优先（最近活跃排序）
@@ -438,7 +440,7 @@ export default function AdminDashboardClient() {
 
         <form
           action={formAction}
-          className="mt-4 rounded-xl border border-slate-700 bg-slate-900/60 p-4"
+          className="mt-4 rounded-3xl bg-slate-950/36 p-4 ring-1 ring-white/8"
         >
           <input type="hidden" name="csrfToken" defaultValue="" />
           <input type="hidden" name="intent" value="bulkRegisterMatch" />
@@ -453,7 +455,7 @@ export default function AdminDashboardClient() {
               <select
                 name="matchId"
                 required
-                className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100"
+                className="input-dark w-full rounded-2xl px-3 py-2 text-slate-100"
               >
                 <option value="">请选择比赛</option>
                 {state.matches.map((match) => (
@@ -466,7 +468,7 @@ export default function AdminDashboardClient() {
             <button
               type="submit"
               disabled={pending || validSelectedUserIds.length === 0}
-              className="rounded-md border border-cyan-500/40 px-4 py-2 text-sm text-cyan-200 hover:bg-cyan-500/10 disabled:opacity-60"
+              className="btn-secondary rounded-2xl px-4 py-2 text-sm font-semibold disabled:opacity-60"
             >
               {pending
                 ? "加入中..."
@@ -488,7 +490,7 @@ export default function AdminDashboardClient() {
             <button
               type="submit"
               disabled={pending || validSelectedUserIds.length === 0}
-              className="w-full rounded-md border border-amber-500/40 px-4 py-2 text-sm text-amber-200 hover:bg-amber-500/10 disabled:opacity-60"
+              className="w-full rounded-2xl border border-amber-300/24 bg-amber-400/8 px-4 py-2 text-sm font-bold text-amber-100 hover:bg-amber-400/12 disabled:opacity-60"
             >
               {pending
                 ? "处理中..."
@@ -507,7 +509,7 @@ export default function AdminDashboardClient() {
             <button
               type="submit"
               disabled={pending || validSelectedUserIds.length === 0}
-              className="w-full rounded-md border border-rose-500/40 px-4 py-2 text-sm text-rose-200 hover:bg-rose-500/10 disabled:opacity-60"
+              className="w-full rounded-2xl border border-rose-300/24 bg-rose-400/8 px-4 py-2 text-sm font-bold text-rose-100 hover:bg-rose-400/12 disabled:opacity-60"
             >
               {pending
                 ? "处理中..."
@@ -525,14 +527,14 @@ export default function AdminDashboardClient() {
             <button
               type="button"
               onClick={toggleCurrentPage}
-              className="rounded-md border border-slate-600 px-3 py-1 text-xs text-slate-200 hover:bg-slate-700/40"
+              className="btn-secondary rounded-xl px-3 py-1 text-xs"
             >
               {allCurrentPageSelected ? "取消本页全选" : "全选本页"}
             </button>
             <button
               type="button"
               onClick={() => setSelectedUserIds([])}
-              className="rounded-md border border-slate-600 px-3 py-1 text-xs text-slate-200 hover:bg-slate-700/40"
+              className="btn-secondary rounded-xl px-3 py-1 text-xs"
             >
               清空已选
             </button>
@@ -540,7 +542,7 @@ export default function AdminDashboardClient() {
               type="button"
               disabled={safePage <= 1}
               onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-              className="rounded-md border border-slate-600 px-3 py-1 text-xs text-slate-200 hover:bg-slate-700/40 disabled:opacity-50"
+              className="btn-secondary rounded-xl px-3 py-1 text-xs disabled:opacity-50"
             >
               上一页
             </button>
@@ -550,7 +552,7 @@ export default function AdminDashboardClient() {
               onClick={() =>
                 setCurrentPage((prev) => Math.min(totalPages, prev + 1))
               }
-              className="rounded-md border border-slate-600 px-3 py-1 text-xs text-slate-200 hover:bg-slate-700/40 disabled:opacity-50"
+              className="btn-secondary rounded-xl px-3 py-1 text-xs disabled:opacity-50"
             >
               下一页
             </button>
@@ -561,7 +563,7 @@ export default function AdminDashboardClient() {
           {pagedUsers.map((user) => (
             <div
               key={user.id}
-              className="rounded-xl border border-slate-700 bg-slate-800/40 p-3"
+              className="rounded-3xl bg-white/[0.025] p-3 ring-1 ring-white/8"
             >
               <div
                 onClick={() =>
@@ -602,11 +604,11 @@ export default function AdminDashboardClient() {
                     <p className="text-sm font-semibold text-slate-100">
                       {user.nickname}
                     </p>
-                    <span className="rounded-full border border-slate-600 px-2 py-0.5 text-[11px] text-slate-300">
+                    <span className="rounded-full bg-white/[0.045] px-2 py-0.5 text-[11px] text-slate-300 ring-1 ring-white/8">
                       {user.role === "admin" ? "管理员" : "普通用户"}
                     </span>
                     {user.isBanned ? (
-                      <span className="rounded-full border border-rose-500/60 px-2 py-0.5 text-[11px] text-rose-300">
+                      <span className="rounded-full bg-rose-400/10 px-2 py-0.5 text-[11px] text-rose-200 ring-1 ring-rose-300/20">
                         已封禁
                       </span>
                     ) : null}
@@ -629,7 +631,7 @@ export default function AdminDashboardClient() {
                   <div className="flex flex-wrap items-center gap-2 text-xs">
                     <Link
                       href={`/profile/${user.id}`}
-                      className="rounded-md border border-slate-600 px-2.5 py-1 text-slate-200 hover:bg-slate-700/40"
+                      className="btn-secondary rounded-xl px-2.5 py-1 text-slate-200"
                       onClick={(event) => event.stopPropagation()}
                     >
                       查看个人主页（普通视图）
@@ -648,18 +650,18 @@ export default function AdminDashboardClient() {
                         aria-label="昵称"
                         name="nickname"
                         defaultValue={user.nickname}
-                        className="rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+                        className="input-dark rounded-2xl px-3 py-2 text-xs text-slate-100"
                       />
                       <input
                         name="avatarUrl"
                         defaultValue={user.avatarUrl ?? ""}
                         placeholder="头像 URL"
-                        className="rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+                        className="input-dark rounded-2xl px-3 py-2 text-xs text-slate-100"
                       />
                       <button
                         type="submit"
                         disabled={pending}
-                        className="rounded-md border border-cyan-500/40 px-3 py-2 text-xs text-cyan-200 hover:bg-cyan-500/10 disabled:opacity-60"
+                        className="btn-secondary rounded-2xl px-3 py-2 text-xs disabled:opacity-60"
                       >
                         保存资料
                       </button>
@@ -677,7 +679,7 @@ export default function AdminDashboardClient() {
                       aria-label="角色"
                       name="role"
                       defaultValue={user.role}
-                      className="rounded-lg border border-slate-600 bg-slate-900 px-2.5 py-2 text-xs text-slate-100"
+                      className="input-dark rounded-2xl px-2.5 py-2 text-xs text-slate-100"
                     >
                       <option value="user">普通用户</option>
                       <option value="admin">管理员</option>
@@ -685,7 +687,7 @@ export default function AdminDashboardClient() {
                     <button
                       type="submit"
                       disabled={pending}
-                      className="rounded-md border border-amber-500/40 px-3 py-2 text-xs text-amber-200 hover:bg-amber-500/10 disabled:opacity-60"
+                      className="rounded-2xl border border-amber-300/24 bg-amber-400/8 px-3 py-2 text-xs font-bold text-amber-100 hover:bg-amber-400/12 disabled:opacity-60"
                     >
                       更新权限
                     </button>
@@ -697,8 +699,8 @@ export default function AdminDashboardClient() {
         </div>
       </section>
 
-      <section className="rounded-2xl border border-slate-700 bg-slate-900/80 p-6">
-        <h2 className="text-lg font-semibold text-white">审计日志</h2>
+      <section className="surface-card rounded-3xl p-5 sm:p-6">
+        <h2 className="text-lg font-black text-white">审计日志</h2>
         <p className="mt-1 text-xs text-slate-400">
           最近 50 条管理员操作记录（时间、操作者、动作、对象）。
         </p>
@@ -710,13 +712,13 @@ export default function AdminDashboardClient() {
             {state.auditLogs.map((log) => (
               <div
                 key={log.id}
-                className="rounded-lg border border-slate-700/70 bg-slate-950/40 px-3 py-2"
+                className="rounded-2xl bg-slate-950/36 px-3 py-2 ring-1 ring-white/8"
               >
                 <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
                   <span className="text-slate-400">
                     {formatDateTime(log.createdAt)}
                   </span>
-                  <span className="rounded-full border border-slate-600 px-2 py-0.5">
+                  <span className="rounded-full bg-white/[0.045] px-2 py-0.5 ring-1 ring-white/8">
                     {resolveAuditActionLabel(log.action, log.details)}
                   </span>
                   <span className="text-slate-500">·</span>

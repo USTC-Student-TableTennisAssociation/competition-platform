@@ -54,16 +54,22 @@ export default function MatchCard({
 
   const statusStyles = {
     报名中: {
-      badge: "bg-emerald-500/25 text-emerald-200 ring-1 ring-emerald-400/50",
-      glow: "hover:shadow-emerald-500/15",
+      badge: "bg-emerald-400/12 text-emerald-100 ring-1 ring-emerald-300/18",
+      accent: "from-emerald-300/65 to-teal-300/20",
+      action: "立即报名",
+      muted: "",
     },
     进行中: {
-      badge: "bg-sky-500/25 text-sky-200 ring-1 ring-sky-400/50",
-      glow: "hover:shadow-sky-500/15",
+      badge: "bg-sky-400/12 text-sky-100 ring-1 ring-sky-300/18",
+      accent: "from-sky-300/65 to-cyan-300/20",
+      action: "查看赛程",
+      muted: "",
     },
     已结束: {
-      badge: "bg-slate-500/30 text-slate-200 ring-1 ring-slate-300/40",
-      glow: "hover:shadow-slate-500/10",
+      badge: "bg-slate-500/12 text-slate-300 ring-1 ring-slate-300/12",
+      accent: "from-slate-500/40 to-slate-600/10",
+      action: "查看记录",
+      muted: "opacity-72 hover:opacity-100",
     },
   };
 
@@ -76,108 +82,77 @@ export default function MatchCard({
   return (
     <Link
       href={`/matchs/${id}`}
-      className={`group relative overflow-hidden rounded-xl border border-slate-600/70 bg-linear-to-br from-slate-800 via-slate-800 to-slate-900 p-4 text-white shadow-lg shadow-black/20 transition-all duration-300 hover:-translate-y-0.5 hover:border-cyan-400/45 sm:rounded-2xl sm:p-6 ${statusStyles[status].glow}`}
+      className={`group surface-panel relative overflow-hidden rounded-3xl p-4 text-white transition duration-200 hover:-translate-y-0.5 hover:border-teal-200/28 sm:p-5 ${statusStyles[status].muted}`}
     >
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(34,211,238,0.15),transparent_55%)] opacity-70" />
+      <div
+        className={`pointer-events-none absolute inset-x-0 top-0 h-1 bg-linear-to-r ${statusStyles[status].accent}`}
+      />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_90%_0%,rgba(45,212,191,0.1),transparent_42%)] opacity-80" />
 
-      <div className="relative">
-        <div className="mb-2 flex items-start justify-between gap-2 sm:mb-3 sm:gap-3">
+      <div className="relative flex h-full flex-col">
+        <div className="mb-3 flex items-start justify-between gap-2">
           <div className="flex items-center gap-2">
             <span
-              className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold tracking-wide sm:px-3 sm:py-1 sm:text-xs ${statusStyles[status].badge}`}
+              className={`status-pill ${statusStyles[status].badge}`}
             >
               {status}
             </span>
-            <span className="inline-flex items-center rounded-full border border-slate-500/60 bg-slate-800/80 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-slate-200 sm:px-3 sm:py-1 sm:text-xs">
+            <span className="status-pill bg-white/[0.045] text-slate-300 ring-1 ring-white/10">
               {typeLabelMap[type]}
             </span>
           </div>
-          <span className="text-[11px] text-slate-400 sm:text-xs">
-            查看详情
+          <span className="rounded-full bg-white/[0.04] px-2.5 py-1 text-[11px] font-medium text-slate-400 transition group-hover:text-teal-100">
+            {statusStyles[status].action}
           </span>
         </div>
 
-        <h3 className="mb-3 text-lg font-bold leading-tight text-white/95 sm:mb-5 sm:text-xl">
+        <h3 className="line-clamp-2 min-h-[3rem] text-lg font-black leading-snug text-white/95 sm:text-xl">
           {title}
         </h3>
 
-        <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
-          <div className="rounded-xl border border-slate-700/80 bg-slate-900/45 p-2.5 sm:p-3">
-            <div className="mb-1.5 flex items-center gap-1.5 text-slate-300 sm:mb-2 sm:gap-2">
-              <CalendarDays className="h-3.5 w-3.5 text-cyan-300 sm:h-4 sm:w-4" />
-              <span className="text-[11px] tracking-wide sm:text-xs">
-                比赛时间
-              </span>
+        <div className="mt-4 rounded-2xl bg-slate-950/35 p-3 ring-1 ring-white/8">
+          <div className="flex items-center gap-3" title={matchTimeParts.fullText}>
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-teal-400/10 text-teal-100 ring-1 ring-teal-200/10">
+              <CalendarDays className="h-5 w-5" />
             </div>
-            <div
-              className="space-y-1.5 sm:space-y-2"
-              title={matchTimeParts.fullText}
-            >
-              <p className="text-xs text-slate-100 sm:text-sm">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold text-slate-100">
                 {matchTimeParts.dateText}
               </p>
-              <div className="flex items-center gap-2">
-                <span className="inline-flex h-5 items-center rounded-md border border-slate-600 bg-slate-800/80 px-1.5 text-[11px] text-slate-200 sm:h-6 sm:px-2 sm:text-xs">
-                  {matchTimeParts.weekText}
-                </span>
-                <span className="inline-flex h-5 items-center rounded-md border border-cyan-500/35 bg-cyan-500/10 px-1.5 font-mono text-[11px] tabular-nums text-cyan-200 sm:h-6 sm:px-2 sm:text-xs">
-                  {matchTimeParts.timeText}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-slate-700/80 bg-slate-900/45 p-2.5 sm:p-3">
-            <div className="mb-1.5 flex items-center gap-1.5 text-slate-300 sm:mb-2 sm:gap-2">
-              <Clock3 className="h-3.5 w-3.5 text-cyan-300 sm:h-4 sm:w-4" />
-              <span className="text-[11px] tracking-wide sm:text-xs">
-                报名截止
-              </span>
-            </div>
-            <div
-              className="space-y-1.5 sm:space-y-2"
-              title={deadlineParts.fullText}
-            >
-              <p className="text-xs text-slate-100 sm:text-sm">
-                {deadlineParts.dateText}
+              <p className="mt-0.5 text-xs text-slate-400">
+                {matchTimeParts.weekText} · {matchTimeParts.timeText}
               </p>
-              <div className="flex items-center gap-2">
-                <span className="inline-flex h-5 items-center rounded-md border border-slate-600 bg-slate-800/80 px-1.5 text-[11px] text-slate-200 sm:h-6 sm:px-2 sm:text-xs">
-                  {deadlineParts.weekText}
-                </span>
-                <span className="inline-flex h-5 items-center rounded-md border border-cyan-500/35 bg-cyan-500/10 px-1.5 font-mono text-[11px] tabular-nums text-cyan-200 sm:h-6 sm:px-2 sm:text-xs">
-                  {deadlineParts.timeText}
-                </span>
-              </div>
             </div>
           </div>
+        </div>
 
-          <div className="rounded-xl border border-slate-700/80 bg-slate-900/45 p-2.5 sm:p-3">
-            <div className="mb-1.5 flex items-center gap-1.5 text-slate-300 sm:mb-2 sm:gap-2">
-              <MapPin className="h-3.5 w-3.5 text-cyan-300 sm:h-4 sm:w-4" />
-              <span className="text-[11px] tracking-wide sm:text-xs">
-                比赛地点
-              </span>
+        <div className="mt-3 grid grid-cols-2 gap-2.5 text-xs sm:text-sm">
+          <div className="rounded-2xl bg-white/[0.035] p-3 ring-1 ring-white/8">
+            <div className="mb-2 flex items-center gap-1.5 text-slate-500">
+              <Clock3 className="h-3.5 w-3.5" />
+              <span>截止</span>
             </div>
-            <p
-              className="truncate text-xs text-slate-100 sm:text-sm"
-              title={location}
-            >
-              {location}
+            <p className="truncate font-medium text-slate-200" title={deadlineParts.fullText}>
+              {deadlineParts.weekText} {deadlineParts.timeText}
             </p>
           </div>
 
-          <div className="rounded-xl border border-slate-700/80 bg-slate-900/45 p-2.5 sm:p-3">
-            <div className="mb-1.5 flex items-center gap-1.5 text-slate-300 sm:mb-2 sm:gap-2">
-              <Users className="h-3.5 w-3.5 text-cyan-300 sm:h-4 sm:w-4" />
-              <span className="text-[11px] tracking-wide sm:text-xs">
-                {type === "double" ? "目前组数" : "报名人数"}
-              </span>
+          <div className="rounded-2xl bg-white/[0.035] p-3 ring-1 ring-white/8">
+            <div className="mb-2 flex items-center gap-1.5 text-slate-500">
+              <Users className="h-3.5 w-3.5" />
+              <span>{type === "double" ? "组数" : "人数"}</span>
             </div>
-            <p className="text-xs text-slate-100 sm:text-sm">
+            <p className="font-black tabular-nums text-slate-100">
               {type === "double"
                 ? `${Math.floor(participants / 2)} 组`
                 : `${participants} 人`}
+            </p>
+          </div>
+
+          <div className="col-span-2 flex items-center gap-2 rounded-2xl bg-white/[0.025] p-3 text-slate-300 ring-1 ring-white/8">
+            <MapPin className="h-4 w-4 shrink-0 text-slate-500" />
+            <p className="truncate" title={location}>
+              {location}
             </p>
           </div>
         </div>

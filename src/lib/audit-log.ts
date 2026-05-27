@@ -1,4 +1,5 @@
 import { headers } from "next/headers";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 export type AuditLogParams = {
@@ -37,7 +38,8 @@ export async function writeAuditLog({
         entityId,
         ip: ip ?? null,
         userAgent: userAgent ?? null,
-        details: details ?? undefined,
+        details:
+          details == null ? undefined : (details as Prisma.InputJsonObject),
       },
     });
   } catch (error) {

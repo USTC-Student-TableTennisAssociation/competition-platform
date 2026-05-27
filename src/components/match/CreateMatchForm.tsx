@@ -68,8 +68,8 @@ export default function CreateMatchForm() {
   return (
     <form action={formAction} className="space-y-8">
       {/* ===== 基础信息 ===== */}
-      <section className="rounded-xl border border-slate-700 bg-slate-800/60 p-5">
-        <h2 className="mb-4 text-sm font-semibold tracking-wide text-cyan-200">
+      <section className="surface-card rounded-3xl p-5">
+        <h2 className="mb-4 text-sm font-black tracking-wide text-teal-100">
           基础信息
         </h2>
         <div className="space-y-4">
@@ -85,7 +85,7 @@ export default function CreateMatchForm() {
               name="title"
               required
               placeholder="例如：校内春季积分赛"
-              className="w-full rounded-lg border border-slate-600 bg-slate-900 px-4 py-2 text-slate-100 placeholder:text-slate-500"
+              className="input-dark w-full rounded-2xl px-4 py-2 text-slate-100 placeholder:text-slate-600"
             />
           </div>
           <div>
@@ -100,7 +100,7 @@ export default function CreateMatchForm() {
               name="description"
               rows={4}
               placeholder="简要说明比赛规则、奖项和注意事项"
-              className="w-full rounded-lg border border-slate-600 bg-slate-900 px-4 py-2 text-slate-100 placeholder:text-slate-500"
+              className="input-dark w-full rounded-2xl px-4 py-2 text-slate-100 placeholder:text-slate-600"
             />
           </div>
           <div>
@@ -115,15 +115,15 @@ export default function CreateMatchForm() {
               name="location"
               required
               placeholder="例如：西区体育馆二楼"
-              className="w-full rounded-lg border border-slate-600 bg-slate-900 px-4 py-2 text-slate-100 placeholder:text-slate-500"
+              className="input-dark w-full rounded-2xl px-4 py-2 text-slate-100 placeholder:text-slate-600"
             />
           </div>
         </div>
       </section>
 
       {/* ===== 时间设置 ===== */}
-      <section className="rounded-xl border border-slate-700 bg-slate-800/60 p-5">
-        <h2 className="mb-4 text-sm font-semibold tracking-wide text-cyan-200">
+      <section className="surface-card rounded-3xl p-5">
+        <h2 className="mb-4 text-sm font-black tracking-wide text-teal-100">
           时间设置
         </h2>
 
@@ -143,7 +143,7 @@ export default function CreateMatchForm() {
 
         <div className="grid gap-5 lg:grid-cols-2">
           {/* -- 比赛开始时间 -- */}
-          <div className="rounded-xl border border-slate-700 bg-slate-900/70 p-4">
+          <div className="rounded-3xl bg-slate-950/36 p-4 ring-1 ring-white/8">
             <p className="mb-3 text-sm font-medium text-slate-200">
               比赛开始时间 *
             </p>
@@ -155,7 +155,7 @@ export default function CreateMatchForm() {
                 required
                 value={matchDate}
                 onChange={(e) => setMatchDate(e.target.value)}
-                className="native-picker native-picker-date h-10 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 text-sm text-slate-100 accent-cyan-500"
+                className="native-picker native-picker-date input-dark h-10 w-full rounded-2xl px-3 text-sm text-slate-100 accent-teal-500"
               />
               <input
                 type="time"
@@ -165,13 +165,13 @@ export default function CreateMatchForm() {
                 value={matchTime}
                 step={1800}
                 onChange={(e) => setMatchTime(e.target.value)}
-                className="native-picker native-picker-time h-10 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 text-sm text-slate-100 accent-cyan-500"
+                className="native-picker native-picker-time input-dark h-10 w-full rounded-2xl px-3 text-sm text-slate-100 accent-teal-500"
               />
             </div>
           </div>
 
           {/* -- 报名截止时间 -- */}
-          <div className="rounded-xl border border-slate-700 bg-slate-900/70 p-4">
+          <div className="rounded-3xl bg-slate-950/36 p-4 ring-1 ring-white/8">
             <p className="mb-3 text-sm font-medium text-slate-200">
               报名截止时间 *
             </p>
@@ -184,7 +184,7 @@ export default function CreateMatchForm() {
                 value={deadlineDate}
                 max={matchDate || undefined}
                 onChange={(e) => setDeadlineDate(e.target.value)}
-                className="native-picker native-picker-date h-10 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 text-sm text-slate-100 accent-cyan-500"
+                className="native-picker native-picker-date input-dark h-10 w-full rounded-2xl px-3 text-sm text-slate-100 accent-teal-500"
               />
               <input
                 type="time"
@@ -194,7 +194,7 @@ export default function CreateMatchForm() {
                 value={deadlineTime}
                 step={1800}
                 onChange={(e) => setDeadlineTime(e.target.value)}
-                className="native-picker native-picker-time h-10 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 text-sm text-slate-100 accent-cyan-500"
+                className="native-picker native-picker-time input-dark h-10 w-full rounded-2xl px-3 text-sm text-slate-100 accent-teal-500"
               />
             </div>
           </div>
@@ -205,8 +205,8 @@ export default function CreateMatchForm() {
       </section>
 
       {/* ===== 赛制 ===== */}
-      <section className="rounded-xl border border-slate-700 bg-slate-800/60 p-5">
-        <h2 className="mb-4 text-sm font-semibold tracking-wide text-cyan-200">
+      <section className="surface-card rounded-3xl p-5">
+        <h2 className="mb-4 text-sm font-black tracking-wide text-teal-100">
           赛制
         </h2>
         <div className="grid gap-4 md:grid-cols-2">
@@ -217,7 +217,7 @@ export default function CreateMatchForm() {
             <select
               id="type"
               name="type"
-              className="w-full rounded-lg border border-slate-600 bg-slate-900 px-4 py-2 text-slate-100"
+              className="input-dark w-full rounded-2xl px-4 py-2 text-slate-100"
             >
               <option value="single">单打</option>
               <option value="double">双打</option>
@@ -240,14 +240,14 @@ export default function CreateMatchForm() {
                   e.target.value as "group_only" | "group_then_knockout",
                 )
               }
-              className="w-full rounded-lg border border-slate-600 bg-slate-900 px-4 py-2 text-slate-100"
+              className="input-dark w-full rounded-2xl px-4 py-2 text-slate-100"
             >
               <option value="group_only">分组比赛</option>
               <option value="group_then_knockout">前期分组后期淘汰</option>
             </select>
           </div>
         </div>
-        <div className="mt-4 rounded-lg border border-cyan-400/25 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100">
+        <div className="mt-4 rounded-2xl bg-teal-400/8 px-3 py-2 text-xs leading-5 text-teal-100 ring-1 ring-teal-300/12">
           {formatTips}
         </div>
       </section>
@@ -259,7 +259,7 @@ export default function CreateMatchForm() {
 
       <button
         disabled={pending || !!timeError}
-        className="w-full rounded-lg bg-linear-to-r from-cyan-500 to-blue-500 py-3 font-semibold text-white disabled:opacity-60"
+        className="btn-primary w-full rounded-2xl py-3 font-bold text-white disabled:opacity-60"
       >
         {pending ? "发布中..." : "发布比赛"}
       </button>

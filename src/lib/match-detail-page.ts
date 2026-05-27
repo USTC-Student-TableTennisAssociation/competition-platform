@@ -93,6 +93,70 @@ export function buildAdminPendingResults(params: {
     });
 }
 
+export function buildAdminConfirmedResults(params: {
+  results: Array<{
+    id: string;
+    confirmed: boolean;
+    winnerTeamIds: string[];
+    loserTeamIds: string[];
+    score: unknown;
+    reporter: { nickname: string };
+  }>;
+  registrations: Array<{ userId: string; user: { nickname: string } }>;
+}) {
+  const { results, registrations } = params;
+
+  return results
+    .filter((result) => result.confirmed)
+    .map((result) => {
+      const winnerLabel = result.winnerTeamIds
+        .map(
+          (uid) =>
+            registrations.find((registration) => registration.userId === uid)
+              ?.user.nickname ?? uid,
+        )
+        .join(" / ");
+      const loserLabel = result.loserTeamIds
+        .map(
+          (uid) =>
+            registrations.find((registration) => registration.userId === uid)
+              ?.user.nickname ?? uid,
+        )
+        .join(" / ");
+
+      return {
+        id: result.id,
+        reporterName: result.reporter.nickname,
+        winnerLabel,
+        loserLabel,
+        scoreText:
+          typeof result.score === "object" &&
+          result.score &&
+          "text" in result.score
+            ? String(result.score.text ?? "")
+            : "",
+        phaseLabel:
+          typeof result.score === "object" &&
+          result.score &&
+          "phase" in result.score
+            ? String(result.score.phase ?? "")
+            : "",
+        groupName:
+          typeof result.score === "object" &&
+          result.score &&
+          "groupName" in result.score
+            ? String(result.score.groupName ?? "")
+            : "",
+        knockoutRound:
+          typeof result.score === "object" &&
+          result.score &&
+          "knockoutRound" in result.score
+            ? String(result.score.knockoutRound ?? "")
+            : "",
+      };
+    });
+}
+
 export function buildInitialAdminFormContext(params: {
   currentUser: { id: string; role: string } | null;
   createdBy: string;

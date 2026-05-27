@@ -184,8 +184,11 @@ function verifyReauthValue(rawValue: string, userId: string) {
 
   const payload = `${cookieUserId}.${expiresAt}`
   const expectedSig = createHmac('sha256', getReauthSecret()).update(payload).digest('hex')
+  const sigBuffer = Buffer.from(sig, 'hex')
+  const expectedBuffer = Buffer.from(expectedSig, 'hex')
 
-  return timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig))
+  if (sigBuffer.length !== expectedBuffer.length) return false
+  return timingSafeEqual(sigBuffer, expectedBuffer)
 }
 
 function parseEmailChallengeValue(rawValue: string, userId: string) {
@@ -198,7 +201,10 @@ function parseEmailChallengeValue(rawValue: string, userId: string) {
 
   const payload = `${cookieUserId}.${codeHash}.${expiresAt}`
   const expectedSig = createHmac('sha256', getReauthSecret()).update(payload).digest('hex')
-  if (!timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig))) return null
+  const sigBuffer = Buffer.from(sig, 'hex')
+  const expectedBuffer = Buffer.from(expectedSig, 'hex')
+  if (sigBuffer.length !== expectedBuffer.length) return null
+  if (!timingSafeEqual(sigBuffer, expectedBuffer)) return null
 
   return {
     codeHash,

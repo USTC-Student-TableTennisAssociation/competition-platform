@@ -1,6 +1,11 @@
 import { cookies } from 'next/headers'
 import { prisma } from '@/lib/prisma'
-import { SESSION_COOKIE_NAME, verifySessionToken } from '@/lib/session'
+import {
+  createSessionAuthStamp,
+  safeEqualHex,
+  SESSION_COOKIE_NAME,
+  verifySessionToken,
+} from '@/lib/session'
 
 export async function getCurrentUser() {
   const cookieStore = await cookies()
@@ -37,12 +42,23 @@ export async function getCurrentUser() {
       matchesPlayed: true,
       role: true,
       emailVerifiedAt: true,
+      isBanned: true,
+      hashedPassword: true,
     },
   })
 
-  if (!user?.emailVerifiedAt) {
+  if (!user?.emailVerifiedAt || user.isBanned) {
     return null
   }
 
-  return user
+  const expectedAuthStamp = createSessionAuthStamp(user.id, user.hashedPassword)
+  if (!expectedAuthStamp || !safeEqualHex(session.authStamp, expectedAuthStamp)) {
+    return null
+  }
+
+  // Keep sensitive account state out of component props and action callers.
+  const { hashedPassword, isBanned, ...safeUser } = user
+  void hashedPassword
+  void isBanned
+  return safeUser
 }

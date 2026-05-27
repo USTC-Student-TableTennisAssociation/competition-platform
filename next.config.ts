@@ -10,9 +10,6 @@ const nextConfig: NextConfig = {
       "./node_modules/pdfkit/js/data/**",
     ],
   },
-  typescript: {
-    ignoreBuildErrors: true,
-  },
   async headers() {
     const isProd = process.env.NODE_ENV === "production";
     const csp = [
