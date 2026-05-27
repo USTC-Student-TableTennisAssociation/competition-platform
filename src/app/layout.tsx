@@ -1,8 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import Header from "@/components/layout/Header";
-import Footer from "@/components/layout/Footer";
-import Sidebar from "@/components/layout/Sidebar";
 import CsrfFormInjector from "@/components/security/CsrfFormInjector";
 import { getCurrentUser } from "@/lib/auth";
 import { cookies } from "next/headers";
@@ -44,8 +42,7 @@ export default async function RootLayout({
       <body className="min-h-screen overflow-x-hidden bg-[#070A12] text-slate-100">
         <CsrfFormInjector />
         <div className="min-h-screen min-w-0">
-          <Sidebar />
-          <div className="flex min-h-screen min-w-0 flex-col md:pl-64 xl:pl-72">
+          <div className="flex min-h-screen min-w-0 flex-col">
             <Header
               isLoggedIn={Boolean(currentUser)}
               adminViewEnabled={adminViewEnabled}
@@ -59,12 +56,11 @@ export default async function RootLayout({
                       role: currentUser.role,
                     }
                   : null
-              }
+                }
             />
-            <main className="mx-auto w-full max-w-7xl min-w-0 flex-1 px-3 py-4 sm:px-5 sm:py-6 md:px-7 md:py-8 xl:px-9">
+            <main className="mx-auto w-full max-w-[1680px] min-w-0 flex-1 px-3 py-4 sm:px-5 sm:py-6 md:px-7 md:py-8 xl:px-10">
               {children}
             </main>
-            <Footer />
           </div>
         </div>
       </body>
