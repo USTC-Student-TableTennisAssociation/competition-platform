@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import {
@@ -383,54 +384,46 @@ function PlayerStatusCard({
   ];
 
   return (
-    <Card className="p-4 sm:p-5">
-      <div className="grid gap-5 lg:grid-cols-[clamp(220px,15vw,300px)_minmax(0,1fr)]">
-        <div className="flex min-w-0 items-center gap-5 border-b border-[#30363d] pb-4 lg:flex-col lg:items-start lg:justify-center lg:border-b-0 lg:border-r lg:pb-0 lg:pr-5">
-          <Avatar
-            user={user}
-            size="h-[clamp(6rem,10vw,10.5rem)] w-[clamp(6rem,10vw,10.5rem)] text-4xl"
-          />
-          <div className="min-w-0">
-            <h2 className="truncate text-[clamp(2.15rem,2.8vw,3.5rem)] font-semibold leading-none text-white">
-              {user.nickname}
-            </h2>
-          </div>
+  <Card className="overflow-hidden">
+    <div className="grid md:grid-cols-[180px_minmax(0,1fr)] xl:grid-cols-[190px_minmax(0,1fr)]">
+      <div className="flex min-w-0 items-center gap-4 border-b border-[#30363d] p-4 text-center md:flex-col md:items-center md:justify-center md:border-b-0 md:border-r">
+        <Avatar user={user} size="h-20 w-20 text-2xl md:h-[160px] md:w-[160px]" />
+
+        <div className="min-w-0 md:mt-2 md:w-full">
+          <h2 className="mt-1 truncate text-2xl font-semibold leading-none text-white md:text-[28px]">
+            {user.nickname}
+          </h2>
+        </div>
+      </div>
+
+      <div className="flex min-w-0 flex-col px-4 py-4">
+        <div className="grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-3">
+          {metrics.map((item) => (
+            <div key={item.label} className="min-w-0 border-b border-[#30363d] pb-2">
+              <p className="text-[11px] font-medium text-slate-500">{item.label}</p>
+              <p className={`mt-1 truncate text-lg font-semibold tabular-nums leading-tight ${item.tone}`}>
+                {item.value}
+              </p>
+            </div>
+          ))}
         </div>
 
-        <div className="grid min-w-0 gap-4 lg:grid-rows-[auto_minmax(8rem,1fr)]">
-          <div className="grid grid-cols-2 gap-x-5 gap-y-3 sm:grid-cols-3 xl:gap-x-7">
-            {metrics.map((item) => (
-              <div
-                key={item.label}
-                className="min-w-0 border-b border-[#30363d] pb-2.5"
-              >
-                <p className="text-[11px] text-slate-500">{item.label}</p>
-                <p className={`mt-1 truncate text-xl font-semibold tabular-nums ${item.tone}`}>
-                  {item.value}
-                </p>
-              </div>
-            ))}
+        <div className="mt-3 min-w-0">
+          <div className="mb-1.5 flex items-center justify-between text-xs text-slate-400">
+            <span className="inline-flex items-center gap-1.5">
+              <TrendingUp className="h-3.5 w-3.5 text-orange-200" />
+              最近 ELO 走势
+            </span>
           </div>
 
-          <div className="min-w-0">
-            <div className="mb-2 flex items-center justify-between text-xs text-slate-400">
-              <span className="inline-flex items-center gap-1.5">
-                <TrendingUp className="h-3.5 w-3.5 text-orange-200" />
-                最近 ELO 走势
-              </span>
-              <span className={eloDelta >= 0 ? "text-emerald-300" : "text-rose-300"}>
-                {eloDelta >= 0 ? "+" : ""}
-                {eloDelta}
-              </span>
-            </div>
-            <div className="h-[clamp(8rem,12vw,10.5rem)] min-w-0 rounded-md bg-[#010409] lg:h-full lg:max-h-[11rem]">
-              <EloTrendChart points={eloPoints} compact />
-            </div>
+          <div className="h-[112px] w-full min-w-0">
+            <EloTrendChart points={eloPoints} compact />
           </div>
         </div>
       </div>
-    </Card>
-  );
+    </div>
+  </Card>
+ );
 }
 
 function OpenRegistrationList({ matches }: { matches: OpenMatchItem[] }) {
@@ -515,7 +508,7 @@ function LeaderboardPreview({
   myRank: number | null;
 }) {
   return (
-    <section className="border-t border-[#30363d] bg-[#0d1117] lg:min-h-[calc(100vh-3.5rem)] xl:border-l xl:border-t-0">
+    <section className="border-t border-[#30363d]">
       <div className="flex items-center justify-between gap-3 border-b border-[#30363d] px-4 py-3">
         <h2 className="text-sm font-semibold text-slate-100">排行榜预览</h2>
           <Link
@@ -551,6 +544,32 @@ function LeaderboardPreview({
           <span className="font-semibold text-slate-100">
             {myRank ? `#${myRank}` : "登录后查看"}
           </span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function AssociationBrandCard() {
+  return (
+    <section className="px-4 py-5">
+      <div className="flex items-center gap-3">
+        <div className="grid h-14 w-14 shrink-0 place-items-center rounded-lg border border-white/[0.08] bg-white/[0.035]">
+          <Image
+            src="/SVG/乒协徽章.svg"
+            alt="USTC TTA"
+            width={48}
+            height={48}
+            className="h-12 w-12 object-contain"
+          />
+        </div>
+        <div className="min-w-0">
+          <p className="text-lg font-semibold tracking-normal text-white">
+            USTC TTA
+          </p>
+          <p className="mt-0.5 text-xs text-slate-500">
+            乒协赛事平台
+          </p>
         </div>
       </div>
     </section>
@@ -869,7 +888,8 @@ export default async function Home() {
           <OpenRegistrationList matches={openMatchItems} />
         </main>
 
-        <aside className="lg:col-span-2 xl:sticky xl:top-14 xl:col-span-1 xl:self-start">
+        <aside className="border-t border-[#30363d] bg-[#0d1117] lg:col-span-2 xl:sticky xl:top-14 xl:col-span-1 xl:min-h-[calc(100vh-3.5rem)] xl:self-start xl:border-l xl:border-t-0">
+          <AssociationBrandCard />
           <LeaderboardPreview players={leaderboardPlayers} myRank={myRank} />
         </aside>
       </div>
