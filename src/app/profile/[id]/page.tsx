@@ -5,6 +5,16 @@ import { toClubId } from "@/lib/club-id";
 import BackLinkButton from "@/components/navigation/BackLinkButton";
 import ProfileOverview from "@/components/auth/ProfileOverview";
 
+function getCurrentTermStart() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+
+  if (month >= 8) return new Date(year, 8, 1);
+  if (month >= 1) return new Date(year, 1, 1);
+  return new Date(year - 1, 8, 1);
+}
+
 export default async function PublicProfilePage({
   params,
 }: {
@@ -35,32 +45,14 @@ export default async function PublicProfilePage({
     notFound();
   }
 
-  const [eloHistory, recentResults, badgeRows] = await Promise.all([
+  const termStart = getCurrentTermStart();
+  const [eloHistory, badgeRows, betterRankCount, termRegistrationCount] =
+    await Promise.all([
     prisma.eloHistory.findMany({
       where: { userId: user.id },
       orderBy: { createdAt: "asc" },
       take: 20,
       select: { eloAfter: true, createdAt: true },
-    }),
-    prisma.matchResult.findMany({
-      where: {
-        confirmed: true,
-        OR: [
-          { winnerTeamIds: { has: user.id } },
-          { loserTeamIds: { has: user.id } },
-        ],
-      },
-      include: {
-        match: {
-          select: {
-            id: true,
-            title: true,
-            dateTime: true,
-          },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-      take: 5,
     }),
     prisma.userBadge.findMany({
       where: { userId: user.id },
@@ -76,6 +68,25 @@ export default async function PublicProfilePage({
       },
       orderBy: { awardedAt: "desc" },
       take: 12,
+    }),
+    prisma.user.count({
+      where: {
+        isBanned: false,
+        OR: [
+          { eloRating: { gt: user.eloRating } },
+          {
+            eloRating: user.eloRating,
+            points: { gt: user.points },
+          },
+        ],
+      },
+    }),
+    prisma.registration.count({
+      where: {
+        userId: user.id,
+        createdAt: { gte: termStart },
+        match: { isQuickMatch: false },
+      },
     }),
   ]);
 
@@ -96,22 +107,11 @@ export default async function PublicProfilePage({
           losses: user.losses,
         }}
         clubId={toClubId(user.id)}
+        rank={betterRankCount + 1}
+        termCount={termRegistrationCount}
         eloPoints={eloHistory.map((item) => ({
           eloAfter: item.eloAfter,
           createdAt: item.createdAt.toISOString(),
-        }))}
-        recentResults={recentResults.map((item) => ({
-          id: item.id,
-          matchId: item.match.id,
-          matchTitle: item.match.title,
-          matchDate: item.match.dateTime.toISOString(),
-          isWin: item.winnerTeamIds.includes(user.id),
-          scoreText:
-            typeof item.score === "object" && item.score && "text" in item.score
-              ? String(item.score.text ?? "")
-              : typeof item.score === "string"
-                ? item.score
-                : "",
         }))}
         badges={badgeRows.map((item) => ({
           id: item.badge.id,

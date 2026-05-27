@@ -106,16 +106,6 @@ function formatDateOnly(value: Date) {
   });
 }
 
-function getCurrentTermStart() {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth();
-
-  if (month >= 8) return new Date(year, 8, 1);
-  if (month >= 1) return new Date(year, 1, 1);
-  return new Date(year - 1, 8, 1);
-}
-
 function resultIncludesUser(result: ResultLite, userId: string) {
   return (
     result.winnerTeamIds.includes(userId) || result.loserTeamIds.includes(userId)
@@ -343,16 +333,11 @@ function MyMatchContextPanel({
 
 function PlayerStatusCard({
   user,
-  winRate,
   rank,
-  termCount,
   eloPoints,
 }: {
   user: PlayerSummary | null;
-  winRate: number;
   rank: number | null;
-  termCount: number;
-  eloDelta: number;
   eloPoints: Array<{ elo: number; createdAt: string }>;
 }) {
   if (!user) {
@@ -365,7 +350,7 @@ function PlayerStatusCard({
           <div>
             <h2 className="text-base font-semibold text-white">竞技概览</h2>
             <p className="mt-1 text-sm text-slate-400">
-              登录后展示 ELO、排名和近期走势。
+              登录后展示 ELO、排名、战绩和近期走势。
             </p>
           </div>
         </div>
@@ -375,11 +360,8 @@ function PlayerStatusCard({
 
   const metrics = [
     { label: "ELO", value: user.eloRating, tone: "text-orange-100" },
-    { label: "积分", value: user.points, tone: "text-slate-100" },
     { label: "排名", value: rank ? `#${rank}` : "-", tone: "text-slate-100" },
     { label: "战绩", value: `${user.wins}/${user.losses}`, tone: "text-slate-100" },
-    { label: "胜率", value: `${winRate}%`, tone: "text-emerald-200" },
-    { label: "本学期参赛", value: termCount, tone: "text-slate-100" },
   ];
 
   return (
@@ -396,16 +378,18 @@ function PlayerStatusCard({
       </div>
 
       <div className="flex min-w-0 flex-col px-4 py-4">
-        <div className="grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-3">
+        <div className="grid grid-cols-3 gap-x-10 gap-y-3">
           {metrics.map((item) => (
-            <div key={item.label} className="min-w-0 border-b border-[#30363d] pb-2">
-              <p className="text-[11px] font-medium text-slate-500">{item.label}</p>
-              <p className={`mt-1 truncate text-lg font-semibold tabular-nums leading-tight ${item.tone}`}>
-                {item.value}
-              </p>
-            </div>
-          ))}
+            <div key={item.label} className="min-w-0 border-b border-[#30363d] pb-3">
+            <p className="text-xs font-medium text-slate-500">{item.label}</p>
+            <p
+            className={`mt-2 truncate text-3xl font-semibold tabular-nums leading-none tracking-tight ${item.tone}`}
+            >
+            {item.value}
+          </p>
         </div>
+       ))}
+      </div>
 
         <div className="mt-3 min-w-0">
           <div className="mb-1.5 flex items-center justify-between text-xs text-slate-400">
@@ -427,7 +411,7 @@ function PlayerStatusCard({
 
 function OpenRegistrationList({ matches }: { matches: OpenMatchItem[] }) {
   return (
-    <Card>
+    <Card className="overflow-hidden">
       <PanelHeader
         title="可报名比赛"
         action={
@@ -441,54 +425,70 @@ function OpenRegistrationList({ matches }: { matches: OpenMatchItem[] }) {
       />
       <div className="divide-y divide-[#30363d]">
         {matches.length > 0 ? (
-          matches.map((match) => {
-            const remaining = Math.max(match.maxParticipants - match.participants, 0);
-            const actionText = match.isRegistered ? "查看详情" : "立即报名";
-
-            return (
-              <Link
-                key={match.id}
-                href={`/matchs/${match.id}`}
-                className="block p-3.5 transition hover:bg-white/[0.025]"
-              >
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0">
-                    <div className="mb-2 flex flex-wrap items-center gap-2">
-                      <StatusBadge status={match.isRegistered ? "registered" : MatchStatus.registration} />
-                      <span className="rounded-md border border-white/[0.07] px-2 py-0.5 text-[11px] text-slate-400">
-                        {typeLabelMap[match.type]}
-                      </span>
-                    </div>
-                    <h3 className="line-clamp-2 text-sm font-semibold text-slate-100">
-                      {match.title}
-                    </h3>
-                  </div>
-                  <span className="btn-primary inline-flex shrink-0 items-center justify-center gap-1 rounded-md px-3 py-2 text-xs font-semibold">
-                    {actionText}
-                    <ArrowRight className="h-3.5 w-3.5" />
+          matches.map((match) => (
+            <Link
+              key={match.id}
+              href={`/matchs/${match.id}`}
+              className="grid min-h-28 gap-3 px-5 py-4 text-base transition hover:bg-white/[0.025] xl:grid-cols-[minmax(0,1fr)_136px] xl:items-center"
+            >
+              <div className="min-w-0 xl:col-start-1 xl:row-start-1">
+                <div className="flex min-w-0 flex-wrap items-center justify-center gap-2.5">
+                  <StatusBadge
+                    status={
+                      match.isRegistered
+                        ? "registered"
+                        : MatchStatus.registration
+                    }
+                  />
+                  <span className="rounded-md border border-sky-300/15 px-2.5 py-1 text-sm text-sky-300/80">
+                    {typeLabelMap[match.type]}
                   </span>
+                  <h3 className="line-clamp-2 text-center text-xl font-semibold leading-snug text-slate-100">
+                    {match.title}
+                  </h3>
                 </div>
-                <div className="mt-3 grid gap-2 text-xs text-slate-400 sm:grid-cols-4">
-                  <span className="inline-flex items-center gap-1.5">
-                    <CalendarDays className="h-3.5 w-3.5 text-slate-500" />
+              </div>
+
+              <div className="grid min-w-0 gap-3 text-base text-sky-300/85 sm:grid-cols-2 xl:col-start-1 xl:row-start-2 xl:grid-cols-[150px_minmax(160px,1fr)_150px_210px] xl:items-center xl:gap-5">
+                <span className="inline-flex min-w-0 items-center gap-2">
+                  <CalendarDays className="h-4 w-4 shrink-0 text-sky-500" />
+                  <span className="min-w-0 break-words">
                     {formatDateOnly(match.dateTime)}
                   </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <MapPin className="h-3.5 w-3.5 text-slate-500" />
-                    <span className="truncate">{match.location}</span>
+                </span>
+
+                <span className="inline-flex min-w-0 items-center gap-2">
+                  <MapPin className="h-4 w-4 shrink-0 text-sky-500" />
+                  <span className="min-w-0 break-words">{match.location}</span>
+                </span>
+
+                <span className="inline-flex min-w-0 items-center gap-2">
+                  <Users className="h-4 w-4 shrink-0 text-sky-500" />
+                  <span className="min-w-0 break-words">
+                    {match.participants} 人已报名
                   </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <Users className="h-3.5 w-3.5 text-slate-500" />
-                    {match.participants}/{match.maxParticipants}，余 {remaining}
-                  </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <Clock3 className="h-3.5 w-3.5 text-slate-500" />
+                </span>
+
+                <span className="inline-flex min-w-0 items-center gap-2">
+                  <Clock3 className="h-4 w-4 shrink-0 text-sky-500" />
+                  <span className="min-w-0 break-words">
                     截止 {formatCompactDate(match.deadline)}
                   </span>
-                </div>
-              </Link>
-            );
-          })
+                </span>
+              </div>
+
+              <span
+                className={`inline-flex w-full shrink-0 items-center justify-center gap-1 rounded-md px-3 py-3 text-base font-semibold xl:col-start-2 xl:row-span-2 xl:row-start-1 ${
+                  match.isRegistered
+                    ? "border border-white/[0.08] text-slate-300"
+                    : "btn-primary"
+                }`}
+              >
+                {match.isRegistered ? "查看详情" : "立即报名"}
+                <ArrowRight className="h-4 w-4" />
+              </span>
+            </Link>
+          ))
         ) : (
           <div className="p-4 text-sm text-slate-400">
             当前暂无开放报名的比赛。
@@ -551,8 +551,8 @@ function LeaderboardPreview({
 
 export default async function Home() {
   const currentUser = await getCurrentUser();
-  const termStart = getCurrentTermStart();
   const openRegistrationUserId = currentUser?.id ?? "__guest__";
+  const now = new Date();
 
   const [
     openMatches,
@@ -561,13 +561,13 @@ export default async function Home() {
     topPlayersRaw,
     recentResultsRaw,
     pendingResultCount,
-    termRegistrationCount,
     betterRankCount,
   ] = await Promise.all([
     prisma.match.findMany({
       where: {
         isQuickMatch: false,
         status: MatchStatus.registration,
+        registrationDeadline: { gt: now },
       },
       orderBy: [{ registrationDeadline: "asc" }, { dateTime: "asc" }],
       take: 3,
@@ -671,15 +671,6 @@ export default async function Home() {
         })
       : Promise.resolve(0),
     currentUser
-      ? prisma.registration.count({
-          where: {
-            userId: currentUser.id,
-            createdAt: { gte: termStart },
-            match: { isQuickMatch: false },
-          },
-        })
-      : Promise.resolve(0),
-    currentUser
       ? prisma.user.count({
           where: {
             isBanned: false,
@@ -729,16 +720,6 @@ export default async function Home() {
     elo: item.eloAfter,
     createdAt: item.createdAt.toISOString(),
   }));
-  const eloDelta =
-    eloAsc.length > 1
-      ? eloAsc[eloAsc.length - 1].eloAfter -
-        eloAsc[Math.max(0, eloAsc.length - 8)].eloAfter
-      : 0;
-
-  const winRate =
-    currentUser && currentUser.matchesPlayed > 0
-      ? Math.round((currentUser.wins / currentUser.matchesPlayed) * 100)
-      : 0;
   const myRank = betterRankCount === null ? null : betterRankCount + 1;
 
   const myMatchItems: MyMatchItem[] = currentUser
@@ -852,10 +833,7 @@ export default async function Home() {
         <main className="min-w-0 space-y-5 px-3 py-4 sm:px-5 md:px-7 xl:px-8">
           <PlayerStatusCard
             user={currentUser}
-            winRate={winRate}
             rank={myRank}
-            termCount={termRegistrationCount}
-            eloDelta={eloDelta}
             eloPoints={eloPoints}
           />
           <OpenRegistrationList matches={openMatchItems} />
