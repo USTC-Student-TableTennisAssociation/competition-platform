@@ -12,9 +12,17 @@ import {
   UserRound,
   Users,
 } from "lucide-react";
-import { MatchStatus } from "@prisma/client";
+import {
+  MatchApplicationStatus,
+  MatchPostStatus,
+  MatchStatus,
+} from "@prisma/client";
 import { isMatchAllResultsFinished } from "@/lib/match-status";
 import EloTrendChart from "@/components/home/EloTrendChart";
+import FreeMatchHall, {
+  type FreeMatchPostItem,
+} from "@/components/home/FreeMatchHall";
+import { expireOpenMatchPosts } from "@/app/match-posts/actions";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { normalizeAvatarUrl } from "@/lib/utils";
@@ -554,8 +562,11 @@ export default async function Home() {
   const openRegistrationUserId = currentUser?.id ?? "__guest__";
   const now = new Date();
 
+  await expireOpenMatchPosts();
+
   const [
     openMatches,
+    freeMatchPosts,
     myRegistrations,
     eloHistories,
     topPlayersRaw,
@@ -576,6 +587,45 @@ export default async function Home() {
         registrations: {
           where: { userId: openRegistrationUserId },
           select: { id: true },
+        },
+      },
+    }),
+    prisma.matchPost.findMany({
+      where: {
+        status: MatchPostStatus.OPEN,
+        playAt: { gt: now },
+      },
+      orderBy: { playAt: "asc" },
+      take: 6,
+      include: {
+        creator: {
+          select: {
+            id: true,
+            nickname: true,
+            avatarUrl: true,
+            eloRating: true,
+          },
+        },
+        applications: {
+          where: currentUser
+            ? {
+                OR: [
+                  { status: MatchApplicationStatus.PENDING },
+                  { applicantId: currentUser.id },
+                ],
+              }
+            : { status: MatchApplicationStatus.PENDING },
+          orderBy: { createdAt: "asc" },
+          include: {
+            applicant: {
+              select: {
+                id: true,
+                nickname: true,
+                avatarUrl: true,
+                eloRating: true,
+              },
+            },
+          },
         },
       },
     }),
@@ -814,6 +864,48 @@ export default async function Home() {
     isRegistered: match.registrations.length > 0,
   }));
 
+  const freeMatchItems: FreeMatchPostItem[] = freeMatchPosts.map((post) => {
+    const currentUserApplication =
+      currentUser
+        ? post.applications.find(
+            (application) => application.applicantId === currentUser.id,
+          )
+        : null;
+    const isCreator = currentUser?.id === post.creatorId;
+
+    return {
+      id: post.id,
+      description: post.description,
+      playAt: post.playAt.toISOString(),
+      durationMinutes: post.durationMinutes,
+      location: post.location,
+      minElo: post.minElo,
+      maxElo: post.maxElo,
+      isRatedPreferred: post.isRatedPreferred,
+      creator: {
+        ...post.creator,
+        avatarUrl: normalizeAvatarUrl(post.creator.avatarUrl),
+      },
+      applications: isCreator
+        ? post.applications
+            .filter(
+              (application) =>
+                application.status === MatchApplicationStatus.PENDING,
+            )
+            .map((application) => ({
+              id: application.id,
+              message: application.message,
+              createdAt: application.createdAt.toISOString(),
+              applicant: {
+                ...application.applicant,
+                avatarUrl: normalizeAvatarUrl(application.applicant.avatarUrl),
+              },
+            }))
+        : [],
+      currentUserApplicationStatus: currentUserApplication?.status ?? null,
+    };
+  });
+
   const leaderboardPlayers: RankingItem[] = topPlayersRaw.map((player, index) => ({
     ...player,
     rank: index + 1,
@@ -837,6 +929,10 @@ export default async function Home() {
             eloPoints={eloPoints}
           />
           <OpenRegistrationList matches={openMatchItems} />
+          <FreeMatchHall
+            posts={freeMatchItems}
+            currentUserId={currentUser?.id ?? null}
+          />
         </main>
 
         <aside className="border-t border-[#30363d] bg-[#0d1117] lg:col-span-2 xl:sticky xl:top-14 xl:col-span-1 xl:min-h-[calc(100vh-3.5rem)] xl:self-start xl:border-l xl:border-t-0">

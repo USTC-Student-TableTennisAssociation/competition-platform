@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { updateMatchAction } from "@/app/matchs/actions";
+import { defaultVenue, isVenueOption, VENUE_OPTIONS } from "@/lib/locations";
 
 type Props = {
   matchId: string;
@@ -42,7 +43,7 @@ export default function EditMatchForm({ matchId, initial }: Props) {
   const [formDataState, setFormDataState] = useState({
     title: initial.title,
     description: initial.description,
-    location: initial.location,
+    location: isVenueOption(initial.location) ? initial.location : defaultVenue(),
     type: initial.type,
     format: initial.format,
     startDate: initStart.date,
@@ -242,13 +243,19 @@ export default function EditMatchForm({ matchId, initial }: Props) {
 
       <div>
         <label className="mb-1 block text-sm text-slate-300">地点 *</label>
-        <input
+        <select
           name="location"
           value={formDataState.location}
           onChange={handleChange}
           required
           className="w-full rounded-lg border border-slate-600 bg-slate-800 px-4 py-2 text-slate-100"
-        />
+        >
+          {VENUE_OPTIONS.map((venue) => (
+            <option key={venue} value={venue}>
+              {venue}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">

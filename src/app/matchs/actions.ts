@@ -10,6 +10,7 @@ import { isMatchAllResultsFinished } from '@/lib/match-status'
 import { settleSinglesElo, settleTeamElo } from '@/lib/elo'
 import { validateCsrfToken } from '@/lib/csrf'
 import { getAuditContext, writeAuditLog } from '@/lib/audit-log'
+import { isVenueOption } from '@/lib/locations'
 import {
   registerDoublesTeamByUser,
   removeRegisteredDoublesTeamByMember,
@@ -785,6 +786,9 @@ export async function createMatchAction(_: MatchFormState, formData: FormData): 
   if (!title || !location || !startDateTimeInput || !registrationDeadline) {
     return { error: '请完整填写必填项。' }
   }
+  if (!isVenueOption(location)) {
+    return { error: '请选择有效的比赛地点。' }
+  }
 
   const matchDate = parseLocalDateTimeInput(startDateTimeInput, timezoneOffset)
   const deadline = parseLocalDateTimeInput(registrationDeadline, timezoneOffset)
@@ -1062,6 +1066,7 @@ export async function updateMatchAction(matchId: string, formData: FormData) {
     const timezoneOffset = Number.isFinite(timezoneOffsetRaw) ? timezoneOffsetRaw : 0
 
     if (!title || !location || !startDateTimeInput) return { error: '请完整填写必填项。', success: false }
+    if (!isVenueOption(location)) return { error: '请选择有效的比赛地点。', success: false }
 
     const matchDate = parseLocalDateTimeInput(startDateTimeInput, timezoneOffset)
     if (Number.isNaN(matchDate.getTime())) return { error: '比赛时间格式无效。', success: false }

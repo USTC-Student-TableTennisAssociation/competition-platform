@@ -2,6 +2,7 @@
 
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { type MatchFormState, createMatchAction } from "@/app/matchs/actions";
+import { VENUE_OPTIONS } from "@/lib/locations";
 
 const initialState: MatchFormState = {};
 
@@ -110,13 +111,18 @@ export default function CreateMatchForm() {
             >
               地点 *
             </label>
-            <input
+            <select
               id="location"
               name="location"
               required
-              placeholder="例如：西区体育馆二楼"
               className="input-dark w-full rounded-2xl px-4 py-2 text-slate-100 placeholder:text-slate-600"
-            />
+            >
+              {VENUE_OPTIONS.map((venue) => (
+                <option key={venue} value={venue}>
+                  {venue}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       </section>
