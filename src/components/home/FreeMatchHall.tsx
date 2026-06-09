@@ -128,11 +128,9 @@ function CreatePostModal({ onClose }: { onClose: () => void }) {
     createMatchPostAction,
     initialState,
   );
-  const [timezoneOffset, setTimezoneOffset] = useState("0");
-
-  useEffect(() => {
-    setTimezoneOffset(String(new Date().getTimezoneOffset()));
-  }, []);
+  const [timezoneOffset] = useState(() =>
+    String(new Date().getTimezoneOffset()),
+  );
 
   useEffect(() => {
     if (!state.success) return;

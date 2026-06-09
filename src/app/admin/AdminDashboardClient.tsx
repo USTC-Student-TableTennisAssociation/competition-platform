@@ -58,6 +58,14 @@ function resolveAuditActionLabel(
       return "更新比赛赛制";
     case "match.grouping.confirm":
       return "确认分组结果";
+    case "match.team.create":
+      return "创建团体队伍";
+    case "match.team.submit":
+      return "提交团体报名";
+    case "match.team.cancel":
+      return "取消团体队伍";
+    case "match.team.review":
+      return "审核团体队伍";
     case "match.result.admin.report":
       return "管理员录入赛果";
     case "match.result.confirm":
@@ -460,7 +468,8 @@ export default function AdminDashboardClient() {
                 <option value="">请选择比赛</option>
                 {state.matches.map((match) => (
                   <option key={match.id} value={match.id}>
-                    {match.title}（已报名 {match.currentParticipants} 人）
+                    {match.title}（已报名 {match.currentParticipants}{" "}
+                    {match.type === "team" ? "队" : "人"}）
                   </option>
                 ))}
               </select>

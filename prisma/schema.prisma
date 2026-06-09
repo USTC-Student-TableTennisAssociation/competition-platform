@@ -42,6 +42,15 @@ enum RegistrationStatus {
   confirmed
 }
 
+enum TeamRegistrationStatus {
+  draft
+  submitted
+  approved
+  rejected
+  waitlisted
+  cancelled
+}
+
 enum PointsTransactionType {
   earn
   spend
@@ -115,6 +124,9 @@ model User {
   createdMatchPosts   MatchPost[]           @relation("MatchPostCreator")
   matchedMatchPosts   MatchPost[]           @relation("MatchPostMatchedUser")
   matchApplications   MatchApplication[]    @relation("MatchApplicationApplicant")
+  captainedMatchTeams  MatchTeam[]           @relation("MatchTeamCaptain")
+  reviewedMatchTeams   MatchTeam[]           @relation("MatchTeamReviewer")
+  matchTeamMembers     MatchTeamMember[]
 }
 
 model AdminTrustedDevice {
@@ -152,6 +164,10 @@ model Match {
   format               CompetitionFormat @default(group_only)
   registrationDeadline DateTime
   groupingGeneratedAt  DateTime?
+  teamRegistrationStart DateTime?
+  teamRegistrationDeadline DateTime?
+  teamMinMembers       Int?
+  teamMaxMembers       Int?
   createdAt            DateTime          @default(now())
   updatedAt            DateTime          @updatedAt
 
@@ -165,8 +181,54 @@ model Match {
   doublesTeams   MatchDoublesTeam[]
   doublesTeamMembers MatchDoublesTeamMember[]
   doublesInvites MatchDoublesInvite[]
+  teamRegistrations MatchTeam[]
+  teamMembers MatchTeamMember[]
 
   @@index([isQuickMatch])
+}
+
+model MatchTeam {
+  id          String                 @id @default(cuid())
+  matchId     String                 @map("match_id")
+  captainId   String                 @map("captain_id")
+  name        String
+  inviteCode  String                 @unique @map("invite_code")
+  contact     String?
+  remark      String?
+  reviewNote  String?                @map("review_note")
+  status      TeamRegistrationStatus @default(draft)
+  submittedAt DateTime?              @map("submitted_at")
+  reviewedAt  DateTime?              @map("reviewed_at")
+  reviewedById String?               @map("reviewed_by_id")
+  createdAt   DateTime               @default(now()) @map("created_at")
+  updatedAt   DateTime               @updatedAt @map("updated_at")
+
+  match      Match             @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  captain    User              @relation("MatchTeamCaptain", fields: [captainId], references: [id], onDelete: Cascade)
+  reviewedBy User?             @relation("MatchTeamReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  members    MatchTeamMember[]
+
+  @@index([matchId, status])
+  @@index([captainId])
+  @@map("match_team")
+}
+
+model MatchTeamMember {
+  id        String   @id @default(cuid())
+  teamId    String   @map("team_id")
+  matchId   String   @map("match_id")
+  userId    String   @map("user_id")
+  joinedAt  DateTime @default(now()) @map("joined_at")
+
+  team  MatchTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  match Match     @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  user  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([matchId, userId])
+  @@unique([teamId, userId])
+  @@index([teamId, joinedAt])
+  @@index([userId])
+  @@map("match_team_member")
 }
 
 model MatchDoublesTeam {

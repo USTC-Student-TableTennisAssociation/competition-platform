@@ -48,6 +48,12 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
     },
     include: {
       _count: { select: { registrations: true } },
+      teamRegistrations: {
+        where: {
+          status: "approved",
+        },
+        select: { id: true },
+      },
       groupingResult: { select: { payload: true } },
       results: {
         where: { confirmed: true },
@@ -70,6 +76,7 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
 
   const matchesToFinish = sortedMatches.filter(
     (match) =>
+      match.type !== "team" &&
       match.status !== MatchStatus.finished &&
       isMatchAllResultsFinished({
         format: match.format,
@@ -204,9 +211,16 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
                 title={match.title}
                 type={match.type}
                 matchTime={match.dateTime.toISOString()}
-                registrationDeadline={match.registrationDeadline.toISOString()}
+                registrationDeadline={(match.type === "team"
+                  ? (match.teamRegistrationDeadline ?? match.registrationDeadline)
+                  : match.registrationDeadline
+                ).toISOString()}
                 location={match.location ?? "待定"}
-                participants={match._count.registrations}
+                participants={
+                  match.type === "team"
+                    ? match.teamRegistrations.length
+                    : match._count.registrations
+                }
                 status={statusLabelMap[match.resolvedStatus]}
               />
             ))}
@@ -233,14 +247,21 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
             <MatchCard
               key={match.id}
               id={match.id}
-              title={match.title}
-              type={match.type}
-              matchTime={match.dateTime.toISOString()}
-              registrationDeadline={match.registrationDeadline.toISOString()}
-              location={match.location ?? "待定"}
-              participants={match._count.registrations}
+                title={match.title}
+                type={match.type}
+                matchTime={match.dateTime.toISOString()}
+                registrationDeadline={(match.type === "team"
+                  ? (match.teamRegistrationDeadline ?? match.registrationDeadline)
+                  : match.registrationDeadline
+                ).toISOString()}
+                location={match.location ?? "待定"}
+                participants={
+                  match.type === "team"
+                    ? match.teamRegistrations.length
+                    : match._count.registrations
+                }
                 status={statusLabelMap[match.resolvedStatus]}
-            />
+              />
           ))}
           </div>
         </section>
