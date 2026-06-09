@@ -140,12 +140,16 @@ export default function MatchCard({
           <div className="rounded-2xl bg-white/[0.035] p-3 ring-1 ring-white/8">
             <div className="mb-2 flex items-center gap-1.5 text-slate-500">
               <Users className="h-3.5 w-3.5" />
-              <span>{type === "double" ? "组数" : "人数"}</span>
+              <span>
+                {type === "team" ? "队伍" : type === "double" ? "组数" : "人数"}
+              </span>
             </div>
             <p className="font-black tabular-nums text-slate-100">
-              {type === "double"
-                ? `${Math.floor(participants / 2)} 组`
-                : `${participants} 人`}
+              {type === "team"
+                ? `${participants} 队`
+                : type === "double"
+                  ? `${Math.floor(participants / 2)} 组`
+                  : `${participants} 人`}
             </p>
           </div>
 

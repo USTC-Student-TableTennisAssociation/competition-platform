@@ -2,7 +2,7 @@
 
 import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto'
 import { cookies } from 'next/headers'
-import { MatchStatus } from '@prisma/client'
+import { MatchStatus, TeamRegistrationStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getCurrentUser } from '@/lib/auth'
 import { validateCsrfToken } from '@/lib/csrf'
@@ -36,6 +36,7 @@ export type AdminDashboardMatch = {
   id: string
   title: string
   status: string
+  type: string
   dateTime: string
   registrationDeadline: string
   currentParticipants: number
@@ -86,6 +87,7 @@ type AdminDashboardUserRow = {
 type AdminDashboardMatchRow = {
   id: string
   title: string
+  type: 'single' | 'double' | 'team'
   status: MatchStatus
   format: 'group_only' | 'group_then_knockout'
   groupingGeneratedAt: Date | null
@@ -103,6 +105,7 @@ type AdminDashboardMatchRow = {
   _count: {
     registrations: number
   }
+  teamRegistrations: Array<{ id: string }>
 }
 
 type AdminEditableUserRow = {
@@ -350,6 +353,7 @@ async function fetchAdminDashboardData() {
       select: {
         id: true,
         title: true,
+        type: true,
         status: true,
         format: true,
         groupingGeneratedAt: true,
@@ -369,6 +373,12 @@ async function fetchAdminDashboardData() {
         registrationDeadline: true,
         _count: {
           select: { registrations: true },
+        },
+        teamRegistrations: {
+          where: {
+            status: TeamRegistrationStatus.approved,
+          },
+          select: { id: true },
         },
       },
       take: 200,
@@ -405,6 +415,7 @@ async function fetchAdminDashboardData() {
 
   const matchesToFinish = matches.filter(
     (match: AdminDashboardMatchRow) =>
+      match.type !== 'team' &&
       match.status !== MatchStatus.finished &&
       isMatchAllResultsFinished({
         format: match.format,
@@ -455,10 +466,12 @@ async function fetchAdminDashboardData() {
   const mappedMatches: AdminDashboardMatch[] = matches.map((match: AdminDashboardMatchRow) => ({
     id: match.id,
     title: match.title,
+    type: match.type,
     status: finishedMatchIds.has(match.id) ? MatchStatus.finished : match.status,
     dateTime: match.dateTime.toISOString(),
     registrationDeadline: match.registrationDeadline.toISOString(),
-    currentParticipants: match._count.registrations,
+    currentParticipants:
+      match.type === 'team' ? match.teamRegistrations.length : match._count.registrations,
   }))
 
   const mappedAuditLogs: AdminDashboardAuditLog[] = auditLogs.map((log) => ({
@@ -1072,6 +1085,9 @@ export async function adminDashboardAction(
       if (!match) throw new Error('比赛不存在。')
       if (match.type === 'double') {
         throw new Error('双打比赛请先完成组队邀请并由小队成员自行报名。')
+      }
+      if (match.type === 'team') {
+        throw new Error('团体赛请在比赛详情页通过队伍报名与审核管理。')
       }
 
       const users = selectedUserIds.length > 0

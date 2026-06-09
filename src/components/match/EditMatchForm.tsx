@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { updateMatchAction } from "@/app/matchs/actions";
+import { defaultVenue, isVenueOption, VENUE_OPTIONS } from "@/lib/locations";
 
 type Props = {
   matchId: string;
@@ -13,6 +14,10 @@ type Props = {
     type: "single" | "double" | "team";
     format: "group_only" | "group_then_knockout";
     registrationDeadlineIso: string;
+    teamRegistrationStartIso?: string | null;
+    teamRegistrationDeadlineIso?: string | null;
+    teamMinMembers?: number | null;
+    teamMaxMembers?: number | null;
   };
 };
 
@@ -37,18 +42,28 @@ export default function EditMatchForm({ matchId, initial }: Props) {
   // 初始化状态
   const initStart = parseIsoToLocal(initial.dateTimeIso);
   const initEnd = parseIsoToLocal(initial.registrationDeadlineIso);
+  const initTeamStart = parseIsoToLocal(initial.teamRegistrationStartIso ?? "");
+  const initTeamEnd = parseIsoToLocal(
+    initial.teamRegistrationDeadlineIso ?? initial.registrationDeadlineIso,
+  );
 
   // 表单状态管理
   const [formDataState, setFormDataState] = useState({
     title: initial.title,
     description: initial.description,
-    location: initial.location,
+    location: isVenueOption(initial.location) ? initial.location : defaultVenue(),
     type: initial.type,
     format: initial.format,
     startDate: initStart.date,
     startTime: initStart.time,
     endDate: initEnd.date,
     endTime: initEnd.time || initStart.time,
+    teamStartDate: initTeamStart.date,
+    teamStartTime: initTeamStart.time || "09:00",
+    teamEndDate: initTeamEnd.date,
+    teamEndTime: initTeamEnd.time || initEnd.time || "17:00",
+    teamMinMembers: String(initial.teamMinMembers ?? 3),
+    teamMaxMembers: String(initial.teamMaxMembers ?? 6),
   });
 
   const handleChange = (
@@ -92,6 +107,40 @@ export default function EditMatchForm({ matchId, initial }: Props) {
       return;
     }
 
+    let teamStartDateTimeStr = "";
+    let teamEndDateTimeStr = "";
+    if (formDataState.type === "team") {
+      teamStartDateTimeStr = `${formDataState.teamStartDate}T${formDataState.teamStartTime}`;
+      teamEndDateTimeStr = `${formDataState.teamEndDate}T${formDataState.teamEndTime}`;
+      const teamStart = new Date(teamStartDateTimeStr);
+      const teamEnd = new Date(teamEndDateTimeStr);
+      const teamMinMembers = Number(formDataState.teamMinMembers);
+      const teamMaxMembers = Number(formDataState.teamMaxMembers);
+
+      if (isNaN(teamStart.getTime()) || isNaN(teamEnd.getTime())) {
+        setErrorMessage("团体报名时间无效");
+        return;
+      }
+      if (teamStart >= teamEnd) {
+        setErrorMessage("团体报名开始时间必须早于截止时间");
+        return;
+      }
+      if (teamEnd >= start) {
+        setErrorMessage("团体报名截止时间必须早于比赛开始时间");
+        return;
+      }
+      if (
+        !Number.isInteger(teamMinMembers) ||
+        !Number.isInteger(teamMaxMembers) ||
+        teamMinMembers < 1 ||
+        teamMaxMembers < teamMinMembers ||
+        teamMaxMembers > 50
+      ) {
+        setErrorMessage("团体赛队伍人数范围无效");
+        return;
+      }
+    }
+
     // 2. 准备提交的数据
     const formData = new FormData();
     formData.append("title", formDataState.title);
@@ -102,6 +151,10 @@ export default function EditMatchForm({ matchId, initial }: Props) {
     // 组合完整的 ISO 字符串或者本地时间字符串传给后端
     formData.append("matchDateTime", startDateTimeStr);
     formData.append("registrationDeadline", endDateTimeStr);
+    formData.append("teamRegistrationStart", teamStartDateTimeStr);
+    formData.append("teamRegistrationDeadline", teamEndDateTimeStr);
+    formData.append("teamMinMembers", formDataState.teamMinMembers);
+    formData.append("teamMaxMembers", formDataState.teamMaxMembers);
 
     // 传递时区偏移量（分钟），用于服务端校正
     formData.append("timezoneOffset", String(new Date().getTimezoneOffset()));
@@ -242,13 +295,19 @@ export default function EditMatchForm({ matchId, initial }: Props) {
 
       <div>
         <label className="mb-1 block text-sm text-slate-300">地点 *</label>
-        <input
+        <select
           name="location"
           value={formDataState.location}
           onChange={handleChange}
           required
           className="w-full rounded-lg border border-slate-600 bg-slate-800 px-4 py-2 text-slate-100"
-        />
+        >
+          {VENUE_OPTIONS.map((venue) => (
+            <option key={venue} value={venue}>
+              {venue}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
@@ -278,6 +337,95 @@ export default function EditMatchForm({ matchId, initial }: Props) {
           </select>
         </div>
       </div>
+
+      {formDataState.type === "team" ? (
+        <div className="rounded-xl border border-slate-700 bg-slate-800/60 p-5">
+          <h2 className="mb-4 text-sm font-semibold tracking-wide text-cyan-200">
+            团体报名
+          </h2>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-sm text-slate-300">
+                最少队伍人数
+              </label>
+              <input
+                type="number"
+                name="teamMinMembers"
+                min={1}
+                max={50}
+                value={formDataState.teamMinMembers}
+                onChange={handleChange}
+                className="w-full rounded-lg border border-slate-600 bg-slate-800 px-4 py-2 text-slate-100"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm text-slate-300">
+                最多队伍人数
+              </label>
+              <input
+                type="number"
+                name="teamMaxMembers"
+                min={formDataState.teamMinMembers}
+                max={50}
+                value={formDataState.teamMaxMembers}
+                onChange={handleChange}
+                className="w-full rounded-lg border border-slate-600 bg-slate-800 px-4 py-2 text-slate-100"
+              />
+            </div>
+          </div>
+          <div className="mt-5 grid gap-5 lg:grid-cols-2">
+            <div className="rounded-xl border border-slate-700 bg-slate-900/70 p-4">
+              <p className="mb-3 text-sm font-medium text-slate-200">
+                团体报名开始时间
+              </p>
+              <div className="space-y-3">
+                <input
+                  type="date"
+                  name="teamStartDate"
+                  value={formDataState.teamStartDate}
+                  onChange={handleChange}
+                  required
+                  className="h-10 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 text-sm text-slate-100 accent-cyan-500"
+                />
+                <input
+                  type="time"
+                  name="teamStartTime"
+                  value={formDataState.teamStartTime}
+                  onChange={handleChange}
+                  required
+                  step={1800}
+                  className="h-10 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 text-sm text-slate-100 accent-cyan-500"
+                />
+              </div>
+            </div>
+            <div className="rounded-xl border border-slate-700 bg-slate-900/70 p-4">
+              <p className="mb-3 text-sm font-medium text-slate-200">
+                团体报名截止时间
+              </p>
+              <div className="space-y-3">
+                <input
+                  type="date"
+                  name="teamEndDate"
+                  value={formDataState.teamEndDate}
+                  onChange={handleChange}
+                  required
+                  max={formDataState.startDate}
+                  className="h-10 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 text-sm text-slate-100 accent-cyan-500"
+                />
+                <input
+                  type="time"
+                  name="teamEndTime"
+                  value={formDataState.teamEndTime}
+                  onChange={handleChange}
+                  required
+                  step={1800}
+                  className="h-10 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 text-sm text-slate-100 accent-cyan-500"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* 错误和成功提示 */}
       {errorMessage && (

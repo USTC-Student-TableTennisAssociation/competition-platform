@@ -1,6 +1,7 @@
 'use server'
 
-import { CompetitionFormat, MatchStatus, MatchType, type Prisma } from '@prisma/client'
+import { randomBytes } from 'node:crypto'
+import { CompetitionFormat, MatchStatus, MatchType, Prisma, TeamRegistrationStatus } from '@prisma/client'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
@@ -10,6 +11,7 @@ import { isMatchAllResultsFinished } from '@/lib/match-status'
 import { settleSinglesElo, settleTeamElo } from '@/lib/elo'
 import { validateCsrfToken } from '@/lib/csrf'
 import { getAuditContext, writeAuditLog } from '@/lib/audit-log'
+import { isVenueOption } from '@/lib/locations'
 import {
   registerDoublesTeamByUser,
   removeRegisteredDoublesTeamByMember,
@@ -19,6 +21,9 @@ import {
 const UNLIMITED_MAX_PARTICIPANTS = 2147483647
 const MATCH_POINTS_CAP_PER_MATCH = 5
 const MATCH_POINTS_REFERENCE_PREFIX = 'match-points:'
+const DEFAULT_TEAM_MIN_MEMBERS = 3
+const DEFAULT_TEAM_MAX_MEMBERS = 6
+const TEAM_INVITE_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 
 export type MatchFormState = {
   error?: string
@@ -55,6 +60,92 @@ function parseLocalDateTimeInput(input: string, timezoneOffsetMinutes = 0) {
 
   if (!date || !time) return new Date(NaN)
   return parseDateTime(date, time, timezoneOffsetMinutes)
+}
+
+function parseOptionalLocalDateTimeInput(input: string, timezoneOffsetMinutes = 0) {
+  if (!input.trim()) return null
+  return parseLocalDateTimeInput(input, timezoneOffsetMinutes)
+}
+
+function parseTeamMemberLimits(formData: FormData) {
+  const rawMin = Number(formData.get('teamMinMembers') ?? DEFAULT_TEAM_MIN_MEMBERS)
+  const rawMax = Number(formData.get('teamMaxMembers') ?? DEFAULT_TEAM_MAX_MEMBERS)
+  const minMembers = Number.isInteger(rawMin) ? rawMin : DEFAULT_TEAM_MIN_MEMBERS
+  const maxMembers = Number.isInteger(rawMax) ? rawMax : DEFAULT_TEAM_MAX_MEMBERS
+
+  if (minMembers < 1) {
+    return { ok: false as const, error: '团体赛最少人数必须至少为 1。' }
+  }
+  if (maxMembers < minMembers) {
+    return { ok: false as const, error: '团体赛最多人数不能少于最少人数。' }
+  }
+  if (maxMembers > 50) {
+    return { ok: false as const, error: '团体赛最多人数不能超过 50。' }
+  }
+
+  return { ok: true as const, minMembers, maxMembers }
+}
+
+function generateTeamInviteCode() {
+  const bytes = randomBytes(8)
+  let code = ''
+  for (const byte of bytes) {
+    code += TEAM_INVITE_CODE_ALPHABET[byte % TEAM_INVITE_CODE_ALPHABET.length]
+  }
+  return code
+}
+
+function cleanText(value: FormDataEntryValue | null, maxLength: number) {
+  return String(value ?? '').trim().slice(0, maxLength)
+}
+
+function resolveTeamWindow(match: {
+  createdAt: Date
+  registrationDeadline: Date
+  teamRegistrationStart: Date | null
+  teamRegistrationDeadline: Date | null
+}) {
+  return {
+    startsAt: match.teamRegistrationStart ?? match.createdAt,
+    deadline: match.teamRegistrationDeadline ?? match.registrationDeadline,
+  }
+}
+
+function assertTeamRegistrationOpen(match: {
+  type: MatchType
+  status: MatchStatus
+  createdAt: Date
+  registrationDeadline: Date
+  teamRegistrationStart: Date | null
+  teamRegistrationDeadline: Date | null
+}) {
+  if (match.type !== MatchType.team) {
+    return { ok: false as const, error: '该比赛不是团体赛。' }
+  }
+  if (match.status !== MatchStatus.registration) {
+    return { ok: false as const, error: '当前比赛不在报名阶段。' }
+  }
+
+  const now = new Date()
+  const { startsAt, deadline } = resolveTeamWindow(match)
+  if (now < startsAt) {
+    return { ok: false as const, error: '团体赛报名尚未开始。' }
+  }
+  if (now >= deadline) {
+    return { ok: false as const, error: '团体赛报名已截止。' }
+  }
+
+  return { ok: true as const }
+}
+
+function canEditTeamStatus(status: TeamRegistrationStatus) {
+  return status !== TeamRegistrationStatus.cancelled
+}
+
+function resolveAutoTeamStatus(memberCount: number, minMembers: number) {
+  return memberCount >= minMembers
+    ? TeamRegistrationStatus.approved
+    : TeamRegistrationStatus.draft
 }
 
 function parseBestOf(raw: FormDataEntryValue | null) {
@@ -781,9 +872,14 @@ export async function createMatchAction(_: MatchFormState, formData: FormData): 
   const type = String(formData.get('type') ?? 'single') as MatchType
   const format = String(formData.get('format') ?? 'group_only') as CompetitionFormat
   const timezoneOffset = Number.isFinite(timezoneOffsetRaw) ? timezoneOffsetRaw : 0
+  const teamRegistrationStartInput = String(formData.get('teamRegistrationStart') ?? '')
+  const teamRegistrationDeadlineInput = String(formData.get('teamRegistrationDeadline') ?? '')
 
   if (!title || !location || !startDateTimeInput || !registrationDeadline) {
     return { error: '请完整填写必填项。' }
+  }
+  if (!isVenueOption(location)) {
+    return { error: '请选择有效的比赛地点。' }
   }
 
   const matchDate = parseLocalDateTimeInput(startDateTimeInput, timezoneOffset)
@@ -797,18 +893,54 @@ export async function createMatchAction(_: MatchFormState, formData: FormData): 
     return { error: '报名截止时间必须早于比赛开始时间。' }
   }
 
+  const teamLimits = parseTeamMemberLimits(formData)
+  if (type === MatchType.team && !teamLimits.ok) {
+    return { error: teamLimits.error }
+  }
+
+  const parsedTeamRegistrationStart =
+    type === MatchType.team
+      ? parseOptionalLocalDateTimeInput(teamRegistrationStartInput, timezoneOffset) ?? new Date()
+      : null
+  const parsedTeamRegistrationDeadline =
+    type === MatchType.team
+      ? parseOptionalLocalDateTimeInput(teamRegistrationDeadlineInput, timezoneOffset) ?? deadline
+      : null
+
+  if (parsedTeamRegistrationStart && Number.isNaN(parsedTeamRegistrationStart.getTime())) {
+    return { error: '团体赛报名开始时间格式无效。' }
+  }
+  if (parsedTeamRegistrationDeadline && Number.isNaN(parsedTeamRegistrationDeadline.getTime())) {
+    return { error: '团体赛报名截止时间格式无效。' }
+  }
+  if (type === MatchType.team && parsedTeamRegistrationStart && parsedTeamRegistrationDeadline) {
+    if (parsedTeamRegistrationStart >= parsedTeamRegistrationDeadline) {
+      return { error: '团体赛报名开始时间必须早于截止时间。' }
+    }
+    if (parsedTeamRegistrationDeadline >= matchDate) {
+      return { error: '团体赛报名截止时间必须早于比赛开始时间。' }
+    }
+  }
+
   const created = await prisma.match.create({
     data: {
       title,
       description: description || null,
       dateTime: matchDate,
-      registrationDeadline: deadline,
+      registrationDeadline:
+        type === MatchType.team && parsedTeamRegistrationDeadline
+          ? parsedTeamRegistrationDeadline
+          : deadline,
       location,
       type,
       format,
       maxParticipants: UNLIMITED_MAX_PARTICIPANTS,
       status: MatchStatus.registration,
       createdBy: currentUser.id,
+      teamRegistrationStart: parsedTeamRegistrationStart,
+      teamRegistrationDeadline: parsedTeamRegistrationDeadline,
+      teamMinMembers: type === MatchType.team && teamLimits.ok ? teamLimits.minMembers : null,
+      teamMaxMembers: type === MatchType.team && teamLimits.ok ? teamLimits.maxMembers : null,
       rule: {
         note: format === 'group_only' ? '分组循环赛' : '先分组后淘汰赛',
       },
@@ -826,7 +958,14 @@ export async function createMatchAction(_: MatchFormState, formData: FormData): 
       type,
       format,
       dateTime: matchDate.toISOString(),
-      registrationDeadline: deadline.toISOString(),
+      registrationDeadline:
+        type === MatchType.team && parsedTeamRegistrationDeadline
+          ? parsedTeamRegistrationDeadline.toISOString()
+          : deadline.toISOString(),
+      teamRegistrationStart: parsedTeamRegistrationStart?.toISOString() ?? null,
+      teamRegistrationDeadline: parsedTeamRegistrationDeadline?.toISOString() ?? null,
+      teamMinMembers: type === MatchType.team && teamLimits.ok ? teamLimits.minMembers : null,
+      teamMaxMembers: type === MatchType.team && teamLimits.ok ? teamLimits.maxMembers : null,
     },
     ip: auditContext.ip,
     userAgent: auditContext.userAgent,
@@ -850,6 +989,7 @@ export async function registerMatchAction(matchId: string, _: MatchFormState, fo
   if (!match) return { error: '比赛不存在。' }
   if (match.status !== MatchStatus.registration) return { error: '当前比赛不在报名阶段。' }
   if (new Date() >= match.registrationDeadline) return { error: '报名已截止。' }
+  if (match.type === MatchType.team) return { error: '团体赛请通过队伍报名。' }
 
   if (match.type === 'double') {
     const result = await registerDoublesTeamByUser(matchId, currentUser.id)
@@ -966,6 +1106,7 @@ export async function unregisterMatchAction(matchId: string, _: MatchFormState, 
   const match = await prisma.match.findUnique({ where: { id: matchId } })
   if (!match) return { error: '比赛不存在。' }
   if (new Date() >= match.registrationDeadline) return { error: '报名截止后不可退出。' }
+  if (match.type === MatchType.team) return { error: '团体赛请在队伍报名面板中操作。' }
 
   if (match.type === 'double') {
     const result = await unregisterDoublesTeamByUser(matchId, currentUser.id)
@@ -1033,6 +1174,617 @@ export async function unregisterMatchAction(matchId: string, _: MatchFormState, 
   }
 }
 
+function revalidateTeamRegistrationViews(matchId: string) {
+  revalidatePath('/matchs')
+  revalidatePath('/admin')
+  revalidatePath(`/matchs/${matchId}`)
+}
+
+export async function createMatchTeamAction(matchId: string, _: MatchFormState, formData: FormData): Promise<MatchFormState> {
+  const csrfError = await validateCsrfToken(formData)
+  if (csrfError) return { error: csrfError }
+
+  const currentUser = await getCurrentUser()
+  if (!currentUser) return { error: '请先登录后创建队伍。' }
+
+  const name = cleanText(formData.get('name'), 40)
+  const contact = cleanText(formData.get('contact'), 100)
+  const remark = cleanText(formData.get('remark'), 500)
+
+  if (name.length < 2) return { error: '队伍名称至少需要 2 个字符。' }
+  if (!contact) return { error: '请填写队伍联系方式。' }
+
+  const match = await prisma.match.findUnique({
+    where: { id: matchId },
+    select: {
+      id: true,
+      title: true,
+      type: true,
+      status: true,
+      createdAt: true,
+      registrationDeadline: true,
+      teamRegistrationStart: true,
+      teamRegistrationDeadline: true,
+      teamMinMembers: true,
+    },
+  })
+
+  if (!match) return { error: '比赛不存在。' }
+  const open = assertTeamRegistrationOpen(match)
+  if (!open.ok) return { error: open.error }
+
+  const auditContext = await getAuditContext()
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const inviteCode = generateTeamInviteCode()
+
+    try {
+      const created = await prisma.$transaction(async (tx) => {
+        const existingMembership = await tx.matchTeamMember.findUnique({
+          where: {
+            matchId_userId: {
+              matchId,
+              userId: currentUser.id,
+            },
+          },
+          select: {
+            id: true,
+            teamId: true,
+            team: { select: { status: true } },
+          },
+        })
+
+        if (existingMembership) {
+          if (existingMembership.team.status === TeamRegistrationStatus.cancelled) {
+            await tx.matchTeamMember.delete({ where: { id: existingMembership.id } })
+          } else {
+            throw new Error('TEAM_MEMBERSHIP_EXISTS')
+          }
+        }
+
+        return tx.matchTeam.create({
+          data: {
+            matchId,
+            captainId: currentUser.id,
+            name,
+            inviteCode,
+            contact,
+            remark: remark || null,
+            status: resolveAutoTeamStatus(
+              1,
+              match.teamMinMembers ?? DEFAULT_TEAM_MIN_MEMBERS,
+            ),
+            submittedAt:
+              1 >= (match.teamMinMembers ?? DEFAULT_TEAM_MIN_MEMBERS)
+                ? new Date()
+                : null,
+            members: {
+              create: {
+                matchId,
+                userId: currentUser.id,
+              },
+            },
+          },
+          select: { id: true },
+        })
+      })
+
+      await writeAuditLog({
+        actorId: currentUser.id,
+        action: 'match.team.create',
+        entityType: 'MatchTeam',
+        entityId: created.id,
+        details: {
+          targetLabel: `${match.title} / ${name}`,
+          matchId,
+          matchTitle: match.title,
+          teamName: name,
+        },
+        ip: auditContext.ip,
+        userAgent: auditContext.userAgent,
+      })
+
+      revalidateTeamRegistrationViews(matchId)
+      return {
+        success:
+          1 >= (match.teamMinMembers ?? DEFAULT_TEAM_MIN_MEMBERS)
+            ? `队伍已创建并自动报名成功，邀请码：${inviteCode}`
+            : `队伍已创建，邀请码：${inviteCode}`,
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message === 'TEAM_MEMBERSHIP_EXISTS') {
+        return { error: '你已经加入了本场团体赛的队伍。' }
+      }
+
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        if (attempt < 5) continue
+        return { error: '邀请码生成失败，请重试。' }
+      }
+
+      console.error('createMatchTeamAction failed', error)
+      return { error: '创建队伍失败，请稍后重试。' }
+    }
+  }
+
+  return { error: '创建队伍失败，请重试。' }
+}
+
+export async function updateMatchTeamAction(teamId: string, _: MatchFormState, formData: FormData): Promise<MatchFormState> {
+  const csrfError = await validateCsrfToken(formData)
+  if (csrfError) return { error: csrfError }
+
+  const currentUser = await getCurrentUser()
+  if (!currentUser) return { error: '请先登录。' }
+
+  const team = await prisma.matchTeam.findUnique({
+    where: { id: teamId },
+    include: {
+      match: {
+        select: {
+          id: true,
+          title: true,
+          type: true,
+          status: true,
+          createdAt: true,
+          registrationDeadline: true,
+          teamRegistrationStart: true,
+          teamRegistrationDeadline: true,
+          teamMinMembers: true,
+        },
+      },
+    },
+  })
+
+  if (!team) return { error: '队伍不存在。' }
+  if (team.captainId !== currentUser.id) return { error: '只有队长可以修改队伍信息。' }
+
+  const open = assertTeamRegistrationOpen(team.match)
+  if (!open.ok) return { error: open.error }
+  if (!canEditTeamStatus(team.status)) return { error: '当前队伍状态不可修改信息。' }
+
+  const name = cleanText(formData.get('name'), 40)
+  const contact = cleanText(formData.get('contact'), 100)
+  const remark = cleanText(formData.get('remark'), 500)
+
+  if (name.length < 2) return { error: '队伍名称至少需要 2 个字符。' }
+  if (!contact) return { error: '请填写队伍联系方式。' }
+
+  await prisma.matchTeam.update({
+    where: { id: teamId },
+    data: {
+      name,
+      contact,
+      remark: remark || null,
+      reviewNote: null,
+      status: team.status === TeamRegistrationStatus.rejected ? TeamRegistrationStatus.draft : team.status,
+    },
+  })
+
+  revalidateTeamRegistrationViews(team.matchId)
+  return { success: '队伍信息已更新。' }
+}
+
+export async function joinMatchTeamByInviteAction(matchId: string, _: MatchFormState, formData: FormData): Promise<MatchFormState> {
+  const csrfError = await validateCsrfToken(formData)
+  if (csrfError) return { error: csrfError }
+
+  const currentUser = await getCurrentUser()
+  if (!currentUser) return { error: '请先登录后加入队伍。' }
+
+  const inviteCode = cleanText(formData.get('inviteCode'), 20).toUpperCase()
+  if (!inviteCode) return { error: '请输入邀请码。' }
+
+  const team = await prisma.matchTeam.findFirst({
+    where: {
+      matchId,
+      inviteCode,
+    },
+    include: {
+      match: {
+        select: {
+          id: true,
+          title: true,
+          type: true,
+          status: true,
+          createdAt: true,
+          registrationDeadline: true,
+          teamRegistrationStart: true,
+          teamRegistrationDeadline: true,
+          teamMinMembers: true,
+          teamMaxMembers: true,
+        },
+      },
+    },
+  })
+
+  if (!team) return { error: '邀请码无效。' }
+
+  const open = assertTeamRegistrationOpen(team.match)
+  if (!open.ok) return { error: open.error }
+  if (!canEditTeamStatus(team.status)) return { error: '该队伍当前不可加入。' }
+
+  const maxMembers = team.match.teamMaxMembers ?? DEFAULT_TEAM_MAX_MEMBERS
+  const minMembers = team.match.teamMinMembers ?? DEFAULT_TEAM_MIN_MEMBERS
+  let reachedMinMembers = false
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id
+        FROM match_team
+        WHERE id = ${team.id}
+        FOR UPDATE
+      `
+
+      const lockedTeam = await tx.matchTeam.findUnique({
+        where: { id: team.id },
+        select: { status: true },
+      })
+      if (!lockedTeam || !canEditTeamStatus(lockedTeam.status)) {
+        throw new Error('TEAM_NOT_JOINABLE')
+      }
+
+      const existingMembership = await tx.matchTeamMember.findUnique({
+        where: {
+          matchId_userId: {
+            matchId,
+            userId: currentUser.id,
+          },
+        },
+        select: {
+          id: true,
+          team: { select: { status: true } },
+        },
+      })
+      if (existingMembership) {
+        if (existingMembership.team.status === TeamRegistrationStatus.cancelled) {
+          await tx.matchTeamMember.delete({ where: { id: existingMembership.id } })
+        } else {
+          throw new Error('TEAM_MEMBERSHIP_EXISTS')
+        }
+      }
+
+      const memberCount = await tx.matchTeamMember.count({
+        where: { teamId: team.id },
+      })
+      if (memberCount >= maxMembers) throw new Error('TEAM_FULL')
+
+      await tx.matchTeamMember.create({
+        data: {
+          teamId: team.id,
+          matchId,
+          userId: currentUser.id,
+        },
+      })
+
+      const nextMemberCount = memberCount + 1
+      reachedMinMembers = nextMemberCount >= minMembers
+      const nextStatus = resolveAutoTeamStatus(nextMemberCount, minMembers)
+      await tx.matchTeam.update({
+        where: { id: team.id },
+        data: {
+          status: nextStatus,
+          submittedAt:
+            nextStatus === TeamRegistrationStatus.approved
+              ? (team.submittedAt ?? new Date())
+              : null,
+          reviewNote: null,
+        },
+      })
+    })
+  } catch (error) {
+    if (error instanceof Error && error.message === 'TEAM_NOT_JOINABLE') {
+      return { error: '该队伍当前不可加入。' }
+    }
+    if (error instanceof Error && error.message === 'TEAM_MEMBERSHIP_EXISTS') {
+      return { error: '你已经加入了本场团体赛的队伍。' }
+    }
+    if (error instanceof Error && error.message === 'TEAM_FULL') {
+      return { error: '该队伍已满员。' }
+    }
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      return { error: '你已经加入了本场团体赛的队伍。' }
+    }
+    console.error('joinMatchTeamByInviteAction failed', error)
+    return { error: '加入队伍失败，请稍后重试。' }
+  }
+
+  revalidateTeamRegistrationViews(matchId)
+  return {
+    success:
+      reachedMinMembers
+        ? `已加入 ${team.name}，队伍人数已达标并自动报名成功。`
+        : `已加入 ${team.name}。`,
+  }
+}
+
+export async function leaveMatchTeamAction(teamId: string, _: MatchFormState, formData: FormData): Promise<MatchFormState> {
+  const csrfError = await validateCsrfToken(formData)
+  if (csrfError) return { error: csrfError }
+
+  const currentUser = await getCurrentUser()
+  if (!currentUser) return { error: '请先登录。' }
+
+  const team = await prisma.matchTeam.findUnique({
+    where: { id: teamId },
+    include: {
+      match: {
+        select: {
+          id: true,
+          type: true,
+          status: true,
+          createdAt: true,
+          registrationDeadline: true,
+          teamRegistrationStart: true,
+          teamRegistrationDeadline: true,
+          teamMinMembers: true,
+        },
+      },
+      members: { select: { userId: true } },
+    },
+  })
+
+  if (!team) return { error: '队伍不存在。' }
+  const open = assertTeamRegistrationOpen(team.match)
+  if (!open.ok) return { error: open.error }
+  if (!canEditTeamStatus(team.status)) return { error: '当前队伍状态不可退出。' }
+
+  const isMember = team.members.some((member) => member.userId === currentUser.id)
+  if (!isMember) return { error: '你不在该队伍中。' }
+  if (team.captainId === currentUser.id) return { error: '队长请使用解散队伍。' }
+
+  const minMembers = team.match.teamMinMembers ?? DEFAULT_TEAM_MIN_MEMBERS
+
+  await prisma.$transaction(async (tx) => {
+    await tx.matchTeamMember.delete({
+      where: {
+        matchId_userId: {
+          matchId: team.matchId,
+          userId: currentUser.id,
+        },
+      },
+    })
+
+    const nextMemberCount = await tx.matchTeamMember.count({
+      where: { teamId: team.id },
+    })
+    const nextStatus = resolveAutoTeamStatus(nextMemberCount, minMembers)
+    await tx.matchTeam.update({
+      where: { id: team.id },
+      data: {
+        status: nextStatus,
+        submittedAt:
+          nextStatus === TeamRegistrationStatus.approved
+            ? (team.submittedAt ?? new Date())
+            : null,
+        reviewNote: null,
+      },
+    })
+  })
+
+  revalidateTeamRegistrationViews(team.matchId)
+  return { success: '已退出队伍。' }
+}
+
+export async function removeMatchTeamMemberAction(teamId: string, userId: string, _: MatchFormState, formData: FormData): Promise<MatchFormState> {
+  const csrfError = await validateCsrfToken(formData)
+  if (csrfError) return { error: csrfError }
+
+  const currentUser = await getCurrentUser()
+  if (!currentUser) return { error: '请先登录。' }
+
+  const team = await prisma.matchTeam.findUnique({
+    where: { id: teamId },
+    include: {
+      match: {
+        select: {
+          id: true,
+          type: true,
+          status: true,
+          createdAt: true,
+          registrationDeadline: true,
+          teamRegistrationStart: true,
+          teamRegistrationDeadline: true,
+          teamMinMembers: true,
+        },
+      },
+    },
+  })
+
+  if (!team) return { error: '队伍不存在。' }
+  if (team.captainId !== currentUser.id) return { error: '只有队长可以移除队员。' }
+  if (team.captainId === userId) return { error: '不能移除队长本人。' }
+
+  const open = assertTeamRegistrationOpen(team.match)
+  if (!open.ok) return { error: open.error }
+  if (!canEditTeamStatus(team.status)) return { error: '当前队伍状态不可移除队员。' }
+
+  const minMembers = team.match.teamMinMembers ?? DEFAULT_TEAM_MIN_MEMBERS
+
+  const deleted = await prisma.$transaction(async (tx) => {
+    const deletion = await tx.matchTeamMember.deleteMany({
+      where: {
+        teamId,
+        userId,
+      },
+    })
+
+    if (deletion.count > 0) {
+      const nextMemberCount = await tx.matchTeamMember.count({
+        where: { teamId },
+      })
+      const nextStatus = resolveAutoTeamStatus(nextMemberCount, minMembers)
+      await tx.matchTeam.update({
+        where: { id: teamId },
+        data: {
+          status: nextStatus,
+          submittedAt:
+            nextStatus === TeamRegistrationStatus.approved
+              ? (team.submittedAt ?? new Date())
+              : null,
+          reviewNote: null,
+        },
+      })
+    }
+
+    return deletion
+  })
+
+  if (deleted.count === 0) return { error: '该成员不在队伍中。' }
+
+  revalidateTeamRegistrationViews(team.matchId)
+  return { success: '已移除队员。' }
+}
+
+export async function submitMatchTeamAction(teamId: string, _: MatchFormState, formData: FormData): Promise<MatchFormState> {
+  const csrfError = await validateCsrfToken(formData)
+  if (csrfError) return { error: csrfError }
+
+  const currentUser = await getCurrentUser()
+  if (!currentUser) return { error: '请先登录。' }
+
+  const team = await prisma.matchTeam.findUnique({
+    where: { id: teamId },
+    include: {
+      match: {
+        select: {
+          id: true,
+          title: true,
+          type: true,
+          status: true,
+          createdAt: true,
+          registrationDeadline: true,
+          teamRegistrationStart: true,
+          teamRegistrationDeadline: true,
+          teamMinMembers: true,
+          teamMaxMembers: true,
+        },
+      },
+      members: { select: { userId: true } },
+    },
+  })
+
+  if (!team) return { error: '队伍不存在。' }
+  if (team.captainId !== currentUser.id) return { error: '只有队长可以提交报名。' }
+
+  const open = assertTeamRegistrationOpen(team.match)
+  if (!open.ok) return { error: open.error }
+  if (!canEditTeamStatus(team.status)) return { error: '当前队伍状态不可提交。' }
+
+  const minMembers = team.match.teamMinMembers ?? DEFAULT_TEAM_MIN_MEMBERS
+  const maxMembers = team.match.teamMaxMembers ?? DEFAULT_TEAM_MAX_MEMBERS
+  const memberCount = team.members.length
+
+  if (memberCount < minMembers) {
+    return { error: `队伍人数不足，至少需要 ${minMembers} 人。` }
+  }
+  if (memberCount > maxMembers) {
+    return { error: `队伍人数超过上限 ${maxMembers} 人。` }
+  }
+
+  await prisma.matchTeam.update({
+    where: { id: teamId },
+    data: {
+      status: TeamRegistrationStatus.approved,
+      submittedAt: new Date(),
+      reviewNote: null,
+    },
+  })
+
+  const auditContext = await getAuditContext()
+  await writeAuditLog({
+    actorId: currentUser.id,
+    action: 'match.team.submit',
+    entityType: 'MatchTeam',
+    entityId: teamId,
+    details: {
+      targetLabel: `${team.match.title} / ${team.name}`,
+      matchId: team.matchId,
+      matchTitle: team.match.title,
+      teamName: team.name,
+      memberCount,
+    },
+    ip: auditContext.ip,
+    userAgent: auditContext.userAgent,
+  })
+
+  revalidateTeamRegistrationViews(team.matchId)
+  return { success: '队伍人数已达标，已自动报名成功。' }
+}
+
+export async function cancelMatchTeamAction(teamId: string, _: MatchFormState, formData: FormData): Promise<MatchFormState> {
+  const csrfError = await validateCsrfToken(formData)
+  if (csrfError) return { error: csrfError }
+
+  const currentUser = await getCurrentUser()
+  if (!currentUser) return { error: '请先登录。' }
+
+  const team = await prisma.matchTeam.findUnique({
+    where: { id: teamId },
+    include: {
+      match: {
+        select: {
+          id: true,
+          title: true,
+          type: true,
+          status: true,
+          createdAt: true,
+          registrationDeadline: true,
+          teamRegistrationStart: true,
+          teamRegistrationDeadline: true,
+        },
+      },
+    },
+  })
+
+  if (!team) return { error: '队伍不存在。' }
+
+  const isCaptain = team.captainId === currentUser.id
+  const isAdmin = currentUser.role === 'admin'
+  if (!isCaptain && !isAdmin) return { error: '只有队长或管理员可以解散或删除队伍。' }
+  if (team.status === TeamRegistrationStatus.cancelled) return { error: '队伍已取消。' }
+
+  if (!isAdmin) {
+    const open = assertTeamRegistrationOpen(team.match)
+    if (!open.ok) return { error: open.error }
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.matchTeamMember.deleteMany({ where: { teamId } })
+    await tx.matchTeam.delete({ where: { id: teamId } })
+  })
+
+  const auditContext = await getAuditContext()
+  await writeAuditLog({
+    actorId: currentUser.id,
+    action: 'match.team.delete',
+    entityType: 'MatchTeam',
+    entityId: teamId,
+    details: {
+      targetLabel: `${team.match.title} / ${team.name}`,
+      matchId: team.matchId,
+      matchTitle: team.match.title,
+      teamName: team.name,
+      byAdmin: isAdmin,
+    },
+    ip: auditContext.ip,
+    userAgent: auditContext.userAgent,
+  })
+
+  revalidateTeamRegistrationViews(team.matchId)
+  return { success: isAdmin ? '队伍已删除。' : '队伍已解散。' }
+}
+
+export async function adminUpdateMatchTeamStatusAction(teamId: string, _: MatchFormState, formData: FormData): Promise<MatchFormState> {
+  const csrfError = await validateCsrfToken(formData)
+  if (csrfError) return { error: csrfError }
+
+  const currentUser = await getCurrentUser()
+  if (!currentUser || currentUser.role !== 'admin') return { error: '仅管理员可审核队伍。' }
+  void teamId
+  return { error: '团体赛报名按人数自动生效，无需管理员审核。管理员如需处理异常，请删除队伍。' }
+}
+
 export async function updateMatchAction(matchId: string, formData: FormData) {
   try {
     const csrfError = await validateCsrfToken(formData)
@@ -1046,7 +1798,11 @@ export async function updateMatchAction(matchId: string, formData: FormData) {
     const match = await prisma.match.findUnique({ where: { id: matchId } })
     if (!match) return { error: '比赛不存在。', success: false }
     if (match.createdBy !== currentUser.id) return { error: '仅发起人可修改比赛。', success: false }
-    if (new Date() >= match.registrationDeadline) return { error: '报名截止后不可修改。', success: false }
+    const editableUntil =
+      match.type === MatchType.team
+        ? (match.teamRegistrationDeadline ?? match.registrationDeadline)
+        : match.registrationDeadline
+    if (new Date() >= editableUntil) return { error: '报名截止后不可修改。', success: false }
 
     const title = String(formData.get('title') ?? '').trim()
     const description = String(formData.get('description') ?? '').trim()
@@ -1060,8 +1816,11 @@ export async function updateMatchAction(matchId: string, formData: FormData) {
     const startDateTimeInput = matchDateTimeInput || (date && time ? `${date}T${time}` : '')
     const timezoneOffsetRaw = Number(formData.get('timezoneOffset') ?? 0)
     const timezoneOffset = Number.isFinite(timezoneOffsetRaw) ? timezoneOffsetRaw : 0
+    const teamRegistrationStartInput = String(formData.get('teamRegistrationStart') ?? '')
+    const teamRegistrationDeadlineInput = String(formData.get('teamRegistrationDeadline') ?? '')
 
     if (!title || !location || !startDateTimeInput) return { error: '请完整填写必填项。', success: false }
+    if (!isVenueOption(location)) return { error: '请选择有效的比赛地点。', success: false }
 
     const matchDate = parseLocalDateTimeInput(startDateTimeInput, timezoneOffset)
     if (Number.isNaN(matchDate.getTime())) return { error: '比赛时间格式无效。', success: false }
@@ -1069,6 +1828,35 @@ export async function updateMatchAction(matchId: string, formData: FormData) {
     const deadline = deadlineInput ? parseLocalDateTimeInput(deadlineInput, timezoneOffset) : match.registrationDeadline
     if (Number.isNaN(deadline.getTime())) return { error: '截止时间格式错误。', success: false }
     if (deadline >= matchDate) return { error: '截止时间必须早于比赛开始时间。', success: false }
+
+    const teamLimits = parseTeamMemberLimits(formData)
+    if (type === MatchType.team && !teamLimits.ok) {
+      return { error: teamLimits.error, success: false }
+    }
+
+    const parsedTeamRegistrationStart =
+      type === MatchType.team
+        ? parseOptionalLocalDateTimeInput(teamRegistrationStartInput, timezoneOffset) ?? match.teamRegistrationStart ?? new Date()
+        : null
+    const parsedTeamRegistrationDeadline =
+      type === MatchType.team
+        ? parseOptionalLocalDateTimeInput(teamRegistrationDeadlineInput, timezoneOffset) ?? match.teamRegistrationDeadline ?? deadline
+        : null
+
+    if (parsedTeamRegistrationStart && Number.isNaN(parsedTeamRegistrationStart.getTime())) {
+      return { error: '团体赛报名开始时间格式无效。', success: false }
+    }
+    if (parsedTeamRegistrationDeadline && Number.isNaN(parsedTeamRegistrationDeadline.getTime())) {
+      return { error: '团体赛报名截止时间格式无效。', success: false }
+    }
+    if (type === MatchType.team && parsedTeamRegistrationStart && parsedTeamRegistrationDeadline) {
+      if (parsedTeamRegistrationStart >= parsedTeamRegistrationDeadline) {
+        return { error: '团体赛报名开始时间必须早于截止时间。', success: false }
+      }
+      if (parsedTeamRegistrationDeadline >= matchDate) {
+        return { error: '团体赛报名截止时间必须早于比赛开始时间。', success: false }
+      }
+    }
 
     await prisma.match.update({
       where: { id: matchId },
@@ -1079,7 +1867,14 @@ export async function updateMatchAction(matchId: string, formData: FormData) {
         dateTime: matchDate,
         type,
         format,
-        registrationDeadline: deadline,
+        registrationDeadline:
+          type === MatchType.team && parsedTeamRegistrationDeadline
+            ? parsedTeamRegistrationDeadline
+            : deadline,
+        teamRegistrationStart: parsedTeamRegistrationStart,
+        teamRegistrationDeadline: parsedTeamRegistrationDeadline,
+        teamMinMembers: type === MatchType.team && teamLimits.ok ? teamLimits.minMembers : null,
+        teamMaxMembers: type === MatchType.team && teamLimits.ok ? teamLimits.maxMembers : null,
         groupingGeneratedAt: null,
         status: MatchStatus.registration,
         rule: {
@@ -1102,7 +1897,14 @@ export async function updateMatchAction(matchId: string, formData: FormData) {
         type,
         format,
         dateTime: matchDate.toISOString(),
-        registrationDeadline: deadline.toISOString(),
+        registrationDeadline:
+          type === MatchType.team && parsedTeamRegistrationDeadline
+            ? parsedTeamRegistrationDeadline.toISOString()
+            : deadline.toISOString(),
+        teamRegistrationStart: parsedTeamRegistrationStart?.toISOString() ?? null,
+        teamRegistrationDeadline: parsedTeamRegistrationDeadline?.toISOString() ?? null,
+        teamMinMembers: type === MatchType.team && teamLimits.ok ? teamLimits.minMembers : null,
+        teamMaxMembers: type === MatchType.team && teamLimits.ok ? teamLimits.maxMembers : null,
       },
       ip: auditContext.ip,
       userAgent: auditContext.userAgent,

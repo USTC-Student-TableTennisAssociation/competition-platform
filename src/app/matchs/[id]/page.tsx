@@ -2,6 +2,7 @@ import { Calendar, MapPin, Pencil, Users } from "lucide-react";
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
+import { TeamRegistrationStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 import RegisterMatchButton from "@/components/match/RegisterMatchButton";
@@ -13,6 +14,7 @@ import MyProgressSection from "@/components/match/detail/MyProgressSection";
 import RegisteredPlayersSection from "@/components/match/detail/RegisteredPlayersSection";
 import ExportCertificateSection from "@/components/match/detail/ExportCertificateSection";
 import BackLinkButton from "@/components/navigation/BackLinkButton";
+import TeamRegistrationPanel from "@/components/match/TeamRegistrationPanel";
 import {
   getDoublesTeamForUser,
   getPendingMatchInvitesForUser,
@@ -85,6 +87,35 @@ export default async function MatchDetailPage({
           },
           orderBy: { createdAt: "asc" },
         },
+        teamRegistrations: {
+          where: {
+            status: {
+              not: TeamRegistrationStatus.cancelled,
+            },
+          },
+          include: {
+            captain: {
+              select: {
+                id: true,
+                nickname: true,
+                avatarUrl: true,
+              },
+            },
+            members: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    nickname: true,
+                    avatarUrl: true,
+                  },
+                },
+              },
+              orderBy: { joinedAt: "asc" },
+            },
+          },
+          orderBy: { createdAt: "asc" },
+        },
         groupingResult: true,
         results: {
           include: {
@@ -98,6 +129,9 @@ export default async function MatchDetailPage({
   ]);
 
   if (!match) notFound();
+
+  const isDoubleMatch = match.type === "double";
+  const isTeamMatch = match.type === "team";
 
   const cookieStore = await cookies();
   const adminMode = cookieStore.get(ADMIN_MODE_COOKIE)?.value;
@@ -119,7 +153,7 @@ export default async function MatchDetailPage({
       ])
     : [null, null];
 
-  const certificateEligibility = currentUser
+  const certificateEligibility = currentUser && !isTeamMatch
     ? evaluateCertificateEligibility({
         match: {
           status: match.status,
@@ -140,15 +174,28 @@ export default async function MatchDetailPage({
   const canManageGrouping = Boolean(currentUser && isAdmin);
   const canRegister =
     Boolean(currentUser) &&
+    !isTeamMatch &&
     match.status === "registration" &&
     now < match.registrationDeadline;
-  const alreadyRegistered = Boolean(
+  const individualAlreadyRegistered = Boolean(
     currentUser &&
     match.registrations.some(
       (r: { userId: string }) => r.userId === currentUser.id,
     ),
   );
-  const isDoubleMatch = match.type === "double";
+  const alreadyRegistered = !isTeamMatch && individualAlreadyRegistered;
+  const teamRegistrationStart = match.teamRegistrationStart ?? match.createdAt;
+  const teamRegistrationDeadline =
+    match.teamRegistrationDeadline ?? match.registrationDeadline;
+  const teamMinMembers = match.teamMinMembers ?? 3;
+  const teamMaxMembers = match.teamMaxMembers ?? 6;
+  const teamRegistrationOpen =
+    isTeamMatch &&
+    match.status === "registration" &&
+    now >= teamRegistrationStart &&
+    now < teamRegistrationDeadline;
+  const teamRegistrationNotStarted = isTeamMatch && now < teamRegistrationStart;
+  const teamRegistrationClosed = isTeamMatch && now >= teamRegistrationDeadline;
 
   const [
     myDoublesTeam,
@@ -306,6 +353,35 @@ export default async function MatchDetailPage({
     finished: "bg-slate-500/12 text-slate-300 ring-slate-300/12",
   } as const;
 
+  const teamRegistrationItems = match.teamRegistrations.map((team) => ({
+    id: team.id,
+    name: team.name,
+    inviteCode: team.inviteCode,
+    captainId: team.captainId,
+    captainNickname: team.captain.nickname,
+    contact: team.contact,
+    remark: team.remark,
+    reviewNote: team.reviewNote,
+    status: team.status,
+    submittedAt: team.submittedAt?.toISOString() ?? null,
+    reviewedAt: team.reviewedAt?.toISOString() ?? null,
+    createdAt: team.createdAt.toISOString(),
+    members: team.members.map((member) => ({
+      userId: member.userId,
+      nickname: member.user.nickname,
+      avatarUrl: member.user.avatarUrl,
+      joinedAt: member.joinedAt.toISOString(),
+    })),
+  }));
+  const publicTeamRegistrationItems = teamRegistrationItems.filter(
+    (team) => team.status !== "cancelled",
+  );
+  const formedTeamCount = publicTeamRegistrationItems.filter(
+    (team) => team.members.length >= teamMinMembers,
+  ).length;
+  const buildingTeamCount =
+    publicTeamRegistrationItems.length - formedTeamCount;
+
   return (
     <div className="mx-auto max-w-5xl space-y-5 sm:space-y-8">
       <BackLinkButton fallbackHref="/matchs" />
@@ -332,11 +408,18 @@ export default async function MatchDetailPage({
                   : "前期分组后期淘汰赛"}
               </span>
               <span className="rounded-full bg-white/[0.045] px-3 py-1 ring-1 ring-white/8">
-                报名截止：{match.registrationDeadline.toLocaleString("zh-CN")}
+                报名截止：
+                {(isTeamMatch
+                  ? teamRegistrationDeadline
+                  : match.registrationDeadline
+                ).toLocaleString("zh-CN")}
               </span>
             </div>
             {(isCreator || isAdmin) &&
-              now < match.registrationDeadline &&
+              now <
+                (isTeamMatch
+                  ? teamRegistrationDeadline
+                  : match.registrationDeadline) &&
               !adminViewBlocked && (
                 <Link
                   href={`/matchs/${match.id}/edit`}
@@ -370,27 +453,34 @@ export default async function MatchDetailPage({
             <Users className="h-5 w-5 text-teal-200" />
             <div>
               <p className="text-xs text-slate-400">
-                {isDoubleMatch ? "参赛小队" : "参赛人数"}
+                {isTeamMatch
+                  ? "团体队伍"
+                  : isDoubleMatch
+                    ? "参赛小队"
+                    : "参赛人数"}
               </p>
               <p className="text-sm sm:text-base">
-                {isDoubleMatch
-                  ? `${Math.floor(match.registrations.length / 2)} 组`
-                  : `${match.registrations.length} 人`}
+                {isTeamMatch
+                  ? `组建中 ${buildingTeamCount} 支 · 已成队 ${formedTeamCount} 支`
+                  : isDoubleMatch
+                    ? `${Math.floor(match.registrations.length / 2)} 组`
+                    : `${match.registrations.length} 人`}
               </p>
             </div>
           </div>
         </div>
 
         <div className="relative mt-5 sm:mt-8">
-          {!currentUser ? (
+          {!isTeamMatch && !currentUser ? (
             <p className="text-sm text-slate-300">请先登录后报名。</p>
-          ) : isCreator && !alreadyRegistered ? (
+          ) : !isTeamMatch && isCreator && !alreadyRegistered ? (
             <p className="text-sm text-slate-300">
               你是比赛发起人，当前尚未报名，可手动点击报名加入参赛名单。
             </p>
           ) : null}
 
-          {currentUser &&
+          {!isTeamMatch &&
+            currentUser &&
             (alreadyRegistered ? (
               now < match.registrationDeadline ? (
                 <UnregisterMatchButton matchId={match.id} />
@@ -405,7 +495,7 @@ export default async function MatchDetailPage({
                     ? "报名已截止"
                     : isDoubleMatch && !myDoublesTeam
                       ? "请先完成双打组队"
-                      : "当前不可报名"
+                  : "当前不可报名"
                 }
               />
             ))}
@@ -580,8 +670,25 @@ export default async function MatchDetailPage({
         </div>
       </div>
 
+      {isTeamMatch ? (
+        <TeamRegistrationPanel
+          matchId={match.id}
+          currentUserId={currentUser?.id ?? null}
+          isAdmin={isAdmin}
+          registrationOpen={teamRegistrationOpen}
+          registrationNotStarted={teamRegistrationNotStarted}
+          registrationClosed={teamRegistrationClosed}
+          startsAt={teamRegistrationStart.toISOString()}
+          deadline={teamRegistrationDeadline.toISOString()}
+          minMembers={teamMinMembers}
+          maxMembers={teamMaxMembers}
+          teams={teamRegistrationItems}
+        />
+      ) : null}
+
       {Boolean(
         currentUser &&
+        !isTeamMatch &&
         alreadyRegistered &&
         match.status !== "registration" &&
         groupingPayload,
@@ -599,7 +706,7 @@ export default async function MatchDetailPage({
           />
         )}
 
-      {currentUser && certificateEligibility ? (
+      {!isTeamMatch && currentUser && certificateEligibility ? (
         <ExportCertificateSection
           matchId={match.id}
           matchTitle={match.title}
@@ -610,7 +717,7 @@ export default async function MatchDetailPage({
         />
       ) : null}
 
-      {isAdmin && (
+      {isAdmin && !isTeamMatch && (
         <AdminResultsSection
           matchId={match.id}
           matchType={match.type}
@@ -629,7 +736,7 @@ export default async function MatchDetailPage({
         />
       )}
 
-      {canManageGrouping && (
+      {canManageGrouping && !isTeamMatch && (
         <div className="rounded-2xl border border-amber-400/30 bg-amber-500/5 p-4 sm:p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -650,7 +757,7 @@ export default async function MatchDetailPage({
         </div>
       )}
 
-      {(!groupingPayload ||
+      {!isTeamMatch && (!groupingPayload ||
         alreadyRegistered ||
         Boolean(groupingPayload?.knockout)) && (
         <GroupingResultSection
@@ -663,7 +770,7 @@ export default async function MatchDetailPage({
         />
       )}
 
-      {groupingPayload && (
+      {!isTeamMatch && groupingPayload && (
         <GroupsOverviewSection
           groupingPayload={groupingPayload}
           pagedGroups={pagedGroups}
@@ -681,28 +788,30 @@ export default async function MatchDetailPage({
         />
       )}
 
-      <RegisteredPlayersSection
-        matchId={match.id}
-        matchType={match.type}
-        registrations={match.registrations}
-        pagedRegistrations={pagedRegistrations}
-        doublesTeams={registeredDoublesTeams}
-        pagedDoublesTeams={pagedDoublesTeams}
-        participantsStartIndex={participantsStartIndex}
-        participantsPages={participantsPages}
-        totalParticipantsPages={totalParticipantsPages}
-        currentParticipantsPage={currentParticipantsPage}
-        shouldOpenParticipants={shouldOpenParticipants}
-        isAdmin={isAdmin}
-        canRemove={isAdmin}
-        buildHref={(page) =>
-          buildMatchHref({
-            playersPage: page,
-            groupsPage: preservedGroupsPage,
-            hash: "#registered-players",
-          })
-        }
-      />
+      {!isTeamMatch ? (
+        <RegisteredPlayersSection
+          matchId={match.id}
+          matchType={match.type}
+          registrations={match.registrations}
+          pagedRegistrations={pagedRegistrations}
+          doublesTeams={registeredDoublesTeams}
+          pagedDoublesTeams={pagedDoublesTeams}
+          participantsStartIndex={participantsStartIndex}
+          participantsPages={participantsPages}
+          totalParticipantsPages={totalParticipantsPages}
+          currentParticipantsPage={currentParticipantsPage}
+          shouldOpenParticipants={shouldOpenParticipants}
+          isAdmin={isAdmin}
+          canRemove={isAdmin}
+          buildHref={(page) =>
+            buildMatchHref({
+              playersPage: page,
+              groupsPage: preservedGroupsPage,
+              hash: "#registered-players",
+            })
+          }
+        />
+      ) : null}
     </div>
   );
 }

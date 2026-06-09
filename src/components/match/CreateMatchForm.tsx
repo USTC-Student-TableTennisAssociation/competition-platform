@@ -2,6 +2,7 @@
 
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { type MatchFormState, createMatchAction } from "@/app/matchs/actions";
+import { VENUE_OPTIONS } from "@/lib/locations";
 
 const initialState: MatchFormState = {};
 
@@ -9,6 +10,9 @@ export default function CreateMatchForm() {
   const [state, formAction, pending] = useActionState(
     createMatchAction,
     initialState,
+  );
+  const [matchType, setMatchType] = useState<"single" | "double" | "team">(
+    "single",
   );
   const [matchFormat, setMatchFormat] = useState<
     "group_only" | "group_then_knockout"
@@ -19,6 +23,12 @@ export default function CreateMatchForm() {
   const [matchTime, setMatchTime] = useState("19:00");
   const [deadlineDate, setDeadlineDate] = useState("");
   const [deadlineTime, setDeadlineTime] = useState("17:00");
+  const [teamStartDate, setTeamStartDate] = useState("");
+  const [teamStartTime, setTeamStartTime] = useState("09:00");
+  const [teamDeadlineDate, setTeamDeadlineDate] = useState("");
+  const [teamDeadlineTime, setTeamDeadlineTime] = useState("17:00");
+  const [teamMinMembers, setTeamMinMembers] = useState(3);
+  const [teamMaxMembers, setTeamMaxMembers] = useState(6);
   const timezoneOffsetInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -64,6 +74,25 @@ export default function CreateMatchForm() {
   const registrationDeadlineValue = deadlineDateTime
     ? `${deadlineDate}T${deadlineTime}`
     : "";
+  const teamRegistrationStartValue =
+    teamStartDate && teamStartTime ? `${teamStartDate}T${teamStartTime}` : "";
+  const teamRegistrationDeadlineValue =
+    teamDeadlineDate && teamDeadlineTime
+      ? `${teamDeadlineDate}T${teamDeadlineTime}`
+      : "";
+
+  const teamWindowInvalid =
+    matchType === "team" &&
+    teamRegistrationStartValue !== "" &&
+    teamRegistrationDeadlineValue !== "" &&
+    new Date(teamRegistrationStartValue) >=
+      new Date(teamRegistrationDeadlineValue);
+
+  const teamSizeInvalid =
+    matchType === "team" &&
+    (teamMinMembers < 1 ||
+      teamMaxMembers < teamMinMembers ||
+      teamMaxMembers > 50);
 
   return (
     <form action={formAction} className="space-y-8">
@@ -110,13 +139,18 @@ export default function CreateMatchForm() {
             >
               地点 *
             </label>
-            <input
+            <select
               id="location"
               name="location"
               required
-              placeholder="例如：西区体育馆二楼"
               className="input-dark w-full rounded-2xl px-4 py-2 text-slate-100 placeholder:text-slate-600"
-            />
+            >
+              {VENUE_OPTIONS.map((venue) => (
+                <option key={venue} value={venue}>
+                  {venue}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       </section>
@@ -139,6 +173,16 @@ export default function CreateMatchForm() {
           type="hidden"
           name="registrationDeadline"
           value={registrationDeadlineValue}
+        />
+        <input
+          type="hidden"
+          name="teamRegistrationStart"
+          value={teamRegistrationStartValue}
+        />
+        <input
+          type="hidden"
+          name="teamRegistrationDeadline"
+          value={teamRegistrationDeadlineValue}
         />
 
         <div className="grid gap-5 lg:grid-cols-2">
@@ -217,6 +261,10 @@ export default function CreateMatchForm() {
             <select
               id="type"
               name="type"
+              value={matchType}
+              onChange={(e) =>
+                setMatchType(e.target.value as "single" | "double" | "team")
+              }
               className="input-dark w-full rounded-2xl px-4 py-2 text-slate-100"
             >
               <option value="single">单打</option>
@@ -252,13 +300,126 @@ export default function CreateMatchForm() {
         </div>
       </section>
 
+      {matchType === "team" ? (
+        <section className="surface-card rounded-3xl p-5">
+          <h2 className="mb-4 text-sm font-black tracking-wide text-teal-100">
+            团体报名
+          </h2>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <label
+                htmlFor="teamMinMembers"
+                className="mb-1 block text-sm text-slate-300"
+              >
+                最少队伍人数 *
+              </label>
+              <input
+                id="teamMinMembers"
+                name="teamMinMembers"
+                type="number"
+                min={1}
+                max={50}
+                required
+                value={teamMinMembers}
+                onChange={(e) => setTeamMinMembers(Number(e.target.value))}
+                className="input-dark w-full rounded-2xl px-4 py-2 text-slate-100"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="teamMaxMembers"
+                className="mb-1 block text-sm text-slate-300"
+              >
+                最多队伍人数 *
+              </label>
+              <input
+                id="teamMaxMembers"
+                name="teamMaxMembers"
+                type="number"
+                min={teamMinMembers}
+                max={50}
+                required
+                value={teamMaxMembers}
+                onChange={(e) => setTeamMaxMembers(Number(e.target.value))}
+                className="input-dark w-full rounded-2xl px-4 py-2 text-slate-100"
+              />
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-5 lg:grid-cols-2">
+            <div className="rounded-3xl bg-slate-950/36 p-4 ring-1 ring-white/8">
+              <p className="mb-3 text-sm font-medium text-slate-200">
+                团体报名开始时间 *
+              </p>
+              <div className="space-y-3">
+                <input
+                  type="date"
+                  aria-label="团体报名开始日期"
+                  required
+                  value={teamStartDate}
+                  onChange={(e) => setTeamStartDate(e.target.value)}
+                  className="native-picker native-picker-date input-dark h-10 w-full rounded-2xl px-3 text-sm text-slate-100 accent-teal-500"
+                />
+                <input
+                  type="time"
+                  aria-label="团体报名开始时间"
+                  required
+                  value={teamStartTime}
+                  step={1800}
+                  onChange={(e) => setTeamStartTime(e.target.value)}
+                  className="native-picker native-picker-time input-dark h-10 w-full rounded-2xl px-3 text-sm text-slate-100 accent-teal-500"
+                />
+              </div>
+            </div>
+
+            <div className="rounded-3xl bg-slate-950/36 p-4 ring-1 ring-white/8">
+              <p className="mb-3 text-sm font-medium text-slate-200">
+                团体报名截止时间 *
+              </p>
+              <div className="space-y-3">
+                <input
+                  type="date"
+                  aria-label="团体报名截止日期"
+                  required
+                  value={teamDeadlineDate}
+                  max={matchDate || undefined}
+                  onChange={(e) => setTeamDeadlineDate(e.target.value)}
+                  className="native-picker native-picker-date input-dark h-10 w-full rounded-2xl px-3 text-sm text-slate-100 accent-teal-500"
+                />
+                <input
+                  type="time"
+                  aria-label="团体报名截止时间"
+                  required
+                  value={teamDeadlineTime}
+                  step={1800}
+                  onChange={(e) => setTeamDeadlineTime(e.target.value)}
+                  className="native-picker native-picker-time input-dark h-10 w-full rounded-2xl px-3 text-sm text-slate-100 accent-teal-500"
+                />
+              </div>
+            </div>
+          </div>
+
+          {teamWindowInvalid ? (
+            <p className="mt-2 text-sm text-rose-300">
+              团体报名开始时间必须早于截止时间。
+            </p>
+          ) : null}
+          {teamSizeInvalid ? (
+            <p className="mt-2 text-sm text-rose-300">
+              队伍人数范围应为 1 到 50，且最多人数不能少于最少人数。
+            </p>
+          ) : null}
+        </section>
+      ) : null}
+
       {state.error && <p className="text-sm text-rose-300">{state.error}</p>}
       {state.success && (
         <p className="text-sm text-emerald-300">{state.success}</p>
       )}
 
       <button
-        disabled={pending || !!timeError}
+        disabled={pending || !!timeError || teamWindowInvalid || teamSizeInvalid}
         className="btn-primary w-full rounded-2xl py-3 font-bold text-white disabled:opacity-60"
       >
         {pending ? "发布中..." : "发布比赛"}

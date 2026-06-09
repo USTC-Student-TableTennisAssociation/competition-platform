@@ -43,6 +43,12 @@ export default async function EditMatchPage({
             type: match.type,
             format: match.format,
             registrationDeadlineIso: match.registrationDeadline.toISOString(),
+            teamRegistrationStartIso:
+              match.teamRegistrationStart?.toISOString() ?? null,
+            teamRegistrationDeadlineIso:
+              match.teamRegistrationDeadline?.toISOString() ?? null,
+            teamMinMembers: match.teamMinMembers,
+            teamMaxMembers: match.teamMaxMembers,
           }}
         />
       </div>
