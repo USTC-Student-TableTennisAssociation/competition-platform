@@ -152,10 +152,12 @@ export async function applyMatchPostAction(
       creatorId: true,
       status: true,
       playAt: true,
+      creator: { select: { isBanned: true } },
     },
   })
 
   if (!post) return { error: '约球帖不存在。' }
+  if (post.creator.isBanned) return { error: '约球帖发布者当前不可用。' }
   if (post.creatorId === currentUser.id) return { error: '不能申请自己的约球帖。' }
   if (post.status !== MatchPostStatus.OPEN) return { error: '这个约球帖当前不可申请。' }
   if (post.playAt <= new Date()) {
@@ -207,6 +209,7 @@ export async function acceptMatchApplicationAction(
           postId: true,
           applicantId: true,
           status: true,
+          applicant: { select: { isBanned: true } },
           post: {
             select: {
               id: true,
@@ -220,6 +223,9 @@ export async function acceptMatchApplicationAction(
 
       if (!application || application.postId !== postId) {
         throw new Error('申请不存在。')
+      }
+      if (application.applicant.isBanned) {
+        throw new Error('该申请用户已被封禁，不能接受申请。')
       }
       if (application.post.creatorId !== currentUser.id) {
         throw new Error('只有发布者可以接受申请。')

@@ -79,6 +79,17 @@ enum MatchApplicationStatus {
   CANCELLED
 }
 
+enum NotificationKind {
+  account_banned
+}
+
+enum NotificationDeliveryStatus {
+  pending
+  sending
+  sent
+  failed
+}
+
 model User {
   id              String    @id @default(cuid())
   email           String    @unique
@@ -88,6 +99,7 @@ model User {
   points          Int       @default(0)
   eloRating       Int       @default(1200)
   isBanned        Boolean   @default(false)
+  sessionVersion  Int       @default(0)
   role            UserRole  @default(user)
   wins            Int       @default(0)
   losses          Int       @default(0)
@@ -127,6 +139,7 @@ model User {
   captainedMatchTeams  MatchTeam[]           @relation("MatchTeamCaptain")
   reviewedMatchTeams   MatchTeam[]           @relation("MatchTeamReviewer")
   matchTeamMembers     MatchTeamMember[]
+  notificationOutbox  NotificationOutbox[]
 }
 
 model AdminTrustedDevice {
@@ -464,6 +477,27 @@ model AuditLog {
 
   @@index([entityType, entityId])
   @@index([createdAt])
+}
+
+model NotificationOutbox {
+  id             String                     @id @default(cuid())
+  userId         String?
+  kind           NotificationKind
+  recipientEmail String
+  subject        String
+  textBody       String
+  htmlBody       String
+  status         NotificationDeliveryStatus @default(pending)
+  attempts       Int                        @default(0)
+  lastError      String?
+  sentAt         DateTime?
+  createdAt      DateTime                   @default(now())
+  updatedAt      DateTime                   @updatedAt
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
 }
 
 model LeaderboardCache {

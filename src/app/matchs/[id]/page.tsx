@@ -74,6 +74,9 @@ export default async function MatchDetailPage({
       where: { id },
       include: {
         registrations: {
+          where: {
+            user: { isBanned: false },
+          },
           include: {
             user: {
               select: {
@@ -92,6 +95,8 @@ export default async function MatchDetailPage({
             status: {
               not: TeamRegistrationStatus.cancelled,
             },
+            captain: { isBanned: false },
+            members: { none: { user: { isBanned: true } } },
           },
           include: {
             captain: {
@@ -102,6 +107,9 @@ export default async function MatchDetailPage({
               },
             },
             members: {
+              where: {
+                user: { isBanned: false },
+              },
               include: {
                 user: {
                   select: {
@@ -202,17 +210,18 @@ export default async function MatchDetailPage({
     pendingDoublesInvites,
     doublesInviteCandidates,
     registeredDoublesTeams,
-  ] =
+  ] = await Promise.all([
     currentUser && isDoubleMatch
-      ? await Promise.all([
-          getDoublesTeamForUser(match.id, currentUser.id),
-          getPendingMatchInvitesForUser(match.id, currentUser.id),
-          inviteQ
-            ? searchDoublesInviteCandidates(match.id, currentUser.id, inviteQ)
-            : Promise.resolve([]),
-          getRegisteredDoublesTeams(match.id),
-        ])
-      : [null, [], [], []];
+      ? getDoublesTeamForUser(match.id, currentUser.id)
+      : Promise.resolve(null),
+    currentUser && isDoubleMatch
+      ? getPendingMatchInvitesForUser(match.id, currentUser.id)
+      : Promise.resolve([]),
+    currentUser && isDoubleMatch && inviteQ
+      ? searchDoublesInviteCandidates(match.id, currentUser.id, inviteQ)
+      : Promise.resolve([]),
+    isDoubleMatch ? getRegisteredDoublesTeams(match.id) : Promise.resolve([]),
+  ]);
 
   const groupingPayload = (match.groupingResult?.payload ?? null) as {
     config?: {
@@ -463,7 +472,7 @@ export default async function MatchDetailPage({
                 {isTeamMatch
                   ? `组建中 ${buildingTeamCount} 支 · 已成队 ${formedTeamCount} 支`
                   : isDoubleMatch
-                    ? `${Math.floor(match.registrations.length / 2)} 组`
+                    ? `${registeredDoublesTeams.length} 组`
                     : `${match.registrations.length} 人`}
               </p>
             </div>

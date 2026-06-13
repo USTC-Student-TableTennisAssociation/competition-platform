@@ -43,11 +43,16 @@ export async function getCurrentUser() {
       role: true,
       emailVerifiedAt: true,
       isBanned: true,
+      sessionVersion: true,
       hashedPassword: true,
     },
   })
 
   if (!user?.emailVerifiedAt || user.isBanned) {
+    return null
+  }
+
+  if (session.sessionVersion !== user.sessionVersion) {
     return null
   }
 
@@ -57,8 +62,9 @@ export async function getCurrentUser() {
   }
 
   // Keep sensitive account state out of component props and action callers.
-  const { hashedPassword, isBanned, ...safeUser } = user
+  const { hashedPassword, isBanned, sessionVersion, ...safeUser } = user
   void hashedPassword
   void isBanned
+  void sessionVersion
   return safeUser
 }

@@ -582,7 +582,11 @@ export default async function Home() {
       orderBy: [{ registrationDeadline: "asc" }, { dateTime: "asc" }],
       take: 3,
       include: {
-        _count: { select: { registrations: true } },
+        _count: {
+          select: {
+            registrations: { where: { user: { isBanned: false } } },
+          },
+        },
         registrations: {
           where: { userId: openRegistrationUserId },
           select: { id: true },
@@ -593,6 +597,7 @@ export default async function Home() {
       where: {
         status: MatchPostStatus.OPEN,
         playAt: { gt: now },
+        creator: { isBanned: false },
       },
       orderBy: { playAt: "asc" },
       take: 6,
@@ -608,12 +613,16 @@ export default async function Home() {
         applications: {
           where: currentUser
             ? {
+                applicant: { isBanned: false },
                 OR: [
                   { status: MatchApplicationStatus.PENDING },
                   { applicantId: currentUser.id },
                 ],
               }
-            : { status: MatchApplicationStatus.PENDING },
+            : {
+                status: MatchApplicationStatus.PENDING,
+                applicant: { isBanned: false },
+              },
           orderBy: { createdAt: "asc" },
           include: {
             applicant: {

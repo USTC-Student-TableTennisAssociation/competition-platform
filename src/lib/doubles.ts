@@ -78,6 +78,13 @@ export async function getRegisteredDoublesTeamCount(matchId: string) {
     FROM match_doubles_team t
     WHERE t.match_id = ${matchId}
       AND t.registered_at IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM match_doubles_team_member tm
+        JOIN "User" u ON u.id = tm.user_id
+        WHERE tm.team_id = t.id
+          AND u."isBanned" = true
+      )
   `
   return Number(rows[0]?.count ?? 0)
 }
@@ -146,6 +153,13 @@ export async function getDoublesTeamForUser(matchId: string, userId: string) {
     JOIN match_doubles_team_member tm ON tm.team_id = t.id
     JOIN "User" u ON u.id = tm.user_id
     WHERE t.match_id = ${matchId}
+      AND NOT EXISTS (
+        SELECT 1
+        FROM match_doubles_team_member active_tm
+        JOIN "User" active_user ON active_user.id = active_tm.user_id
+        WHERE active_tm.team_id = t.id
+          AND active_user."isBanned" = true
+      )
       AND t.id IN (
         SELECT team_id
         FROM match_doubles_team_member
@@ -184,6 +198,13 @@ export async function getRegisteredDoublesTeams(matchId: string) {
     JOIN "User" u ON u.id = tm.user_id
     WHERE t.match_id = ${matchId}
       AND t.registered_at IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM match_doubles_team_member active_tm
+        JOIN "User" active_user ON active_user.id = active_tm.user_id
+        WHERE active_tm.team_id = t.id
+          AND active_user."isBanned" = true
+      )
     ORDER BY t.created_at ASC, tm.slot ASC
   `
 
@@ -229,7 +250,8 @@ export async function sendDoublesInvite(params: { matchId: string; inviterId: st
   const canInvite = await assertDoublesMatchOpen(matchId)
   if (!canInvite.ok) return canInvite
 
-  const [invitee, inviterReg, inviteeReg, inviterTeam, inviteeTeam, existingPending] = await Promise.all([
+  const [inviter, invitee, inviterReg, inviteeReg, inviterTeam, inviteeTeam, existingPending] = await Promise.all([
+    prisma.user.findUnique({ where: { id: inviterId }, select: { id: true, isBanned: true } }),
     prisma.user.findUnique({ where: { id: inviteeId }, select: { id: true, isBanned: true } }),
     prisma.registration.findFirst({ where: { matchId, userId: inviterId }, select: { id: true } }),
     prisma.registration.findFirst({ where: { matchId, userId: inviteeId }, select: { id: true } }),
@@ -262,6 +284,7 @@ export async function sendDoublesInvite(params: { matchId: string; inviterId: st
     `,
   ])
 
+  if (!inviter || inviter.isBanned) return { ok: false as const, error: '当前账号不可发起邀请。' }
   if (!invitee || invitee.isBanned) return { ok: false as const, error: '邀请对象不可用。' }
   if (inviterReg || inviteeReg) return { ok: false as const, error: '有成员已报名该比赛，无法发起组队邀请。' }
   if (inviterTeam.length > 0 || inviteeTeam.length > 0) return { ok: false as const, error: '有成员已在小队中，无法重复组队。' }
@@ -296,7 +319,11 @@ export async function acceptDoublesInvite(params: { inviteId: string; currentUse
   const memberA = invite.inviterId
   const memberB = invite.inviteeId
 
-  const [regA, regB, teamA, teamB] = await Promise.all([
+  const [members, regA, regB, teamA, teamB] = await Promise.all([
+    prisma.user.findMany({
+      where: { id: { in: [memberA, memberB] }, isBanned: false },
+      select: { id: true },
+    }),
     prisma.registration.findFirst({ where: { matchId: invite.matchId, userId: memberA }, select: { id: true } }),
     prisma.registration.findFirst({ where: { matchId: invite.matchId, userId: memberB }, select: { id: true } }),
     prisma.$queryRaw<Array<{ id: string }>>`
@@ -317,6 +344,7 @@ export async function acceptDoublesInvite(params: { inviteId: string; currentUse
     `,
   ])
 
+  if (members.length !== 2) return { ok: false as const, error: '邀请双方中存在已封禁用户。' }
   if (regA || regB) return { ok: false as const, error: '有成员已报名，不能再接受组队邀请。' }
   if (teamA.length > 0 || teamB.length > 0) return { ok: false as const, error: '有成员已在其他小队中。' }
 
@@ -380,6 +408,13 @@ export async function registerDoublesTeamByUser(matchId: string, currentUserId: 
   if (team.registeredAt) return { ok: false as const, error: '你们的小队已报名该比赛。' }
 
   const memberIds = team.members.map((member) => member.userId)
+
+  const activeMemberCount = await prisma.user.count({
+    where: { id: { in: memberIds }, isBanned: false },
+  })
+  if (activeMemberCount !== memberIds.length) {
+    return { ok: false as const, error: '队伍中存在已封禁用户，无法报名。' }
+  }
 
   const existingRegs = await prisma.registration.findMany({
     where: {

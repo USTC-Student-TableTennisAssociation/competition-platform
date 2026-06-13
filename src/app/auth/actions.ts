@@ -218,10 +218,12 @@ export async function loginAction(_: AuthFormState, formData: FormData): Promise
     return { error: '邮箱或密码错误。' }
   }
 
+  let sessionPasswordHash = user.hashedPassword
   if (verifyResult.needsRehash) {
+    sessionPasswordHash = hashPassword(password)
     await prisma.user.update({
       where: { id: user.id },
-      data: { hashedPassword: hashPassword(password) },
+      data: { hashedPassword: sessionPasswordHash },
     })
   }
 
@@ -234,7 +236,11 @@ export async function loginAction(_: AuthFormState, formData: FormData): Promise
   }
 
   try {
-    const sessionToken = createSessionToken(user.id, user.hashedPassword)
+    const sessionToken = createSessionToken(
+      user.id,
+      sessionPasswordHash,
+      user.sessionVersion,
+    )
     if (!sessionToken) {
       return { error: '登录服务配置异常，请联系管理员检查 AUTH_SECRET。' }
     }
