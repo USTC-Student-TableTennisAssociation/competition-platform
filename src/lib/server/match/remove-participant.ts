@@ -74,6 +74,8 @@ async function updateFinishedStatus(tx: Prisma.TransactionClient, matchId: strin
         select: {
           winnerTeamIds: true,
           loserTeamIds: true,
+          winnerMatchTeamId: true,
+          loserMatchTeamId: true,
           confirmed: true,
           score: true,
           createdAt: true,
@@ -83,7 +85,7 @@ async function updateFinishedStatus(tx: Prisma.TransactionClient, matchId: strin
     },
   })
 
-  if (!match || match.type === MatchType.team || match.status === MatchStatus.finished) return
+  if (!match || match.status === MatchStatus.finished) return
   if (
     isMatchAllResultsFinished({
       format: match.format,

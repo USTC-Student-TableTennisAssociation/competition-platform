@@ -40,6 +40,10 @@ import {
   paginateItems,
 } from "@/lib/match-detail-page";
 import { evaluateCertificateEligibility } from "@/lib/certificate";
+import {
+  getResultPhase,
+  resolveCompetitorType,
+} from "@/lib/match-competitor";
 
 const statusLabelMap = {
   registration: "报名中",
@@ -228,6 +232,7 @@ export default async function MatchDetailPage({
   ]);
 
   const groupingPayload = (match.groupingResult?.payload ?? null) as {
+    competitorType?: "user" | "team";
     config?: {
       groupCount?: number;
       qualifiersPerGroup?: number;
@@ -252,6 +257,9 @@ export default async function MatchDetailPage({
       }>;
     };
   } | null;
+  const groupingCompetitorType = resolveCompetitorType(
+    groupingPayload?.competitorType,
+  );
 
   const filledKnockoutRounds = groupingPayload?.knockout
     ? resolveFilledKnockoutRounds({
@@ -260,16 +268,18 @@ export default async function MatchDetailPage({
         qualifiersPerGroup: groupingPayload.config?.qualifiersPerGroup ?? 1,
         results: match.results,
         groupingGeneratedAt: match.groupingGeneratedAt ?? null,
+        competitorType: groupingCompetitorType,
       })
     : null;
 
   const adminEligibleOptions =
-    groupingPayload && match.type === "single"
+    groupingPayload && (match.type === "single" || match.type === "team")
       ? buildAdminEligibleOptions({
           groupingPayload,
           filledKnockoutRounds,
           results: match.results,
           groupingGeneratedAt: match.groupingGeneratedAt ?? null,
+          competitorType: groupingCompetitorType,
         })
       : null;
 
@@ -277,6 +287,7 @@ export default async function MatchDetailPage({
     ? buildAdminGroupBattleTables({
         groups: groupingPayload.groups,
         results: match.results,
+        competitorType: groupingCompetitorType,
       })
     : [];
 
@@ -297,10 +308,22 @@ export default async function MatchDetailPage({
   const preservedPlayersPage = participantsPagination.preservedPage;
 
   const currentUserId = currentUser?.id ?? null;
+  const currentUserTeamId =
+    currentUserId && isTeamMatch
+      ? (match.teamRegistrations.find(
+          (team) =>
+            team.status === TeamRegistrationStatus.approved &&
+            (team.captainId === currentUserId ||
+              team.members.some((member) => member.userId === currentUserId)),
+        )?.id ?? null)
+      : null;
+  const currentCompetitorId = isTeamMatch
+    ? currentUserTeamId
+    : currentUserId;
   const myGroup =
-    currentUserId && groupingPayload
+    currentCompetitorId && groupingPayload
       ? groupingPayload.groups.find((group) =>
-          group.players.some((player) => player.id === currentUserId),
+          group.players.some((player) => player.id === currentCompetitorId),
         )
       : null;
 
@@ -406,6 +429,41 @@ export default async function MatchDetailPage({
         nickname: member.nickname,
       })),
     }));
+  const teamDetailsById = Object.fromEntries(
+    approvedTeamResultTeams.map((team) => [
+      team.id,
+      {
+        captainNickname: team.captainNickname,
+        members: team.members.map((member) => member.nickname),
+      },
+    ]),
+  );
+  const teamAllowedMatches =
+    !groupingPayload
+      ? null
+      : groupingCompetitorType === "team" && adminEligibleOptions
+        ? [
+            ...adminEligibleOptions.groupMatchOptions.map((option) => ({
+              key: `group:${option.groupName}:${option.playerAId}:${option.playerBId}`,
+              phase: "group" as const,
+              teamAId: option.playerAId,
+              teamAName: option.playerANickname,
+              teamBId: option.playerBId,
+              teamBName: option.playerBNickname,
+              groupName: option.groupName,
+            })),
+            ...adminEligibleOptions.knockoutMatchOptions.map((option) => ({
+              key: `knockout:${option.matchId}`,
+              phase: "knockout" as const,
+              teamAId: option.playerAId,
+              teamAName: option.playerANickname,
+              teamBId: option.playerBId,
+              teamBName: option.playerBNickname,
+              knockoutRoundName: option.roundName,
+              knockoutMatchId: option.matchId,
+            })),
+          ]
+        : [];
   const teamResultMemberIds = isTeamMatch
     ? Array.from(
         new Set(
@@ -473,6 +531,13 @@ export default async function MatchDetailPage({
               (userId) => teamResultUserNameById.get(userId) ?? userId,
             ),
             remark: typeof score.remark === "string" ? score.remark : "",
+            phase: getResultPhase(score),
+            groupName:
+              typeof score.groupName === "string" ? score.groupName : null,
+            knockoutRoundName:
+              typeof score.knockoutRoundName === "string"
+                ? score.knockoutRoundName
+                : null,
             createdAt: result.createdAt.toISOString(),
           };
         })
@@ -790,6 +855,7 @@ export default async function MatchDetailPage({
           matchFinished={match.status === "finished"}
           teams={approvedTeamResultTeams}
           results={teamMatchResultItems}
+          allowedMatches={teamAllowedMatches}
         />
       ) : null}
 
@@ -843,7 +909,7 @@ export default async function MatchDetailPage({
         />
       )}
 
-      {canManageGrouping && !isTeamMatch && (
+      {canManageGrouping && (
         <div className="rounded-2xl border border-amber-400/30 bg-amber-500/5 p-4 sm:p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -864,20 +930,28 @@ export default async function MatchDetailPage({
         </div>
       )}
 
-      {!isTeamMatch && (!groupingPayload ||
-        alreadyRegistered ||
+      {(!groupingPayload ||
+        Boolean(currentCompetitorId) ||
         Boolean(groupingPayload?.knockout)) && (
         <GroupingResultSection
           groupingPayload={groupingPayload}
-          alreadyRegistered={alreadyRegistered}
+          alreadyRegistered={Boolean(currentCompetitorId)}
           myGroup={myGroup ?? null}
           filledKnockoutRounds={filledKnockoutRounds}
-          currentUserId={currentUser?.id}
-          currentUserNickname={currentUser?.nickname}
+          currentUserId={currentCompetitorId}
+          currentUserNickname={
+            isTeamMatch
+              ? approvedTeamResultTeams.find(
+                  (team) => team.id === currentCompetitorId,
+                )?.name
+              : currentUser?.nickname
+          }
+          competitorType={groupingCompetitorType}
+          teamDetailsById={teamDetailsById}
         />
       )}
 
-      {!isTeamMatch && groupingPayload && (
+      {groupingPayload && (
         <GroupsOverviewSection
           groupingPayload={groupingPayload}
           pagedGroups={pagedGroups}
@@ -885,6 +959,8 @@ export default async function MatchDetailPage({
           totalGroupsPages={totalGroupsPages}
           currentGroupsPage={currentGroupsPage}
           shouldOpenGroups={shouldOpenGroups}
+          competitorType={groupingCompetitorType}
+          teamDetailsById={teamDetailsById}
           buildHref={(page) =>
             buildMatchHref({
               playersPage: preservedPlayersPage,

@@ -1,3 +1,11 @@
+import {
+  getResultCompetitorIds,
+  getResultKnockoutMatchId,
+  getResultPhase,
+  resolveCompetitorType,
+  type CompetitorType,
+} from "@/lib/match-competitor";
+
 export type KnockoutRound = {
   name: string;
   matches: Array<{
@@ -47,6 +55,8 @@ export type AdminGroupBattleTable = {
 export type MatchResultLite = {
   winnerTeamIds: string[];
   loserTeamIds: string[];
+  winnerMatchTeamId?: string | null;
+  loserMatchTeamId?: string | null;
   confirmed: boolean;
   score: unknown;
   createdAt: Date;
@@ -54,6 +64,7 @@ export type MatchResultLite = {
 };
 
 export type GroupingPayload = {
+  competitorType?: CompetitorType;
   config?: {
     groupCount?: number;
     qualifiersPerGroup?: number;
@@ -103,6 +114,7 @@ export function extractWinnerLoserSets(score: unknown) {
 export function buildGroupStandings(
   players: GroupPlayer[],
   results: MatchResultLite[],
+  competitorType: CompetitorType = "user",
 ) {
   const standings = players.map((player) => ({
     id: player.id,
@@ -119,11 +131,10 @@ export function buildGroupStandings(
 
   for (const result of results) {
     if (!result.confirmed) continue;
-    if (result.winnerTeamIds.length !== 1 || result.loserTeamIds.length !== 1)
-      continue;
-
-    const winnerId = result.winnerTeamIds[0];
-    const loserId = result.loserTeamIds[0];
+    if (getResultPhase(result.score) === "knockout") continue;
+    const competitorIds = getResultCompetitorIds(result, competitorType);
+    if (!competitorIds) continue;
+    const { winnerId, loserId } = competitorIds;
     if (!playerIdSet.has(winnerId) || !playerIdSet.has(loserId)) continue;
 
     const winner = byId.get(winnerId);
@@ -159,6 +170,7 @@ export function resolveFilledKnockoutRounds(params: {
   qualifiersPerGroup: number;
   results: MatchResultLite[];
   groupingGeneratedAt: Date | null;
+  competitorType?: CompetitorType;
 }) {
   const {
     knockoutRounds,
@@ -166,23 +178,33 @@ export function resolveFilledKnockoutRounds(params: {
     qualifiersPerGroup,
     results,
     groupingGeneratedAt,
+    competitorType = "user",
   } = params;
 
-  const qualifierLabelToPlayer = new Map<string, { id: string; nickname: string }>();
+  const qualifierLabelToPlayer = new Map<
+    string,
+    { id: string; nickname: string }
+  >();
 
-  const confirmedSingles = results.filter(
+  const confirmedResults = results.filter(
     (result) =>
-      result.confirmed &&
-      result.winnerTeamIds.length === 1 &&
-      result.loserTeamIds.length === 1,
+      result.confirmed && Boolean(getResultCompetitorIds(result, competitorType)),
+  );
+  const confirmedGroupResults = confirmedResults.filter(
+    (result) => getResultPhase(result.score) !== "knockout",
   );
 
   for (const group of groups) {
-    const standings = buildGroupStandings(group.players, confirmedSingles);
+    const standings = buildGroupStandings(
+      group.players,
+      confirmedGroupResults,
+      competitorType,
+    );
     const groupPlayerIdSet = new Set(group.players.map((player) => player.id));
-    const groupConfirmedCount = confirmedSingles.filter((result) => {
-      const winnerId = result.winnerTeamIds[0];
-      const loserId = result.loserTeamIds[0];
+    const groupConfirmedCount = confirmedGroupResults.filter((result) => {
+      const ids = getResultCompetitorIds(result, competitorType);
+      if (!ids) return false;
+      const { winnerId, loserId } = ids;
       return groupPlayerIdSet.has(winnerId) && groupPlayerIdSet.has(loserId);
     }).length;
     const totalGroupMatches =
@@ -206,16 +228,27 @@ export function resolveFilledKnockoutRounds(params: {
 
   const winnerByMatchId = new Map<string, { id: string; nickname: string }>();
 
-  const getHeadToHeadResult = (idA: string, idB: string) => {
-    const candidates = confirmedSingles.filter(
-      (result) =>
-        result.confirmed &&
-        result.winnerTeamIds.length === 1 &&
-        result.loserTeamIds.length === 1 &&
-        (!groupingGeneratedAt || result.createdAt >= groupingGeneratedAt) &&
-        ((result.winnerTeamIds[0] === idA && result.loserTeamIds[0] === idB) ||
-          (result.winnerTeamIds[0] === idB && result.loserTeamIds[0] === idA)),
-    );
+  const getHeadToHeadResult = (idA: string, idB: string, matchId: string) => {
+    const candidates = confirmedResults.filter((result) => {
+      if (groupingGeneratedAt && result.createdAt < groupingGeneratedAt) {
+        return false;
+      }
+      const knockoutMatchId = getResultKnockoutMatchId(result.score);
+      if (competitorType === "team") {
+        if (getResultPhase(result.score) !== "knockout") return false;
+        if (knockoutMatchId !== matchId) return false;
+      } else if (knockoutMatchId && knockoutMatchId !== matchId) {
+        return false;
+      } else if (getResultPhase(result.score) === "group") {
+        return false;
+      }
+      const ids = getResultCompetitorIds(result, competitorType);
+      return Boolean(
+        ids &&
+          ((ids.winnerId === idA && ids.loserId === idB) ||
+            (ids.winnerId === idB && ids.loserId === idA)),
+      );
+    });
 
     if (candidates.length === 0) return null;
 
@@ -265,9 +298,15 @@ export function resolveFilledKnockoutRounds(params: {
       const away = resolveLabel(match.awayLabel);
 
       if (home.playerId && away.playerId) {
-        const matchResult = getHeadToHeadResult(home.playerId, away.playerId);
+        const matchResult = getHeadToHeadResult(
+          home.playerId,
+          away.playerId,
+          match.id,
+        );
         if (matchResult) {
-          const winnerId = matchResult.winnerTeamIds[0];
+          const resultIds = getResultCompetitorIds(matchResult, competitorType);
+          if (!resultIds) return match;
+          const winnerId = resultIds.winnerId;
           const winnerLabel =
             winnerId === home.playerId ? home.displayLabel : away.displayLabel;
           winnerByMatchId.set(match.id, {
@@ -325,6 +364,7 @@ export function resolveFilledKnockoutRounds(params: {
 
 export function buildAdminEligibleOptions(params: {
   groupingPayload: {
+    competitorType?: CompetitorType;
     groups: Array<{ name: string; players: GroupPlayer[] }>;
     knockout?: { rounds: KnockoutRound[] };
   };
@@ -343,35 +383,38 @@ export function buildAdminEligibleOptions(params: {
   results: Array<{
     winnerTeamIds: string[];
     loserTeamIds: string[];
+    winnerMatchTeamId?: string | null;
+    loserMatchTeamId?: string | null;
+    score?: unknown;
     createdAt: Date;
   }>;
   groupingGeneratedAt: Date | null;
+  competitorType?: CompetitorType;
 }) {
   const {
     groupingPayload,
     filledKnockoutRounds,
     results,
     groupingGeneratedAt,
+    competitorType = resolveCompetitorType(groupingPayload.competitorType),
   } = params;
 
-  const allSinglePairKeys = new Set(
+  const groupPairKeys = new Set(
     results
-      .filter(
-        (result) =>
-          result.winnerTeamIds.length === 1 && result.loserTeamIds.length === 1,
-      )
-      .map((result) => pairKey(result.winnerTeamIds[0], result.loserTeamIds[0])),
+      .filter((result) => getResultPhase(result.score) !== "knockout")
+      .map((result) => getResultCompetitorIds(result, competitorType))
+      .filter((ids): ids is { winnerId: string; loserId: string } => Boolean(ids))
+      .map((ids) => pairKey(ids.winnerId, ids.loserId)),
   );
 
-  const knockoutPairKeys = new Set(
+  const knockoutMatchIds = new Set(
     results
       .filter(
         (result) =>
-          result.winnerTeamIds.length === 1 &&
-          result.loserTeamIds.length === 1 &&
-          (!groupingGeneratedAt || result.createdAt >= groupingGeneratedAt),
+          !groupingGeneratedAt || result.createdAt >= groupingGeneratedAt,
       )
-      .map((result) => pairKey(result.winnerTeamIds[0], result.loserTeamIds[0])),
+      .map((result) => getResultKnockoutMatchId(result.score))
+      .filter((matchId): matchId is string => Boolean(matchId)),
   );
 
   const groupMatchOptions = groupingPayload.groups.flatMap((group) => {
@@ -382,7 +425,7 @@ export function buildAdminEligibleOptions(params: {
         const playerA = group.players[i];
         const playerB = group.players[j];
         const key = pairKey(playerA.id, playerB.id);
-        if (allSinglePairKeys.has(key)) continue;
+        if (groupPairKeys.has(key)) continue;
 
         items.push({
           groupName: group.name,
@@ -402,8 +445,7 @@ export function buildAdminEligibleOptions(params: {
       if (!match.homePlayerId || !match.awayPlayerId) return [];
       if (match.homeOutcome || match.awayOutcome) return [];
 
-      const key = pairKey(match.homePlayerId, match.awayPlayerId);
-      if (knockoutPairKeys.has(key)) return [];
+      if (knockoutMatchIds.has(match.id)) return [];
 
       return [
         {
@@ -428,9 +470,12 @@ export function buildAdminGroupBattleTables(params: {
     loserTeamIds: string[];
     confirmed: boolean;
     score: unknown;
+    winnerMatchTeamId?: string | null;
+    loserMatchTeamId?: string | null;
   }>;
+  competitorType?: CompetitorType;
 }) {
-  const { groups, results } = params;
+  const { groups, results, competitorType = "user" } = params;
 
   return groups.map<AdminGroupBattleTable>((group) => {
     const playerIds = new Set(group.players.map((player) => player.id));
@@ -453,20 +498,20 @@ export function buildAdminGroupBattleTables(params: {
       }
     >();
 
-    for (const result of results.filter(
-      (r) => r.winnerTeamIds.length === 1 && r.loserTeamIds.length === 1,
-    )) {
-      const winnerId = result.winnerTeamIds[0];
-      const loserId = result.loserTeamIds[0];
+    for (const result of results) {
+      if (getResultPhase(result.score) === "knockout") continue;
+      const ids = getResultCompetitorIds(result, competitorType);
+      if (!ids) continue;
+      const { winnerId, loserId } = ids;
       if (!playerIds.has(winnerId) || !playerIds.has(loserId)) continue;
-        
+
       const sets = extractWinnerLoserSets(result.score);
       const scoreText = extractScoreText(result.score);
-      const payload = { 
-        winnerId, 
+      const payload = {
+        winnerId,
         winnerScore: sets?.winnerScore ?? null,
         loserScore: sets?.loserScore ?? null,
-        scoreText 
+        scoreText,
       };
 
       const key = pairKey(winnerId, loserId);
@@ -480,14 +525,22 @@ export function buildAdminGroupBattleTables(params: {
 
     const cells: AdminGroupBattleTable["cells"] = {};
 
-    const formatScore = (rowId: string, data: { winnerId: string, winnerScore: number | null, loserScore: number | null, scoreText: string }) => {
-       if (data.winnerScore !== null && data.loserScore !== null) {
-          return rowId === data.winnerId
-             ? `${data.winnerScore}:${data.loserScore}`
-             : `${data.loserScore}:${data.winnerScore}`;
-       }
-       return data.scoreText;
-    }
+    const formatScore = (
+      rowId: string,
+      data: {
+        winnerId: string;
+        winnerScore: number | null;
+        loserScore: number | null;
+        scoreText: string;
+      },
+    ) => {
+      if (data.winnerScore !== null && data.loserScore !== null) {
+        return rowId === data.winnerId
+          ? `${data.winnerScore}:${data.loserScore}`
+          : `${data.loserScore}:${data.winnerScore}`;
+      }
+      return data.scoreText;
+    };
 
     for (const rowPlayer of group.players) {
       for (const colPlayer of group.players) {
