@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 type GroupingPayload = {
+  competitorType?: "user" | "team";
   groups: Array<{
     name: string;
     averagePoints: number;
@@ -12,6 +13,11 @@ type GroupingPayload = {
     }>;
   }>;
 };
+
+type TeamDetails = Record<
+  string,
+  { captainNickname: string; members: string[] }
+>;
 
 function calculateAverageElo(
   players: GroupingPayload["groups"][number]["players"],
@@ -33,6 +39,8 @@ export default function GroupsOverviewSection({
   currentGroupsPage,
   shouldOpenGroups,
   buildHref,
+  competitorType = "user",
+  teamDetailsById = {},
 }: {
   groupingPayload: GroupingPayload;
   pagedGroups: GroupingPayload["groups"];
@@ -41,6 +49,8 @@ export default function GroupsOverviewSection({
   currentGroupsPage: number;
   shouldOpenGroups: boolean;
   buildHref: (page: number) => string;
+  competitorType?: "user" | "team";
+  teamDetailsById?: TeamDetails;
 }) {
   return (
     <details
@@ -72,15 +82,32 @@ export default function GroupsOverviewSection({
               </div>
               <ul className="space-y-1 text-sm text-slate-200">
                 {group.players.map((player) => (
-                  <li key={player.id} className="flex justify-between">
-                    <Link
-                      href={`/profile/${player.id}`}
-                      className="hover:text-cyan-300 hover:underline"
-                    >
-                      {player.nickname}
-                    </Link>
+                  <li
+                    key={player.id}
+                    className="flex flex-col justify-between gap-1 sm:flex-row"
+                  >
+                    {competitorType === "team" ? (
+                      <div>
+                        <span className="font-medium text-slate-100">
+                          {player.nickname}
+                        </span>
+                        {teamDetailsById[player.id] ? (
+                          <p className="text-xs text-slate-400">
+                            队长：{teamDetailsById[player.id].captainNickname} · 成员：
+                            {teamDetailsById[player.id].members.join("、")}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <Link
+                        href={`/profile/${player.id}`}
+                        className="hover:text-cyan-300 hover:underline"
+                      >
+                        {player.nickname}
+                      </Link>
+                    )}
                     <span className="text-slate-400">
-                      {player.points} 分 / ELO {player.eloRating}
+                      {competitorType === "team" ? "平均积分" : "积分"} {player.points} / {competitorType === "team" ? "平均 " : ""}ELO {player.eloRating}
                     </span>
                   </li>
                 ))}

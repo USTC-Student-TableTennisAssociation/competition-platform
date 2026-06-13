@@ -1,4 +1,5 @@
 import { CompetitionFormat } from '@prisma/client'
+import type { CompetitorType } from '@/lib/match-competitor'
 
 export type SeedPlayer = {
   id: string
@@ -28,6 +29,7 @@ type QualifierLabel = {
 
 type GroupingPayload = {
   generatedAt: string
+  competitorType: CompetitorType
   format: CompetitionFormat
   config: {
     groupCount: number
@@ -206,7 +208,12 @@ function buildFirstRoundMatches(
 export function generateGroupingPayload(
   format: CompetitionFormat,
   participants: SeedPlayer[],
-  config: { groupCount: number; qualifiersPerGroup?: number; seedMethod?: GroupSeedMethod },
+  config: {
+    groupCount: number
+    qualifiersPerGroup?: number
+    seedMethod?: GroupSeedMethod
+    competitorType?: CompetitorType
+  },
 ): GroupingPayload {
   const sorted = [...participants].sort((a, b) => b.eloRating - a.eloRating || b.points - a.points)
   const total = sorted.length
@@ -229,9 +236,11 @@ export function generateGroupingPayload(
 
   const payload: GroupingPayload = {
     generatedAt: new Date().toISOString(),
+    competitorType: config.competitorType ?? 'user',
     format,
     config: {
-      ...config,
+      groupCount: config.groupCount,
+      qualifiersPerGroup: config.qualifiersPerGroup,
       seedMethod,
     },
     groups,

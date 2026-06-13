@@ -2,6 +2,7 @@ import KnockoutBracket from "@/components/match/KnockoutBracket";
 import Link from "next/link";
 
 type GroupingPayload = {
+  competitorType?: "user" | "team";
   groups: Array<{
     name: string;
     averagePoints: number;
@@ -25,6 +26,11 @@ type GroupingPayload = {
   };
 };
 
+type TeamDetails = Record<
+  string,
+  { captainNickname: string; members: string[] }
+>;
+
 function calculateAverageElo(
   players: GroupingPayload["groups"][number]["players"],
 ) {
@@ -44,6 +50,8 @@ export default function GroupingResultSection({
   filledKnockoutRounds,
   currentUserId,
   currentUserNickname,
+  competitorType = "user",
+  teamDetailsById = {},
 }: {
   groupingPayload: GroupingPayload | null;
   alreadyRegistered: boolean;
@@ -77,6 +85,8 @@ export default function GroupingResultSection({
   }> | null;
   currentUserId?: string | null;
   currentUserNickname?: string | null;
+  competitorType?: "user" | "team";
+  teamDetailsById?: TeamDetails;
 }) {
   return (
     <div
@@ -105,22 +115,48 @@ export default function GroupingResultSection({
                 </div>
                 <ul className="space-y-1 text-sm text-slate-200">
                   {myGroup.players.map((player) => (
-                    <li key={player.id} className="flex justify-between">
-                      <Link
-                        href={`/profile/${player.id}`}
-                        className={
-                          currentUserId && player.id === currentUserId
-                            ? "font-semibold text-amber-200 hover:underline"
-                            : "hover:text-cyan-300 hover:underline"
-                        }
-                      >
-                        {player.nickname}
-                        {currentUserId && player.id === currentUserId
-                          ? "（我）"
-                          : ""}
-                      </Link>
+                    <li
+                      key={player.id}
+                      className="flex flex-col justify-between gap-1 sm:flex-row"
+                    >
+                      {competitorType === "team" ? (
+                        <div>
+                          <span
+                            className={
+                              currentUserId && player.id === currentUserId
+                                ? "font-semibold text-amber-200"
+                                : "font-medium text-slate-100"
+                            }
+                          >
+                            {player.nickname}
+                            {currentUserId && player.id === currentUserId
+                              ? "（我的队伍）"
+                              : ""}
+                          </span>
+                          {teamDetailsById[player.id] ? (
+                            <p className="text-xs text-slate-400">
+                              队长：{teamDetailsById[player.id].captainNickname} · 成员：
+                              {teamDetailsById[player.id].members.join("、")}
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <Link
+                          href={`/profile/${player.id}`}
+                          className={
+                            currentUserId && player.id === currentUserId
+                              ? "font-semibold text-amber-200 hover:underline"
+                              : "hover:text-cyan-300 hover:underline"
+                          }
+                        >
+                          {player.nickname}
+                          {currentUserId && player.id === currentUserId
+                            ? "（我）"
+                            : ""}
+                        </Link>
+                      )}
                       <span className="text-slate-400">
-                        {player.points} 分 / ELO {player.eloRating}
+                        {competitorType === "team" ? "平均积分" : "积分"} {player.points} / {competitorType === "team" ? "平均 " : ""}ELO {player.eloRating}
                       </span>
                     </li>
                   ))}
@@ -131,7 +167,7 @@ export default function GroupingResultSection({
                   </p>
                   <div className="space-y-1 text-xs text-slate-300">
                     {myGroup.players.length < 2 ? (
-                      <p className="text-slate-400">小组人数不足。</p>
+                      <p className="text-slate-400">小组参赛单位不足。</p>
                     ) : (
                       (() => {
                         const tables =
@@ -155,11 +191,11 @@ export default function GroupingResultSection({
                 </div>
               </div>
             ) : (
-              <p className="text-slate-400">你已报名，当前尚未分配到小组。</p>
+              <p className="text-slate-400">你已参赛，当前尚未分配到小组。</p>
             )
           ) : (
             <p className="text-slate-400">
-              你未报名该比赛，当前不展示你的比赛进程；可查看淘汰赛签表。
+              你未参与该比赛，当前不展示你的比赛进程；可查看淘汰赛签表。
             </p>
           )}
 
@@ -169,7 +205,7 @@ export default function GroupingResultSection({
                 {groupingPayload.knockout.stage}（淘汰赛签表）
               </h3>
               <p className="text-xs text-slate-400">
-                当前展示为签位示意，待小组赛结束后将按晋级结果填充具体选手。
+                当前展示为签位示意，待小组赛结束后将按晋级结果填充具体{competitorType === "team" ? "队伍" : "选手"}。
               </p>
               <KnockoutBracket
                 rounds={filledKnockoutRounds ?? groupingPayload.knockout.rounds}

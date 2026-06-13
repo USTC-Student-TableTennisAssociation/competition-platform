@@ -21,6 +21,14 @@ import {
   refundRegistrationRewardPoints,
 } from '@/lib/server/match/rewards'
 import { removeUserFromMatch } from '@/lib/server/match/remove-participant'
+import { getApprovedTeamGroupingCompetitors } from '@/lib/server/match/team-grouping'
+import {
+  getResultGroupName,
+  getResultKnockoutMatchId,
+  getResultPhase,
+  resolveCompetitorType,
+} from '@/lib/match-competitor'
+import { resolveFilledKnockoutRounds } from '@/lib/match-detail'
 
 const UNLIMITED_MAX_PARTICIPANTS = 2147483647
 const MATCH_POINTS_CAP_PER_MATCH = 5
@@ -1614,6 +1622,10 @@ export async function submitTeamMatchResultAction(
   const teamAScore = parseNonNegativeInteger(formData.get('teamAScore'))
   const teamBScore = parseNonNegativeInteger(formData.get('teamBScore'))
   const remark = cleanText(formData.get('remark'), 500)
+  const phaseRaw = cleanText(formData.get('phase'), 20)
+  const groupName = cleanText(formData.get('groupName'), 100)
+  const knockoutRoundName = cleanText(formData.get('knockoutRoundName'), 100)
+  const knockoutMatchId = cleanText(formData.get('knockoutMatchId'), 100)
 
   if (!teamAId || !teamBId) return { error: '请选择两支参赛队伍。' }
   if (teamAId === teamBId) return { error: '不能选择同一支队伍作为对手。' }
@@ -1624,7 +1636,27 @@ export async function submitTeamMatchResultAction(
 
   const match = await prisma.match.findUnique({
     where: { id: matchId },
-    select: { id: true, title: true, type: true, status: true, createdBy: true },
+    select: {
+      id: true,
+      title: true,
+      type: true,
+      status: true,
+      createdBy: true,
+      groupingGeneratedAt: true,
+      groupingResult: { select: { payload: true } },
+      results: {
+        select: {
+          winnerTeamIds: true,
+          loserTeamIds: true,
+          winnerMatchTeamId: true,
+          loserMatchTeamId: true,
+          confirmed: true,
+          score: true,
+          createdAt: true,
+          resultVerifiedAt: true,
+        },
+      },
+    },
   })
   if (!match) return { error: '比赛不存在。' }
   if (match.type !== MatchType.team) return { error: '该比赛不是团体赛。' }
@@ -1684,6 +1716,79 @@ export async function submitTeamMatchResultAction(
   const winnerTeamIds = winnerTeam.members.map((member) => member.userId)
   const loserTeamIds = loserTeam.members.map((member) => member.userId)
 
+  type TeamGroupingPayload = {
+    competitorType?: 'user' | 'team'
+    config?: { qualifiersPerGroup?: number }
+    groups?: Array<{
+      name: string
+      players: Array<{ id: string; nickname: string; points?: number; eloRating?: number }>
+    }>
+    knockout?: {
+      rounds: Array<{
+        name: string
+        matches: Array<{ id: string; homeLabel: string; awayLabel: string }>
+      }>
+    }
+  }
+
+  const groupingPayload = match.groupingResult?.payload as TeamGroupingPayload | undefined
+  let resultPhase: 'group' | 'knockout' | null = null
+
+  if (groupingPayload) {
+    if (resolveCompetitorType(groupingPayload.competitorType) !== 'team') {
+      return { error: '当前团体赛分组数据类型无效，请管理员重新生成分组。' }
+    }
+    if (phaseRaw !== 'group' && phaseRaw !== 'knockout') {
+      return { error: '请选择有效的小组赛或淘汰赛对局。' }
+    }
+    resultPhase = phaseRaw
+
+    if (resultPhase === 'group') {
+      const selectedGroup = groupingPayload.groups?.find((group) => group.name === groupName)
+      const selectedIds = new Set(selectedGroup?.players.map((player) => player.id) ?? [])
+      if (!selectedGroup || !selectedIds.has(teamAId) || !selectedIds.has(teamBId)) {
+        return { error: '小组赛只能提交同一小组内已产生的队伍对阵。' }
+      }
+    } else {
+      if (!knockoutRoundName || !knockoutMatchId || !groupingPayload.groups || !groupingPayload.knockout) {
+        return { error: '淘汰赛签位信息不完整，请刷新页面后重试。' }
+      }
+      const resolvedRounds = resolveFilledKnockoutRounds({
+        knockoutRounds: groupingPayload.knockout.rounds,
+        groups: groupingPayload.groups.map((group) => ({
+          name: group.name,
+          players: group.players.map((player) => ({
+            id: player.id,
+            nickname: player.nickname,
+            points: player.points ?? 0,
+            eloRating: player.eloRating ?? 0,
+          })),
+        })),
+        qualifiersPerGroup: groupingPayload.config?.qualifiersPerGroup ?? 1,
+        results: match.results,
+        groupingGeneratedAt: match.groupingGeneratedAt,
+        competitorType: 'team',
+      })
+      const target = resolvedRounds
+        .find((round) => round.name === knockoutRoundName)
+        ?.matches.find((item) => item.id === knockoutMatchId)
+      const targetPair =
+        target?.homePlayerId && target.awayPlayerId
+          ? new Set([target.homePlayerId, target.awayPlayerId])
+          : null
+      if (
+        !target ||
+        target.homeOutcome ||
+        target.awayOutcome ||
+        !targetPair ||
+        !targetPair.has(teamAId) ||
+        !targetPair.has(teamBId)
+      ) {
+        return { error: '当前淘汰赛签位尚未产生该对手，或该签位已经完成。' }
+      }
+    }
+  }
+
   const auditContext = await getAuditContext()
   let createdResultId: string
   try {
@@ -1695,7 +1800,7 @@ export async function submitTeamMatchResultAction(
         FOR UPDATE
       `
 
-      const duplicate = await tx.matchResult.findFirst({
+      const pairResults = await tx.matchResult.findMany({
         where: {
           matchId,
           OR: [
@@ -1703,7 +1808,16 @@ export async function submitTeamMatchResultAction(
             { winnerMatchTeamId: teamBId, loserMatchTeamId: teamAId },
           ],
         },
-        select: { confirmed: true },
+        select: { confirmed: true, score: true },
+      })
+      const duplicate = pairResults.find((result) => {
+        if (resultPhase === 'group') {
+          return getResultPhase(result.score) !== 'knockout' && getResultGroupName(result.score) === groupName
+        }
+        if (resultPhase === 'knockout') {
+          return getResultKnockoutMatchId(result.score) === knockoutMatchId
+        }
+        return true
       })
       if (duplicate?.confirmed) throw new Error('TEAM_RESULT_CONFIRMED_EXISTS')
       if (duplicate) throw new Error('TEAM_RESULT_PENDING_EXISTS')
@@ -1724,6 +1838,11 @@ export async function submitTeamMatchResultAction(
             loserTeamName: loserTeam.name,
             winnerMatchTeamId: winnerTeam.id,
             loserMatchTeamId: loserTeam.id,
+            ...(resultPhase ? { phase: resultPhase } : {}),
+            ...(resultPhase === 'group' ? { groupName } : {}),
+            ...(resultPhase === 'knockout'
+              ? { knockoutRoundName, knockoutMatchId }
+              : {}),
             ...(remark ? { remark } : {}),
           },
           reportedBy: currentUser.id,
@@ -1758,6 +1877,10 @@ export async function submitTeamMatchResultAction(
       loserTeamIds,
       winnerScore,
       loserScore,
+      phase: resultPhase,
+      groupName: resultPhase === 'group' ? groupName : null,
+      knockoutRoundName: resultPhase === 'knockout' ? knockoutRoundName : null,
+      knockoutMatchId: resultPhase === 'knockout' ? knockoutMatchId : null,
     },
     ip: auditContext.ip,
     userAgent: auditContext.userAgent,
@@ -2006,23 +2129,32 @@ export async function previewGroupingAction(matchId: string, _: GroupingAdminSta
 
   if (!match) return { error: '比赛不存在。' }
   if (!canManageGrouping(currentUser, match.createdBy)) return { error: '仅发起人或管理员可生成分组。' }
-  if (new Date() < match.registrationDeadline) return { error: '报名截止后才可生成分组。' }
+  const groupingDeadline =
+    match.type === MatchType.team
+      ? (match.teamRegistrationDeadline ?? match.registrationDeadline)
+      : match.registrationDeadline
+  if (new Date() < groupingDeadline) return { error: '报名截止后才可生成分组。' }
 
   const groupCount = Number(formData.get('groupCount') ?? 0)
   const qualifiersPerGroup = Number(formData.get('qualifiersPerGroup') ?? 1)
   const seedMethodRaw = String(formData.get('seedMethod') ?? 'min_diff')
   const seedMethod = seedMethodRaw === 'snake' ? 'snake' : 'min_diff'
-  const participants = match.registrations.map((r) => r.user)
+  const competitorType = match.type === MatchType.team ? 'team' : 'user'
+  const participants =
+    competitorType === 'team'
+      ? await getApprovedTeamGroupingCompetitors(matchId)
+      : match.registrations.map((r) => r.user)
 
-  if (participants.length < 2) return { error: '报名人数不足，无法分组。' }
+  if (participants.length < 2) return { error: `${competitorType === 'team' ? '已批准队伍数' : '报名人数'}不足，无法分组。` }
   if (!Number.isFinite(groupCount) || groupCount < 1) return { error: '组数必须为正整数。' }
-  if (groupCount > participants.length) return { error: '组数不能超过报名人数。' }
+  if (groupCount > participants.length) return { error: `组数不能超过${competitorType === 'team' ? '已批准队伍数' : '报名人数'}。` }
 
   try {
     const payload = generateGroupingPayload(match.format, participants, {
       groupCount,
       qualifiersPerGroup: match.format === 'group_then_knockout' ? qualifiersPerGroup : undefined,
       seedMethod,
+      competitorType,
     })
 
     return {
@@ -2054,7 +2186,11 @@ export async function confirmGroupingAction(matchId: string, _: GroupingAdminSta
   const match = await prisma.match.findUnique({ where: { id: matchId }, include: { groupingResult: true } })
   if (!match) return { error: '比赛不存在。' }
   if (!canManageGrouping(currentUser, match.createdBy)) return { error: '仅发起人或管理员可确认分组。' }
-  if (new Date() < match.registrationDeadline) return { error: '报名截止后才可确认分组。' }
+  const groupingDeadline =
+    match.type === MatchType.team
+      ? (match.teamRegistrationDeadline ?? match.registrationDeadline)
+      : match.registrationDeadline
+  if (new Date() < groupingDeadline) return { error: '报名截止后才可确认分组。' }
 
   let payload: unknown
   try {
@@ -2063,38 +2199,60 @@ export async function confirmGroupingAction(matchId: string, _: GroupingAdminSta
     return { error: '预览数据无效，请重新生成。' }
   }
 
+  const previewObject =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? (payload as { competitorType?: unknown; groups?: unknown })
+      : null
+  const expectedCompetitorType = match.type === MatchType.team ? 'team' : 'user'
+  if (resolveCompetitorType(previewObject?.competitorType) !== expectedCompetitorType) {
+    return { error: '分组预览的参赛单位类型与比赛类型不一致，请重新生成预览。' }
+  }
+
   const previewGroups =
     payload && typeof payload === 'object' && !Array.isArray(payload) && 'groups' in payload
       ? (payload as { groups?: unknown }).groups
       : null
-  const previewPlayerIds = Array.isArray(previewGroups)
-    ? Array.from(
-        new Set(
-          previewGroups.flatMap((group) => {
-            if (!group || typeof group !== 'object' || !('players' in group)) return []
-            const players = (group as { players?: unknown }).players
-            if (!Array.isArray(players)) return []
-            return players.flatMap((player) =>
-              player &&
-              typeof player === 'object' &&
-              'id' in player &&
-              typeof player.id === 'string'
-                ? [player.id]
-                : [],
-            )
-          }),
-        ),
-      )
+  const previewCompetitorIds = Array.isArray(previewGroups)
+    ? previewGroups.flatMap((group) => {
+        if (!group || typeof group !== 'object' || !('players' in group)) return []
+        const players = (group as { players?: unknown }).players
+        if (!Array.isArray(players)) return []
+        return players.flatMap((player) =>
+          player &&
+          typeof player === 'object' &&
+          'id' in player &&
+          typeof player.id === 'string'
+            ? [player.id]
+            : [],
+        )
+      })
     : []
-  const eligiblePreviewUsers = await prisma.registration.count({
-    where: {
-      matchId,
-      userId: { in: previewPlayerIds },
-      user: { isBanned: false },
-    },
-  })
-  if (eligiblePreviewUsers !== previewPlayerIds.length) {
-    return { error: '分组预览中包含已封禁或已退出的用户，请重新生成预览。' }
+  const uniquePreviewCompetitorIds = Array.from(new Set(previewCompetitorIds))
+  if (
+    uniquePreviewCompetitorIds.length < 2 ||
+    uniquePreviewCompetitorIds.length !== previewCompetitorIds.length
+  ) {
+    return { error: '分组预览参赛单位不足或存在重复，请重新生成预览。' }
+  }
+
+  if (expectedCompetitorType === 'team') {
+    const eligibleTeamIds = new Set(
+      (await getApprovedTeamGroupingCompetitors(matchId)).map((team) => team.id),
+    )
+    if (uniquePreviewCompetitorIds.some((id) => !eligibleTeamIds.has(id))) {
+      return { error: '分组预览中包含未批准、已变更或含封禁成员的队伍，请重新生成预览。' }
+    }
+  } else {
+    const eligiblePreviewUsers = await prisma.registration.count({
+      where: {
+        matchId,
+        userId: { in: uniquePreviewCompetitorIds },
+        user: { isBanned: false },
+      },
+    })
+    if (eligiblePreviewUsers !== uniquePreviewCompetitorIds.length) {
+      return { error: '分组预览中包含已封禁或已退出的用户，请重新生成预览。' }
+    }
   }
 
   await prisma.$transaction([
@@ -2242,6 +2400,8 @@ export async function submitKnockoutMatchResultAction(matchId: string, _: MatchF
         select: {
           winnerTeamIds: true,
           loserTeamIds: true,
+          winnerMatchTeamId: true,
+          loserMatchTeamId: true,
           confirmed: true,
           score: true,
           createdAt: true,
@@ -2492,6 +2652,8 @@ export async function confirmMatchResultAction(matchId: string, resultId: string
         select: {
           winnerTeamIds: true,
           loserTeamIds: true,
+          winnerMatchTeamId: true,
+          loserMatchTeamId: true,
           confirmed: true,
           score: true,
           createdAt: true,

@@ -1,7 +1,14 @@
 import { CompetitionFormat } from "@prisma/client";
 import { pairKey, resolveFilledKnockoutRounds } from "@/lib/match-detail";
+import {
+  getResultCompetitorIds,
+  getResultPhase,
+  resolveCompetitorType,
+  type CompetitorType,
+} from "@/lib/match-competitor";
 
 type GroupingPayload = {
+  competitorType?: CompetitorType;
   config?: { qualifiersPerGroup?: number };
   groups?: Array<{
     name: string;
@@ -15,6 +22,8 @@ type GroupingPayload = {
 type ResultLite = {
   winnerTeamIds: string[];
   loserTeamIds: string[];
+  winnerMatchTeamId?: string | null;
+  loserMatchTeamId?: string | null;
   confirmed: boolean;
   score: unknown;
   createdAt: Date;
@@ -31,12 +40,13 @@ export function isMatchAllResultsFinished(params: {
   const payload = (groupingResult?.payload ?? null) as GroupingPayload | null;
 
   if (!payload?.groups?.length) return false;
+  const competitorType = resolveCompetitorType(payload.competitorType);
 
-  const confirmedSingles = results.filter(
+  const confirmedGroupResults = results.filter(
     (result) =>
       result.confirmed &&
-      result.winnerTeamIds.length === 1 &&
-      result.loserTeamIds.length === 1,
+      getResultPhase(result.score) !== "knockout" &&
+      Boolean(getResultCompetitorIds(result, competitorType)),
   );
 
   const groupByPlayerId = new Map<string, string>();
@@ -47,9 +57,10 @@ export function isMatchAllResultsFinished(params: {
   }
 
   const confirmedPairsByGroup = new Map<string, Set<string>>();
-  for (const result of confirmedSingles) {
-    const winnerId = result.winnerTeamIds[0];
-    const loserId = result.loserTeamIds[0];
+  for (const result of confirmedGroupResults) {
+    const competitorIds = getResultCompetitorIds(result, competitorType);
+    if (!competitorIds) continue;
+    const { winnerId, loserId } = competitorIds;
     const winnerGroup = groupByPlayerId.get(winnerId);
     if (!winnerGroup || winnerGroup !== groupByPlayerId.get(loserId)) continue;
 
@@ -88,6 +99,7 @@ export function isMatchAllResultsFinished(params: {
     qualifiersPerGroup: payload.config?.qualifiersPerGroup ?? 1,
     results,
     groupingGeneratedAt,
+    competitorType,
   });
 
   return filledKnockoutRounds.every((round) =>

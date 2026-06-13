@@ -34,7 +34,22 @@ export type TeamMatchResultItem = {
   winnerMembers: string[];
   loserMembers: string[];
   remark: string;
+  phase: "group" | "knockout" | null;
+  groupName: string | null;
+  knockoutRoundName: string | null;
   createdAt: string;
+};
+
+export type TeamAllowedMatch = {
+  key: string;
+  phase: "group" | "knockout";
+  teamAId: string;
+  teamAName: string;
+  teamBId: string;
+  teamBName: string;
+  groupName?: string;
+  knockoutRoundName?: string;
+  knockoutMatchId?: string;
 };
 
 function ActionMessage({ state }: { state: MatchFormState }) {
@@ -178,6 +193,11 @@ function ResultCard({
       </div>
 
       <p className="mt-3 text-xs text-slate-400">
+        {item.phase === "group" && item.groupName
+          ? `${item.groupName}小组赛 · `
+          : item.phase === "knockout" && item.knockoutRoundName
+            ? `${item.knockoutRoundName} · `
+            : ""}
         提交人：{item.reporterName} · {new Date(item.createdAt).toLocaleString("zh-CN")}
         {item.verifierName ? ` · 确认人：${item.verifierName}` : ""}
       </p>
@@ -207,6 +227,7 @@ export default function TeamMatchResultsPanel({
   matchFinished,
   teams,
   results,
+  allowedMatches,
 }: {
   matchId: string;
   currentUserId: string | null;
@@ -214,12 +235,29 @@ export default function TeamMatchResultsPanel({
   matchFinished: boolean;
   teams: TeamMatchResultTeam[];
   results: TeamMatchResultItem[];
+  allowedMatches: TeamAllowedMatch[] | null;
 }) {
   const captainedTeam = currentUserId
     ? teams.find((team) => team.captainId === currentUserId) ?? null
     : null;
-  const canSubmit =
-    !matchFinished && teams.length >= 2 && Boolean(isManager || captainedTeam);
+  const canSubmit = !matchFinished && Boolean(isManager || captainedTeam);
+  const visibleAllowedMatches = useMemo(
+    () =>
+      allowedMatches?.filter(
+        (match) =>
+          isManager ||
+          match.teamAId === captainedTeam?.id ||
+          match.teamBId === captainedTeam?.id,
+      ) ?? null,
+    [allowedMatches, captainedTeam?.id, isManager],
+  );
+  const [selectedAllowedMatchKey, setSelectedAllowedMatchKey] = useState(
+    visibleAllowedMatches?.[0]?.key ?? "",
+  );
+  const selectedAllowedMatch =
+    visibleAllowedMatches?.find(
+      (match) => match.key === selectedAllowedMatchKey,
+    ) ?? visibleAllowedMatches?.[0] ?? null;
   const initialTeamAId = captainedTeam?.id ?? teams[0]?.id ?? "";
   const [teamAId, setTeamAId] = useState(initialTeamAId);
   const availableOpponents = useMemo(
@@ -274,61 +312,122 @@ export default function TeamMatchResultsPanel({
         </div>
       </div>
 
-      {canSubmit ? (
+      {canSubmit &&
+      (allowedMatches === null
+        ? teams.length >= 2
+        : Boolean(selectedAllowedMatch)) ? (
         <form
           action={formAction}
           className="mt-5 space-y-4 rounded-2xl border border-teal-400/20 bg-teal-400/5 p-4"
         >
           <input type="hidden" name="csrfToken" defaultValue="" />
           <h3 className="text-base font-bold text-teal-100">提交团体赛结果</h3>
-          <div className="grid gap-3 md:grid-cols-2">
-            <label className="space-y-1 text-sm text-slate-300">
-              <span>{isManager ? "队伍 A" : "我的队伍"}</span>
-              {isManager ? (
+          {allowedMatches !== null ? (
+            <label className="block space-y-1 text-sm text-slate-300">
+              <span>当前允许提交的对阵</span>
+              <select
+                value={selectedAllowedMatch?.key ?? ""}
+                onChange={(event) =>
+                  setSelectedAllowedMatchKey(event.target.value)
+                }
+                className="input-dark h-10 w-full rounded-xl px-3"
+              >
+                {visibleAllowedMatches?.map((match) => (
+                  <option key={match.key} value={match.key}>
+                    {match.phase === "group"
+                      ? `${match.groupName}小组赛`
+                      : match.knockoutRoundName}
+                    ：{match.teamAName} vs {match.teamBName}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="hidden"
+                name="teamAId"
+                value={selectedAllowedMatch?.teamAId ?? ""}
+              />
+              <input
+                type="hidden"
+                name="teamBId"
+                value={selectedAllowedMatch?.teamBId ?? ""}
+              />
+              <input
+                type="hidden"
+                name="phase"
+                value={selectedAllowedMatch?.phase ?? ""}
+              />
+              <input
+                type="hidden"
+                name="groupName"
+                value={selectedAllowedMatch?.groupName ?? ""}
+              />
+              <input
+                type="hidden"
+                name="knockoutRoundName"
+                value={selectedAllowedMatch?.knockoutRoundName ?? ""}
+              />
+              <input
+                type="hidden"
+                name="knockoutMatchId"
+                value={selectedAllowedMatch?.knockoutMatchId ?? ""}
+              />
+            </label>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="space-y-1 text-sm text-slate-300">
+                <span>{isManager ? "队伍 A" : "我的队伍"}</span>
+                {isManager ? (
+                  <select
+                    name="teamAId"
+                    value={teamAId}
+                    onChange={(event) => setTeamAId(event.target.value)}
+                    className="input-dark h-10 w-full rounded-xl px-3"
+                  >
+                    {teams.map((team) => (
+                      <option key={team.id} value={team.id}>
+                        {team.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <>
+                    <input
+                      readOnly
+                      value={captainedTeam?.name ?? ""}
+                      className="input-dark h-10 w-full rounded-xl px-3"
+                    />
+                    <input
+                      type="hidden"
+                      name="teamAId"
+                      value={captainedTeam?.id ?? ""}
+                    />
+                  </>
+                )}
+              </label>
+
+              <label className="space-y-1 text-sm text-slate-300">
+                <span>对手队伍</span>
                 <select
-                  name="teamAId"
-                  value={teamAId}
-                  onChange={(event) => setTeamAId(event.target.value)}
+                  name="teamBId"
+                  value={selectedTeamBId}
+                  onChange={(event) => setTeamBId(event.target.value)}
                   className="input-dark h-10 w-full rounded-xl px-3"
                 >
-                  {teams.map((team) => (
+                  {availableOpponents.map((team) => (
                     <option key={team.id} value={team.id}>
                       {team.name}
                     </option>
                   ))}
                 </select>
-              ) : (
-                <>
-                  <input
-                    readOnly
-                    value={captainedTeam?.name ?? ""}
-                    className="input-dark h-10 w-full rounded-xl px-3"
-                  />
-                  <input type="hidden" name="teamAId" value={captainedTeam?.id ?? ""} />
-                </>
-              )}
-            </label>
-
-            <label className="space-y-1 text-sm text-slate-300">
-              <span>对手队伍</span>
-              <select
-                name="teamBId"
-                value={selectedTeamBId}
-                onChange={(event) => setTeamBId(event.target.value)}
-                className="input-dark h-10 w-full rounded-xl px-3"
-              >
-                {availableOpponents.map((team) => (
-                  <option key={team.id} value={team.id}>
-                    {team.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
+              </label>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <label className="space-y-1 text-sm text-slate-300">
-              <span>队伍 A 比分</span>
+              <span>
+                {selectedAllowedMatch?.teamAName ?? "队伍 A"} 比分
+              </span>
               <input
                 name="teamAScore"
                 type="number"
@@ -339,7 +438,9 @@ export default function TeamMatchResultsPanel({
               />
             </label>
             <label className="space-y-1 text-sm text-slate-300">
-              <span>队伍 B 比分</span>
+              <span>
+                {selectedAllowedMatch?.teamBName ?? "队伍 B"} 比分
+              </span>
               <input
                 name="teamBScore"
                 type="number"
@@ -364,7 +465,12 @@ export default function TeamMatchResultsPanel({
           <ActionMessage state={state} />
           <button
             type="submit"
-            disabled={pending || !selectedTeamBId}
+            disabled={
+              pending ||
+              (allowedMatches === null
+                ? !selectedTeamBId
+                : !selectedAllowedMatch)
+            }
             className="rounded-xl bg-teal-600 px-4 py-2 text-sm font-bold text-white hover:bg-teal-500 disabled:opacity-60"
           >
             {pending ? "提交中..." : "提交结果，等待确认"}
@@ -374,7 +480,9 @@ export default function TeamMatchResultsPanel({
         <p className="mt-5 text-sm text-slate-400">
           {matchFinished
             ? "比赛已结束，不能继续提交新赛果。"
-            : "只有参赛队长、比赛发起人或管理员可提交；且至少需要两支已批准队伍。"}
+            : allowedMatches !== null
+              ? "当前没有你可以提交的未完成小组赛或淘汰赛对阵。"
+              : "只有参赛队长、比赛发起人或管理员可提交；且至少需要两支已批准队伍。"}
         </p>
       )}
 

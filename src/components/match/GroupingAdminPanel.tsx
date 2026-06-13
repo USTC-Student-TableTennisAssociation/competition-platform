@@ -9,6 +9,7 @@ import {
 import KnockoutBracket from "@/components/match/KnockoutBracket";
 
 type GroupingPayload = {
+  competitorType?: "user" | "team";
   generatedAt?: string;
   config?: {
     seedMethod?: "min_diff" | "snake";
@@ -44,6 +45,7 @@ type Props = {
   initialPayloadJson?: string;
   collapsible?: boolean;
   matchFormat: "group_only" | "group_then_knockout";
+  competitorType: "user" | "team";
   participantCount: number;
   defaultGroupCount: number;
   defaultQualifiersPerGroup: number;
@@ -92,7 +94,7 @@ function buildGroupSizeSummary(groups: GroupingPayload["groups"]) {
 
   return [...bucket.entries()]
     .sort((a, b) => b[0] - a[0])
-    .map(([size, count]) => `${size}人组×${count}`)
+    .map(([size, count]) => `${size}个参赛单位×${count}`)
     .join("，");
 }
 
@@ -108,10 +110,13 @@ export default function GroupingAdminPanel({
   initialPayloadJson,
   collapsible = true,
   matchFormat,
+  competitorType,
   participantCount,
   defaultGroupCount,
   defaultQualifiersPerGroup,
 }: Props) {
+  const competitorLabel = competitorType === "team" ? "队伍" : "选手";
+  const participantLabel = competitorType === "team" ? "已批准队伍数" : "报名人数";
   const previewAction = previewGroupingAction.bind(null, matchId);
   const confirmAction = confirmGroupingAction.bind(null, matchId);
 
@@ -144,13 +149,13 @@ export default function GroupingAdminPanel({
 
   const potentialFailureReasons: string[] = [];
   if (participantCount < 2) {
-    potentialFailureReasons.push("报名人数不足（至少需要 2 人）");
+    potentialFailureReasons.push(`${participantLabel}不足（至少需要 2 个参赛单位）`);
   }
   if (!Number.isFinite(groupCount) || groupCount < 1) {
     potentialFailureReasons.push("组数必须为正整数");
   }
   if (groupCount > participantCount) {
-    potentialFailureReasons.push("组数不能超过报名人数");
+    potentialFailureReasons.push(`组数不能超过${participantLabel}`);
   }
   if (matchFormat === "group_then_knockout") {
     const totalQualified = groupCount * qualifiersPerGroup;
@@ -158,7 +163,7 @@ export default function GroupingAdminPanel({
       potentialFailureReasons.push("每组晋级人数必须为正整数");
     }
     if (qualifiersPerGroup > participantCount) {
-      potentialFailureReasons.push("每组晋级人数不能超过报名人数");
+      potentialFailureReasons.push(`每组晋级数不能超过${participantLabel}`);
     }
     if (
       Number.isFinite(groupCount) &&
@@ -318,7 +323,7 @@ export default function GroupingAdminPanel({
               {previewPending ? "生成中..." : "生成分组预览"}
             </button>
             <p className="text-xs text-slate-400">
-              参赛人数：{participantCount}，可先调整参数再生成预览。
+              {participantLabel}：{participantCount}，可先调整参数再生成预览。
             </p>
           </div>
 
@@ -358,10 +363,10 @@ export default function GroupingAdminPanel({
 
           <div className="space-y-1">
             <h4 className="text-sm font-semibold text-cyan-100">
-              调整分组成员
+              调整分组{competitorLabel}
             </h4>
             <p className="text-xs text-slate-300">
-              直接在对应小组内为选手选择目标组并移动，无需全局搜索选手。
+              直接在对应小组内为{competitorLabel}选择目标组并移动。
             </p>
           </div>
 

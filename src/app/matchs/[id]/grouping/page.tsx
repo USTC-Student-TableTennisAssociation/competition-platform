@@ -1,10 +1,13 @@
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { MatchType } from "@prisma/client";
 import GroupingAdminPanel from "@/components/match/GroupingAdminPanel";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { generateGroupingPayload } from "@/lib/tournament";
+import { getApprovedTeamGroupingCompetitors } from "@/lib/server/match/team-grouping";
+import type { CompetitorType } from "@/lib/match-competitor";
 
 export default async function MatchGroupingManagePage({
   params,
@@ -48,7 +51,19 @@ export default async function MatchGroupingManagePage({
 
   if (!canManageGrouping) notFound();
 
+  const competitorType: CompetitorType =
+    match.type === MatchType.team ? "team" : "user";
+  const participants =
+    competitorType === "team"
+      ? await getApprovedTeamGroupingCompetitors(match.id)
+      : match.registrations.map((item) => item.user);
+  const groupingDeadline =
+    competitorType === "team"
+      ? (match.teamRegistrationDeadline ?? match.registrationDeadline)
+      : match.registrationDeadline;
+
   const groupingPayload = (match.groupingResult?.payload ?? null) as {
+    competitorType?: CompetitorType;
     config?: {
       groupCount?: number;
       qualifiersPerGroup?: number;
@@ -79,30 +94,31 @@ export default async function MatchGroupingManagePage({
     Math.min(
       8,
       Math.ceil(
-        match.registrations.length / (match.format === "group_only" ? 6 : 4),
+        participants.length / (match.format === "group_only" ? 6 : 4),
       ),
     ),
   );
 
   const fallbackGroupingPayload =
     !groupingPayload &&
-    now >= match.registrationDeadline &&
-    match.registrations.length >= 2
+    now >= groupingDeadline &&
+    participants.length >= 2
       ? (() => {
           try {
             return generateGroupingPayload(
               match.format,
-              match.registrations.map((item) => ({
-                id: item.user.id,
-                nickname: item.user.nickname,
-                points: item.user.points,
-                eloRating: item.user.eloRating,
+              participants.map((item) => ({
+                id: item.id,
+                nickname: item.nickname,
+                points: item.points,
+                eloRating: item.eloRating,
               })),
               {
                 groupCount: defaultGroupCount,
                 qualifiersPerGroup:
                   match.format === "group_then_knockout" ? 2 : undefined,
                 seedMethod: "min_diff",
+                competitorType,
               },
             );
           } catch {
@@ -141,7 +157,8 @@ export default async function MatchGroupingManagePage({
         }
         collapsible={false}
         matchFormat={match.format}
-        participantCount={match.registrations.length}
+        competitorType={competitorType}
+        participantCount={participants.length}
         defaultGroupCount={initialGroupCount}
         defaultQualifiersPerGroup={initialQualifiersPerGroup}
       />
