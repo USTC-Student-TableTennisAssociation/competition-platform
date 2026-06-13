@@ -44,11 +44,21 @@ async function applyQuickMatchElo(
   const allParticipantIds = [...payload.winnerTeamIds, ...payload.loserTeamIds]
   const users = await tx.user.findMany({
     where: { id: { in: allParticipantIds } },
-    select: { id: true, eloRating: true, matchesPlayed: true, wins: true, losses: true },
+    select: {
+      id: true,
+      eloRating: true,
+      matchesPlayed: true,
+      wins: true,
+      losses: true,
+      isBanned: true,
+    },
   })
 
   if (users.length !== allParticipantIds.length) {
     throw new Error('存在无效选手，无法结算 ELO。')
+  }
+  if (users.some((user) => user.isBanned)) {
+    throw new Error('比赛包含已封禁用户，无法结算 ELO。')
   }
 
   const userMap = new Map(users.map((u) => [u.id, u]))
@@ -334,7 +344,7 @@ export async function confirmQuickMatchResultAction(
     })
   } catch (error) {
     console.error('confirmQuickMatchResultAction failed', error)
-    return { error: '确认失败。' }
+    return { error: error instanceof Error ? error.message : '确认失败。' }
   }
 
   revalidatePath('/quick-match')

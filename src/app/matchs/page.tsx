@@ -47,10 +47,16 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
       },
     },
     include: {
-      _count: { select: { registrations: true } },
+      _count: {
+        select: {
+          registrations: { where: { user: { isBanned: false } } },
+        },
+      },
       teamRegistrations: {
         where: {
           status: "approved",
+          captain: { isBanned: false },
+          members: { every: { user: { isBanned: false } } },
         },
         select: { id: true },
       },

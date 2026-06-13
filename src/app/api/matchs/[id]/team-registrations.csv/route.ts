@@ -29,6 +29,8 @@ export async function GET(
           status: {
             not: TeamRegistrationStatus.cancelled,
           },
+          captain: { isBanned: false },
+          members: { none: { user: { isBanned: true } } },
         },
         include: {
           captain: {
@@ -37,6 +39,9 @@ export async function GET(
             },
           },
           members: {
+            where: {
+              user: { isBanned: false },
+            },
             include: {
               user: {
                 select: {

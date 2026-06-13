@@ -5,6 +5,7 @@ export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30
 
 type SessionPayload = {
   userId: string
+  sessionVersion: number
   expiresAtMs: number
   authStamp: string
 }
@@ -31,12 +32,16 @@ export function shouldUseSecureCookies() {
   return process.env.NODE_ENV === 'production'
 }
 
-export function createSessionToken(userId: string, hashedPassword: string | null | undefined) {
+export function createSessionToken(
+  userId: string,
+  hashedPassword: string | null | undefined,
+  sessionVersion: number,
+) {
   const expiresAtMs = Date.now() + SESSION_TTL_SECONDS * 1000
   const nonce = randomBytes(16).toString('hex')
   const authStamp = createSessionAuthStamp(userId, hashedPassword)
   if (!authStamp) return null
-  const payload = `${userId}.${expiresAtMs}.${nonce}.${authStamp}`
+  const payload = `${userId}.${sessionVersion}.${expiresAtMs}.${nonce}.${authStamp}`
   const signature = signPayload(payload)
   if (!signature) return null
   return `${payload}.${signature}`
@@ -45,14 +50,26 @@ export function createSessionToken(userId: string, hashedPassword: string | null
 export function verifySessionToken(rawValue: string): SessionPayload | null {
   if (!getSessionSecret()) return null
 
-  const [userId, expiresAtRaw, nonce, authStamp, signature] = rawValue.split('.')
-  if (!userId || !expiresAtRaw || !nonce || !authStamp || !signature) return null
+  const parts = rawValue.split('.')
+  const isLegacyToken = parts.length === 5
+  if (!isLegacyToken && parts.length !== 6) return null
+
+  const [userId, sessionVersionRaw, expiresAtRaw, nonce, authStamp, signature] =
+    isLegacyToken
+      ? [parts[0], '0', parts[1], parts[2], parts[3], parts[4]]
+      : parts
+  if (!userId || !sessionVersionRaw || !expiresAtRaw || !nonce || !authStamp || !signature) return null
   if (!/^[0-9a-f]{64}$/i.test(authStamp)) return null
+
+  const sessionVersion = Number(sessionVersionRaw)
+  if (!Number.isSafeInteger(sessionVersion) || sessionVersion < 0) return null
 
   const expiresAtMs = Number(expiresAtRaw)
   if (!Number.isFinite(expiresAtMs) || Date.now() > expiresAtMs) return null
 
-  const payload = `${userId}.${expiresAtMs}.${nonce}.${authStamp}`
+  const payload = isLegacyToken
+    ? `${userId}.${expiresAtMs}.${nonce}.${authStamp}`
+    : `${userId}.${sessionVersion}.${expiresAtMs}.${nonce}.${authStamp}`
   const expectedSignature = signPayload(payload)
   if (!expectedSignature) return null
   const actualBuffer = Buffer.from(signature, 'hex')
@@ -63,6 +80,7 @@ export function verifySessionToken(rawValue: string): SessionPayload | null {
 
   return {
     userId,
+    sessionVersion,
     expiresAtMs,
     authStamp,
   }

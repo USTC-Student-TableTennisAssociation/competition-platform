@@ -2,6 +2,7 @@
 
 import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto'
 import { cookies } from 'next/headers'
+import { revalidatePath } from 'next/cache'
 import { MatchStatus, TeamRegistrationStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getCurrentUser } from '@/lib/auth'
@@ -11,6 +12,8 @@ import { shouldUseSecureCookies } from '@/lib/session'
 import { sendAzureEmail } from '@/lib/azure-email'
 import { getAuditContext, writeAuditLog } from '@/lib/audit-log'
 import { isMatchAllResultsFinished } from '@/lib/match-status'
+import { setUserBanState } from '@/lib/server/user/ban-user'
+import { deliverNotificationOutboxItems } from '@/lib/server/notification/outbox'
 
 const ADMIN_REAUTH_COOKIE = 'ustc_tta_admin_reauth'
 const ADMIN_EMAIL_CHALLENGE_COOKIE = 'ustc_tta_admin_email_challenge'
@@ -372,11 +375,15 @@ async function fetchAdminDashboardData() {
         dateTime: true,
         registrationDeadline: true,
         _count: {
-          select: { registrations: true },
+          select: {
+            registrations: { where: { user: { isBanned: false } } },
+          },
         },
         teamRegistrations: {
           where: {
             status: TeamRegistrationStatus.approved,
+            captain: { isBanned: false },
+            members: { every: { user: { isBanned: false } } },
           },
           select: { id: true },
         },
@@ -704,6 +711,9 @@ export async function adminDashboardAction(
     }
   }
 
+  const affectedMatchIds = new Set<string>()
+  const notificationOutboxIds = new Set<string>()
+
   try {
     if (intent === 'toggleBan') {
       const userId = String(formData.get('userId') ?? '')
@@ -712,28 +722,22 @@ export async function adminDashboardAction(
       if (!userId) throw new Error('缺少用户 ID。')
       if (userId === admin.userId) throw new Error('不能封禁当前管理员自己。')
 
-      const target = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { nickname: true, email: true },
+      const result = await prisma.$transaction(
+        (tx) =>
+          setUserBanState(tx, {
+            userId,
+            banned,
+            actorId: admin.userId,
+            auditContext,
+          }),
+        { maxWait: 5_000, timeout: 30_000 },
+      )
+      result.removedMatches.forEach((match) => {
+        affectedMatchIds.add(match.id)
       })
-
-      await prisma.user.update({
-        where: { id: userId },
-        data: { isBanned: banned },
-      })
-
-      await writeAuditLog({
-        actorId: admin.userId,
-        action: banned ? 'user.ban' : 'user.unban',
-        entityType: 'User',
-        entityId: userId,
-        details: {
-          banned,
-          targetLabel: target ? `${target.nickname} (${target.email})` : userId,
-        },
-        ip: auditContext.ip,
-        userAgent: auditContext.userAgent,
-      })
+      if (result.notificationOutboxId) {
+        notificationOutboxIds.add(result.notificationOutboxId)
+      }
     }
 
     if (intent === 'bulkToggleBan') {
@@ -769,15 +773,6 @@ export async function adminDashboardAction(
         throw new Error('未找到可操作用户（管理员账号不可批量封禁）。')
       }
 
-      await prisma.user.updateMany({
-        where: {
-          id: { in: editableIds },
-        },
-        data: {
-          isBanned: banned,
-        },
-      })
-
       const summary = summarizeTargets(
         targets
           .filter((target) => editableIds.includes(target.id))
@@ -787,19 +782,46 @@ export async function adminDashboardAction(
           })),
       )
 
-      await writeAuditLog({
-        actorId: admin.userId,
-        action: banned ? 'user.bulk.ban' : 'user.bulk.unban',
-        entityType: 'User',
-        entityId: 'bulk',
-        details: {
-          banned,
-          count: editableIds.length,
-          userIds: editableIds,
-          targetLabels: summary.labels,
+      const results = await prisma.$transaction(
+        async (tx) => {
+          const changed = []
+          for (const userId of editableIds) {
+            changed.push(
+              await setUserBanState(tx, {
+                userId,
+                banned,
+                actorId: admin.userId,
+                auditContext,
+              }),
+            )
+          }
+
+          await tx.auditLog.create({
+            data: {
+              actorId: admin.userId,
+              action: banned ? 'user.bulk.ban' : 'user.bulk.unban',
+              entityType: 'User',
+              entityId: 'bulk',
+              details: {
+                banned,
+                count: editableIds.length,
+                userIds: editableIds,
+                targetLabels: summary.labels,
+              },
+              ip: auditContext.ip,
+              userAgent: auditContext.userAgent,
+            },
+          })
+
+          return changed
         },
-        ip: auditContext.ip,
-        userAgent: auditContext.userAgent,
+        { maxWait: 5_000, timeout: 30_000 },
+      )
+      results.forEach((result) => {
+        result.removedMatches.forEach((match) => affectedMatchIds.add(match.id))
+        if (result.notificationOutboxId) {
+          notificationOutboxIds.add(result.notificationOutboxId)
+        }
       })
     }
 
@@ -1078,7 +1100,11 @@ export async function adminDashboardAction(
           id: true,
           title: true,
           type: true,
-          _count: { select: { registrations: true } },
+          _count: {
+            select: {
+              registrations: { where: { user: { isBanned: false } } },
+            },
+          },
         },
       })
 
@@ -1169,6 +1195,17 @@ export async function adminDashboardAction(
         ip: auditContext.ip,
         userAgent: auditContext.userAgent,
       })
+    }
+
+    if (intent === 'toggleBan' || intent === 'bulkToggleBan') {
+      if (notificationOutboxIds.size > 0) {
+        await deliverNotificationOutboxItems([...notificationOutboxIds])
+      }
+      revalidatePath('/')
+      revalidatePath('/matchs')
+      revalidatePath('/rankings')
+      revalidatePath('/team-invites')
+      affectedMatchIds.forEach((matchId) => revalidatePath(`/matchs/${matchId}`))
     }
 
     const data = await fetchAdminDashboardData()

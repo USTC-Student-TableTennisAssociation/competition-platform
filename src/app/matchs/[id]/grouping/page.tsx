@@ -18,6 +18,9 @@ export default async function MatchGroupingManagePage({
       where: { id },
       include: {
         registrations: {
+          where: {
+            user: { isBanned: false },
+          },
           include: {
             user: {
               select: {

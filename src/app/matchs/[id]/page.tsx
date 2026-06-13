@@ -15,6 +15,7 @@ import RegisteredPlayersSection from "@/components/match/detail/RegisteredPlayer
 import ExportCertificateSection from "@/components/match/detail/ExportCertificateSection";
 import BackLinkButton from "@/components/navigation/BackLinkButton";
 import TeamRegistrationPanel from "@/components/match/TeamRegistrationPanel";
+import TeamMatchResultsPanel from "@/components/match/TeamMatchResultsPanel";
 import {
   getDoublesTeamForUser,
   getPendingMatchInvitesForUser,
@@ -74,6 +75,9 @@ export default async function MatchDetailPage({
       where: { id },
       include: {
         registrations: {
+          where: {
+            user: { isBanned: false },
+          },
           include: {
             user: {
               select: {
@@ -92,6 +96,8 @@ export default async function MatchDetailPage({
             status: {
               not: TeamRegistrationStatus.cancelled,
             },
+            captain: { isBanned: false },
+            members: { none: { user: { isBanned: true } } },
           },
           include: {
             captain: {
@@ -102,6 +108,9 @@ export default async function MatchDetailPage({
               },
             },
             members: {
+              where: {
+                user: { isBanned: false },
+              },
               include: {
                 user: {
                   select: {
@@ -120,6 +129,9 @@ export default async function MatchDetailPage({
         results: {
           include: {
             reporter: { select: { id: true, nickname: true } },
+            verifier: { select: { id: true, nickname: true } },
+            winnerMatchTeam: { select: { id: true, name: true } },
+            loserMatchTeam: { select: { id: true, name: true } },
           },
           orderBy: { createdAt: "desc" },
         },
@@ -202,17 +214,18 @@ export default async function MatchDetailPage({
     pendingDoublesInvites,
     doublesInviteCandidates,
     registeredDoublesTeams,
-  ] =
+  ] = await Promise.all([
     currentUser && isDoubleMatch
-      ? await Promise.all([
-          getDoublesTeamForUser(match.id, currentUser.id),
-          getPendingMatchInvitesForUser(match.id, currentUser.id),
-          inviteQ
-            ? searchDoublesInviteCandidates(match.id, currentUser.id, inviteQ)
-            : Promise.resolve([]),
-          getRegisteredDoublesTeams(match.id),
-        ])
-      : [null, [], [], []];
+      ? getDoublesTeamForUser(match.id, currentUser.id)
+      : Promise.resolve(null),
+    currentUser && isDoubleMatch
+      ? getPendingMatchInvitesForUser(match.id, currentUser.id)
+      : Promise.resolve([]),
+    currentUser && isDoubleMatch && inviteQ
+      ? searchDoublesInviteCandidates(match.id, currentUser.id, inviteQ)
+      : Promise.resolve([]),
+    isDoubleMatch ? getRegisteredDoublesTeams(match.id) : Promise.resolve([]),
+  ]);
 
   const groupingPayload = (match.groupingResult?.payload ?? null) as {
     config?: {
@@ -381,6 +394,89 @@ export default async function MatchDetailPage({
   ).length;
   const buildingTeamCount =
     publicTeamRegistrationItems.length - formedTeamCount;
+  const approvedTeamResultTeams = teamRegistrationItems
+    .filter((team) => team.status === TeamRegistrationStatus.approved)
+    .map((team) => ({
+      id: team.id,
+      name: team.name,
+      captainId: team.captainId,
+      captainNickname: team.captainNickname,
+      members: team.members.map((member) => ({
+        userId: member.userId,
+        nickname: member.nickname,
+      })),
+    }));
+  const teamResultMemberIds = isTeamMatch
+    ? Array.from(
+        new Set(
+          match.results.flatMap((result) => [
+            ...result.winnerTeamIds,
+            ...result.loserTeamIds,
+          ]),
+        ),
+      )
+    : [];
+  const teamResultUsers = teamResultMemberIds.length
+    ? await prisma.user.findMany({
+        where: { id: { in: teamResultMemberIds } },
+        select: { id: true, nickname: true },
+      })
+    : [];
+  const teamResultUserNameById = new Map(
+    teamResultUsers.map((user) => [user.id, user.nickname]),
+  );
+  const teamMatchResultItems = isTeamMatch
+    ? match.results
+        .filter((result) => {
+          if (result.winnerMatchTeamId || result.loserMatchTeamId) return true;
+          return (
+            typeof result.score === "object" &&
+            result.score !== null &&
+            !Array.isArray(result.score) &&
+            result.score.resultType === "TEAM_MATCH"
+          );
+        })
+        .map((result) => {
+          const score =
+            typeof result.score === "object" &&
+            result.score !== null &&
+            !Array.isArray(result.score)
+              ? result.score
+              : {};
+          const winnerScore = Number(score.winnerScore);
+          const loserScore = Number(score.loserScore);
+
+          return {
+            id: result.id,
+            confirmed: result.confirmed,
+            reporterId: result.reporter.id,
+            reporterName: result.reporter.nickname,
+            verifierName: result.verifier?.nickname ?? null,
+            winnerMatchTeamId: result.winnerMatchTeamId,
+            loserMatchTeamId: result.loserMatchTeamId,
+            winnerTeamName:
+              result.winnerMatchTeam?.name ??
+              (typeof score.winnerTeamName === "string"
+                ? score.winnerTeamName
+                : "胜方队伍"),
+            loserTeamName:
+              result.loserMatchTeam?.name ??
+              (typeof score.loserTeamName === "string"
+                ? score.loserTeamName
+                : "负方队伍"),
+            winnerScore: Number.isFinite(winnerScore) ? winnerScore : null,
+            loserScore: Number.isFinite(loserScore) ? loserScore : null,
+            winnerMembers: result.winnerTeamIds.map(
+              (userId) => teamResultUserNameById.get(userId) ?? userId,
+            ),
+            loserMembers: result.loserTeamIds.map(
+              (userId) => teamResultUserNameById.get(userId) ?? userId,
+            ),
+            remark: typeof score.remark === "string" ? score.remark : "",
+            createdAt: result.createdAt.toISOString(),
+          };
+        })
+    : [];
 
   return (
     <div className="mx-auto max-w-5xl space-y-5 sm:space-y-8">
@@ -463,7 +559,7 @@ export default async function MatchDetailPage({
                 {isTeamMatch
                   ? `组建中 ${buildingTeamCount} 支 · 已成队 ${formedTeamCount} 支`
                   : isDoubleMatch
-                    ? `${Math.floor(match.registrations.length / 2)} 组`
+                    ? `${registeredDoublesTeams.length} 组`
                     : `${match.registrations.length} 人`}
               </p>
             </div>
@@ -683,6 +779,17 @@ export default async function MatchDetailPage({
           minMembers={teamMinMembers}
           maxMembers={teamMaxMembers}
           teams={teamRegistrationItems}
+        />
+      ) : null}
+
+      {isTeamMatch ? (
+        <TeamMatchResultsPanel
+          matchId={match.id}
+          currentUserId={currentUser?.id ?? null}
+          isManager={Boolean(currentUser && (isCreator || isAdmin))}
+          matchFinished={match.status === "finished"}
+          teams={approvedTeamResultTeams}
+          results={teamMatchResultItems}
         />
       ) : null}
 
