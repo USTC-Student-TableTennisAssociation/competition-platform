@@ -103,6 +103,12 @@ function cleanText(value: FormDataEntryValue | null, maxLength: number) {
   return String(value ?? '').trim().slice(0, maxLength)
 }
 
+function parseNonNegativeInteger(value: FormDataEntryValue | null) {
+  if (value === null || String(value).trim() === '') return null
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null
+}
+
 function resolveTeamWindow(match: {
   createdAt: Date
   registrationDeadline: Date
@@ -1592,6 +1598,175 @@ export async function submitMatchTeamAction(teamId: string, _: MatchFormState, f
   return { success: '队伍人数已达标，已自动报名成功。' }
 }
 
+export async function submitTeamMatchResultAction(
+  matchId: string,
+  _: MatchFormState,
+  formData: FormData,
+): Promise<MatchFormState> {
+  const csrfError = await validateCsrfToken(formData)
+  if (csrfError) return { error: csrfError }
+
+  const currentUser = await getCurrentUser()
+  if (!currentUser) return { error: '请先登录后提交团体赛结果。' }
+
+  const teamAId = cleanText(formData.get('teamAId'), 100)
+  const teamBId = cleanText(formData.get('teamBId'), 100)
+  const teamAScore = parseNonNegativeInteger(formData.get('teamAScore'))
+  const teamBScore = parseNonNegativeInteger(formData.get('teamBScore'))
+  const remark = cleanText(formData.get('remark'), 500)
+
+  if (!teamAId || !teamBId) return { error: '请选择两支参赛队伍。' }
+  if (teamAId === teamBId) return { error: '不能选择同一支队伍作为对手。' }
+  if (teamAScore === null || teamBScore === null) {
+    return { error: '团体比分必须是非负整数。' }
+  }
+  if (teamAScore === teamBScore) return { error: '团体赛结果不能为平局。' }
+
+  const match = await prisma.match.findUnique({
+    where: { id: matchId },
+    select: { id: true, title: true, type: true, status: true, createdBy: true },
+  })
+  if (!match) return { error: '比赛不存在。' }
+  if (match.type !== MatchType.team) return { error: '该比赛不是团体赛。' }
+  if (match.status === MatchStatus.finished) return { error: '已结束比赛不能继续提交赛果。' }
+
+  const teams = await prisma.matchTeam.findMany({
+    where: { id: { in: [teamAId, teamBId] } },
+    select: {
+      id: true,
+      matchId: true,
+      name: true,
+      status: true,
+      captainId: true,
+      captain: { select: { isBanned: true } },
+      members: {
+        select: {
+          userId: true,
+          joinedAt: true,
+          user: { select: { isBanned: true } },
+        },
+        orderBy: { joinedAt: 'asc' },
+      },
+    },
+  })
+
+  if (teams.length !== 2 || teams.some((team) => team.matchId !== matchId)) {
+    return { error: '所选队伍不属于当前比赛。' }
+  }
+  if (teams.some((team) => team.status !== TeamRegistrationStatus.approved)) {
+    return { error: '只有已成队并完成报名的队伍可以提交赛果。' }
+  }
+
+  const teamA = teams.find((team) => team.id === teamAId)
+  const teamB = teams.find((team) => team.id === teamBId)
+  if (!teamA || !teamB) return { error: '参赛队伍不存在。' }
+
+  const isManager = currentUser.id === match.createdBy || currentUser.role === 'admin'
+  const captainedSelectedTeam = teams.some((team) => team.captainId === currentUser.id)
+  if (!isManager && !captainedSelectedTeam) {
+    return { error: '只有参赛队长、比赛发起人或管理员可以提交团体赛结果。' }
+  }
+
+  for (const team of teams) {
+    if (team.captain.isBanned || team.members.some((member) => member.user.isBanned)) {
+      return { error: `队伍“${team.name}”包含已封禁用户，无法提交赛果。` }
+    }
+    if (team.members.length === 0 || !team.members.some((member) => member.userId === team.captainId)) {
+      return { error: `队伍“${team.name}”没有有效的完整成员数据。` }
+    }
+  }
+
+  const teamAWon = teamAScore > teamBScore
+  const winnerTeam = teamAWon ? teamA : teamB
+  const loserTeam = teamAWon ? teamB : teamA
+  const winnerScore = teamAWon ? teamAScore : teamBScore
+  const loserScore = teamAWon ? teamBScore : teamAScore
+  const winnerTeamIds = winnerTeam.members.map((member) => member.userId)
+  const loserTeamIds = loserTeam.members.map((member) => member.userId)
+
+  const auditContext = await getAuditContext()
+  let createdResultId: string
+  try {
+    const created = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id
+        FROM "Match"
+        WHERE id = ${matchId}
+        FOR UPDATE
+      `
+
+      const duplicate = await tx.matchResult.findFirst({
+        where: {
+          matchId,
+          OR: [
+            { winnerMatchTeamId: teamAId, loserMatchTeamId: teamBId },
+            { winnerMatchTeamId: teamBId, loserMatchTeamId: teamAId },
+          ],
+        },
+        select: { confirmed: true },
+      })
+      if (duplicate?.confirmed) throw new Error('TEAM_RESULT_CONFIRMED_EXISTS')
+      if (duplicate) throw new Error('TEAM_RESULT_PENDING_EXISTS')
+
+      return tx.matchResult.create({
+        data: {
+          matchId,
+          winnerMatchTeamId: winnerTeam.id,
+          loserMatchTeamId: loserTeam.id,
+          winnerTeamIds,
+          loserTeamIds,
+          score: {
+            text: `${winnerScore}:${loserScore}`,
+            resultType: 'TEAM_MATCH',
+            winnerScore,
+            loserScore,
+            winnerTeamName: winnerTeam.name,
+            loserTeamName: loserTeam.name,
+            winnerMatchTeamId: winnerTeam.id,
+            loserMatchTeamId: loserTeam.id,
+            ...(remark ? { remark } : {}),
+          },
+          reportedBy: currentUser.id,
+          confirmed: false,
+        },
+        select: { id: true },
+      })
+    })
+    createdResultId = created.id
+  } catch (error) {
+    if (error instanceof Error && error.message === 'TEAM_RESULT_CONFIRMED_EXISTS') {
+      return { error: '这两支队伍之间已有已确认赛果，当前不支持重复对阵。' }
+    }
+    if (error instanceof Error && error.message === 'TEAM_RESULT_PENDING_EXISTS') {
+      return { error: '这两支队伍之间已有待确认赛果，请勿重复提交。' }
+    }
+    console.error('submitTeamMatchResultAction failed', error)
+    return { error: '提交团体赛结果失败，请稍后重试。' }
+  }
+
+  await writeAuditLog({
+    actorId: currentUser.id,
+    action: 'match.team_result.report',
+    entityType: 'MatchResult',
+    entityId: createdResultId,
+    details: {
+      targetLabel: match.title,
+      matchId,
+      winnerMatchTeamId: winnerTeam.id,
+      loserMatchTeamId: loserTeam.id,
+      winnerTeamIds,
+      loserTeamIds,
+      winnerScore,
+      loserScore,
+    },
+    ip: auditContext.ip,
+    userAgent: auditContext.userAgent,
+  })
+
+  revalidatePath(`/matchs/${matchId}`)
+  return { success: '团体赛结果已提交，等待对方队长或管理员确认。' }
+}
+
 export async function cancelMatchTeamAction(teamId: string, _: MatchFormState, formData: FormData): Promise<MatchFormState> {
   const csrfError = await validateCsrfToken(formData)
   if (csrfError) return { error: csrfError }
@@ -1630,6 +1805,16 @@ export async function cancelMatchTeamAction(teamId: string, _: MatchFormState, f
   }
 
   await prisma.$transaction(async (tx) => {
+    await tx.matchResult.deleteMany({
+      where: {
+        matchId: team.matchId,
+        confirmed: false,
+        OR: [
+          { winnerMatchTeamId: teamId },
+          { loserMatchTeamId: teamId },
+        ],
+      },
+    })
     await tx.matchTeamMember.deleteMany({ where: { teamId } })
     await tx.matchTeam.delete({ where: { id: teamId } })
   })
@@ -2152,16 +2337,37 @@ export async function confirmMatchResultAction(matchId: string, resultId: string
 
   const result = await prisma.matchResult.findUnique({
     where: { id: resultId },
-    include: { match: true },
+    include: {
+      match: true,
+      winnerMatchTeam: { select: { id: true, matchId: true, captainId: true } },
+      loserMatchTeam: { select: { id: true, matchId: true, captainId: true } },
+    },
   })
 
   if (!result || result.matchId !== matchId) return { error: '赛果不存在。' }
   if (result.confirmed) return { success: '该赛果已确认。' }
 
-  const isOpponent = result.winnerTeamIds.includes(currentUser.id) || result.loserTeamIds.includes(currentUser.id)
   const isManager = result.match.createdBy === currentUser.id || currentUser.role === 'admin'
-  if (!isOpponent && !isManager) return { error: '仅对阵双方或管理员可确认。' }
-  if (result.reportedBy === currentUser.id && !isManager) return { error: '登记方需由对手确认，或由管理员确认。' }
+  const isTeamResult = result.match.type === MatchType.team
+
+  if (isTeamResult) {
+    if (!result.winnerMatchTeam || !result.loserMatchTeam) {
+      return { error: '团体赛结果缺少队伍信息，无法确认，请重新提交。' }
+    }
+    const isParticipatingCaptain =
+      result.winnerMatchTeam.captainId === currentUser.id ||
+      result.loserMatchTeam.captainId === currentUser.id
+    if (!isManager && !isParticipatingCaptain) {
+      return { error: '仅对阵队伍的队长、比赛发起人或管理员可确认团体赛结果。' }
+    }
+    if (result.reportedBy === currentUser.id && !isManager) {
+      return { error: '提交结果的队长不能自行确认，请由对方队长或管理员确认。' }
+    }
+  } else {
+    const isOpponent = result.winnerTeamIds.includes(currentUser.id) || result.loserTeamIds.includes(currentUser.id)
+    if (!isOpponent && !isManager) return { error: '仅对阵双方或管理员可确认。' }
+    if (result.reportedBy === currentUser.id && !isManager) return { error: '登记方需由对手确认，或由管理员确认。' }
+  }
 
   let winnerRewardSummary: Array<{
     userId: string
@@ -2169,12 +2375,56 @@ export async function confirmMatchResultAction(matchId: string, resultId: string
     granted: number
     totalAwarded: number
   }> = []
+  let didConfirm = false
 
   try {
     await prisma.$transaction(async (tx) => {
-      const latest = await tx.matchResult.findUnique({ where: { id: resultId } })
+      await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id
+        FROM "MatchResult"
+        WHERE id = ${resultId}
+        FOR UPDATE
+      `
+
+      const latest = await tx.matchResult.findUnique({
+        where: { id: resultId },
+        include: {
+          match: { select: { id: true, type: true, createdBy: true } },
+          winnerMatchTeam: { select: { id: true, matchId: true, captainId: true } },
+          loserMatchTeam: { select: { id: true, matchId: true, captainId: true } },
+        },
+      })
       if (!latest) throw new Error('赛果不存在。')
       if (latest.confirmed) return
+
+      if (latest.match.type === MatchType.team) {
+        const winnerTeam = latest.winnerMatchTeam
+        const loserTeam = latest.loserMatchTeam
+        if (!winnerTeam || !loserTeam) {
+          throw new Error('团体赛结果缺少队伍信息，请重新提交。')
+        }
+        if (
+          winnerTeam.id === loserTeam.id ||
+          winnerTeam.matchId !== matchId ||
+          loserTeam.matchId !== matchId
+        ) {
+          throw new Error('团体赛结果中的队伍信息无效。')
+        }
+
+        const latestIsManager =
+          latest.match.createdBy === currentUser.id || currentUser.role === 'admin'
+        const latestIsCaptain =
+          winnerTeam.captainId === currentUser.id || loserTeam.captainId === currentUser.id
+        if (!latestIsManager && !latestIsCaptain) {
+          throw new Error('仅对阵队伍的队长、比赛发起人或管理员可确认团体赛结果。')
+        }
+        if (!latestIsManager && latest.reportedBy === currentUser.id) {
+          throw new Error('提交结果的队长不能自行确认，请由对方队长或管理员确认。')
+        }
+        if (latest.winnerTeamIds.length === 0 || latest.loserTeamIds.length === 0) {
+          throw new Error('团体赛成员快照为空，请重新提交。')
+        }
+      }
 
       await applyConfirmedResult(tx, {
         matchId,
@@ -2191,6 +2441,7 @@ export async function confirmMatchResultAction(matchId: string, resultId: string
           verifierId: currentUser.id,
         },
       })
+      didConfirm = true
 
       const uniqueWinnerIds = [...new Set(latest.winnerTeamIds)]
       winnerRewardSummary = await Promise.all(
@@ -2226,6 +2477,8 @@ export async function confirmMatchResultAction(matchId: string, resultId: string
     console.error('confirmMatchResultAction failed', error)
     return { error: error instanceof Error ? error.message : '确认失败。' }
   }
+
+  if (!didConfirm) return { success: '该赛果已确认。' }
 
   const latestMatch = await prisma.match.findUnique({
     where: { id: matchId },
@@ -2273,7 +2526,14 @@ export async function confirmMatchResultAction(matchId: string, resultId: string
     action: 'match.result.confirm',
     entityType: 'MatchResult',
     entityId: resultId,
-    details: { matchId, isManager, targetLabel: result.match.title },
+    details: {
+      matchId,
+      isManager,
+      isTeamResult,
+      winnerMatchTeamId: result.winnerMatchTeamId,
+      loserMatchTeamId: result.loserMatchTeamId,
+      targetLabel: result.match.title,
+    },
     ip: auditContext.ip,
     userAgent: auditContext.userAgent,
   })
@@ -2334,6 +2594,12 @@ export async function swapConfirmedMatchResultWinnerLoserAction(
   if (result.winnerTeamIds.length === 0 || result.loserTeamIds.length === 0) {
     return { error: '当前赛果缺少胜负方成员，无法自动纠错。' }
   }
+  if (
+    result.match.type === MatchType.team &&
+    (!result.winnerMatchTeamId || !result.loserMatchTeamId)
+  ) {
+    return { error: '当前团体赛果缺少队伍信息，无法自动纠错。' }
+  }
 
   const participantIdSet = new Set([...result.winnerTeamIds, ...result.loserTeamIds])
   if (participantIdSet.size !== result.winnerTeamIds.length + result.loserTeamIds.length) {
@@ -2359,6 +2625,26 @@ export async function swapConfirmedMatchResultWinnerLoserAction(
       const oldLoserTeamIds = [...latest.loserTeamIds]
       const newWinnerTeamIds = [...oldLoserTeamIds]
       const newLoserTeamIds = [...oldWinnerTeamIds]
+      const isTeamResult = Boolean(latest.winnerMatchTeamId && latest.loserMatchTeamId)
+      const newWinnerMatchTeamId = latest.loserMatchTeamId
+      const newLoserMatchTeamId = latest.winnerMatchTeamId
+      let nextScore = latest.score as Prisma.InputJsonValue
+
+      if (
+        isTeamResult &&
+        latest.score &&
+        typeof latest.score === 'object' &&
+        !Array.isArray(latest.score)
+      ) {
+        const score = latest.score as Prisma.JsonObject
+        nextScore = {
+          ...score,
+          winnerMatchTeamId: newWinnerMatchTeamId,
+          loserMatchTeamId: newLoserMatchTeamId,
+          winnerTeamName: score.loserTeamName ?? null,
+          loserTeamName: score.winnerTeamName ?? null,
+        }
+      }
 
       const users = await tx.user.findMany({
         where: { id: { in: participantIds } },
@@ -2540,10 +2826,13 @@ export async function swapConfirmedMatchResultWinnerLoserAction(
       await tx.matchResult.update({
         where: { id: latest.id },
         data: {
-          winnerId: newWinnerTeamIds[0] ?? null,
-          loserId: newLoserTeamIds[0] ?? null,
+          winnerId: isTeamResult ? null : (newWinnerTeamIds[0] ?? null),
+          loserId: isTeamResult ? null : (newLoserTeamIds[0] ?? null),
+          winnerMatchTeamId: newWinnerMatchTeamId,
+          loserMatchTeamId: newLoserMatchTeamId,
           winnerTeamIds: newWinnerTeamIds,
           loserTeamIds: newLoserTeamIds,
+          score: nextScore,
           verifierId: currentUser.id,
           resultVerifiedAt: new Date(),
         },
