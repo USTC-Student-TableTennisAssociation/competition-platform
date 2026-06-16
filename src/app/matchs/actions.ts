@@ -21,7 +21,11 @@ import {
   refundRegistrationRewardPoints,
 } from '@/lib/server/match/rewards'
 import { removeUserFromMatch } from '@/lib/server/match/remove-participant'
-import { getApprovedTeamGroupingCompetitors } from '@/lib/server/match/team-grouping'
+import {
+  getApprovedTeamGroupingCompetitors,
+  reconcileTeamGroupingPayload,
+  reconcileTeamResultCompetitorIds,
+} from '@/lib/server/match/team-grouping'
 import {
   getResultGroupName,
   getResultKnockoutMatchId,
@@ -29,6 +33,7 @@ import {
   resolveCompetitorType,
 } from '@/lib/match-competitor'
 import { resolveFilledKnockoutRounds } from '@/lib/match-detail'
+import { removeCompetitorsFromGroupingPayload } from '@/lib/server/match/grouping-payload'
 
 const UNLIMITED_MAX_PARTICIPANTS = 2147483647
 const MATCH_POINTS_CAP_PER_MATCH = 5
@@ -1617,8 +1622,8 @@ export async function submitTeamMatchResultAction(
   const currentUser = await getCurrentUser()
   if (!currentUser) return { error: '请先登录后提交团体赛结果。' }
 
-  const teamAId = cleanText(formData.get('teamAId'), 100)
-  const teamBId = cleanText(formData.get('teamBId'), 100)
+  let teamAId = cleanText(formData.get('teamAId'), 100)
+  let teamBId = cleanText(formData.get('teamBId'), 100)
   const teamAScore = parseNonNegativeInteger(formData.get('teamAScore'))
   const teamBScore = parseNonNegativeInteger(formData.get('teamBScore'))
   const remark = cleanText(formData.get('remark'), 500)
@@ -1662,6 +1667,66 @@ export async function submitTeamMatchResultAction(
   if (match.type !== MatchType.team) return { error: '该比赛不是团体赛。' }
   if (match.status === MatchStatus.finished) return { error: '已结束比赛不能继续提交赛果。' }
 
+  type TeamGroupingPayload = {
+    competitorType?: 'user' | 'team'
+    config?: { qualifiersPerGroup?: number }
+    groups: Array<{
+      name: string
+      averagePoints: number
+      players: Array<{
+        id: string
+        nickname: string
+        points: number
+        eloRating: number
+      }>
+    }>
+    knockout?: {
+      rounds: Array<{
+        name: string
+        matches: Array<{ id: string; homeLabel: string; awayLabel: string }>
+      }>
+    }
+  }
+
+  const storedGroupingPayload = match.groupingResult?.payload as
+    | TeamGroupingPayload
+    | undefined
+  const currentTeamIdentities = storedGroupingPayload
+    ? await prisma.matchTeam.findMany({
+        where: { matchId, status: TeamRegistrationStatus.approved },
+        select: { id: true, name: true },
+      })
+    : []
+  const reconciledGrouping = storedGroupingPayload
+    ? reconcileTeamGroupingPayload(storedGroupingPayload, currentTeamIdentities)
+    : null
+  const groupingPayload = reconciledGrouping?.payload
+  const competitionResults = reconcileTeamResultCompetitorIds(
+    match.results,
+    currentTeamIdentities,
+  )
+
+  if (storedGroupingPayload && groupingPayload) {
+    const storedPlayers = storedGroupingPayload.groups.flatMap(
+      (group) => group.players,
+    )
+    const resolvedPlayers = groupingPayload.groups.flatMap(
+      (group) => group.players,
+    )
+    const resolveSubmittedTeamId = (submittedId: string) => {
+      if (currentTeamIdentities.some((team) => team.id === submittedId)) {
+        return submittedId
+      }
+      const storedPlayer = storedPlayers.find((player) => player.id === submittedId)
+      if (!storedPlayer) return submittedId
+      return resolvedPlayers.find(
+        (player) => player.nickname === storedPlayer.nickname,
+      )?.id ?? submittedId
+    }
+    teamAId = resolveSubmittedTeamId(teamAId)
+    teamBId = resolveSubmittedTeamId(teamBId)
+  }
+
   const teams = await prisma.matchTeam.findMany({
     where: { id: { in: [teamAId, teamBId] } },
     select: {
@@ -1683,7 +1748,11 @@ export async function submitTeamMatchResultAction(
   })
 
   if (teams.length !== 2 || teams.some((team) => team.matchId !== matchId)) {
-    return { error: '所选队伍不属于当前比赛。' }
+    return {
+      error: storedGroupingPayload
+        ? '分组数据引用了已删除、重建或失效的队伍，请刷新页面；若仍出现，请由管理员重新发布分组。'
+        : '所选队伍不属于当前比赛。',
+    }
   }
   if (teams.some((team) => team.status !== TeamRegistrationStatus.approved)) {
     return { error: '只有已成队并完成报名的队伍可以提交赛果。' }
@@ -1716,22 +1785,6 @@ export async function submitTeamMatchResultAction(
   const winnerTeamIds = winnerTeam.members.map((member) => member.userId)
   const loserTeamIds = loserTeam.members.map((member) => member.userId)
 
-  type TeamGroupingPayload = {
-    competitorType?: 'user' | 'team'
-    config?: { qualifiersPerGroup?: number }
-    groups?: Array<{
-      name: string
-      players: Array<{ id: string; nickname: string; points?: number; eloRating?: number }>
-    }>
-    knockout?: {
-      rounds: Array<{
-        name: string
-        matches: Array<{ id: string; homeLabel: string; awayLabel: string }>
-      }>
-    }
-  }
-
-  const groupingPayload = match.groupingResult?.payload as TeamGroupingPayload | undefined
   let resultPhase: 'group' | 'knockout' | null = null
 
   if (groupingPayload) {
@@ -1765,7 +1818,7 @@ export async function submitTeamMatchResultAction(
           })),
         })),
         qualifiersPerGroup: groupingPayload.config?.qualifiersPerGroup ?? 1,
-        results: match.results,
+        results: competitionResults,
         groupingGeneratedAt: match.groupingGeneratedAt,
         competitorType: 'team',
       })
@@ -1799,6 +1852,16 @@ export async function submitTeamMatchResultAction(
         WHERE id = ${matchId}
         FOR UPDATE
       `
+
+      if (
+        reconciledGrouping &&
+        (reconciledGrouping.changed || reconciledGrouping.unresolvedIds.length > 0)
+      ) {
+        await tx.matchGrouping.update({
+          where: { matchId },
+          data: { payload: groupingPayload as Prisma.InputJsonValue },
+        })
+      }
 
       const pairResults = await tx.matchResult.findMany({
         where: {
@@ -1910,6 +1973,7 @@ export async function cancelMatchTeamAction(teamId: string, _: MatchFormState, f
           registrationDeadline: true,
           teamRegistrationStart: true,
           teamRegistrationDeadline: true,
+          groupingResult: { select: { payload: true } },
         },
       },
     },
@@ -1938,6 +2002,18 @@ export async function cancelMatchTeamAction(teamId: string, _: MatchFormState, f
         ],
       },
     })
+    if (team.match.groupingResult) {
+      const nextPayload = removeCompetitorsFromGroupingPayload(
+        team.match.groupingResult.payload,
+        new Set([teamId]),
+      )
+      if (nextPayload) {
+        await tx.matchGrouping.update({
+          where: { matchId: team.matchId },
+          data: { payload: nextPayload },
+        })
+      }
+    }
     await tx.matchTeamMember.deleteMany({ where: { teamId } })
     await tx.matchTeam.delete({ where: { id: teamId } })
   })

@@ -6,23 +6,11 @@ import {
 } from '@prisma/client'
 import { isMatchAllResultsFinished } from '@/lib/match-status'
 import { refundRegistrationRewardPoints } from '@/lib/server/match/rewards'
+import { removeCompetitorsFromGroupingPayload } from '@/lib/server/match/grouping-payload'
 
 type AuditContext = {
   ip?: string | null
   userAgent?: string | null
-}
-
-type GroupingPlayer = {
-  id: string
-  eloRating?: number
-}
-
-type GroupingPayload = {
-  groups?: Array<{
-    name?: string
-    averagePoints?: number
-    players: GroupingPlayer[]
-  }>
 }
 
 export type RemoveUserFromMatchResult = {
@@ -31,33 +19,6 @@ export type RemoveUserFromMatchResult = {
   removed: boolean
   removedUserIds: string[]
   dissolvedTeamId: string | null
-}
-
-function removePlayersFromGrouping(payload: Prisma.JsonValue, userIds: Set<string>) {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null
-
-  const grouping = payload as GroupingPayload
-  if (!Array.isArray(grouping.groups)) return null
-
-  let changed = false
-  const groups = grouping.groups.map((group) => {
-    if (!Array.isArray(group.players)) return group
-    const players = group.players.filter((player) => !userIds.has(player.id))
-    if (players.length === group.players.length) return group
-
-    changed = true
-    const averagePoints =
-      players.length > 0
-        ? Math.round(
-            players.reduce((sum, player) => sum + (player.eloRating ?? 0), 0) /
-              players.length,
-          )
-        : 0
-    return { ...group, players, averagePoints }
-  })
-
-  if (!changed) return null
-  return { ...grouping, groups } as unknown as Prisma.InputJsonValue
 }
 
 async function updateFinishedStatus(tx: Prisma.TransactionClient, matchId: string) {
@@ -131,6 +92,7 @@ export async function removeUserFromMatch(
   }
 
   const removedUserIds = new Set<string>()
+  const removedGroupingCompetitorIds = new Set<string>()
   let dissolvedTeamId: string | null = null
   let removed = match.registrations.length > 0
 
@@ -181,6 +143,7 @@ export async function removeUserFromMatch(
       removedUserIds.add(userId)
       if (team.captainId === userId) {
         dissolvedTeamId = team.id
+        removedGroupingCompetitorIds.add(team.id)
         await tx.matchTeam.delete({ where: { id: team.id } })
       } else {
         const membership = team.members.find((member) => member.userId === userId)
@@ -193,6 +156,9 @@ export async function removeUserFromMatch(
           memberCount >= minMembers
             ? TeamRegistrationStatus.approved
             : TeamRegistrationStatus.draft
+        if (status !== TeamRegistrationStatus.approved) {
+          removedGroupingCompetitorIds.add(team.id)
+        }
         await tx.matchTeam.update({
           where: { id: team.id },
           data: {
@@ -236,9 +202,13 @@ export async function removeUserFromMatch(
   }
 
   if (match.groupingResult) {
-    const nextPayload = removePlayersFromGrouping(
+    const groupingCompetitorIds =
+      match.type === MatchType.team
+        ? removedGroupingCompetitorIds
+        : new Set(registrationUserIds)
+    const nextPayload = removeCompetitorsFromGroupingPayload(
       match.groupingResult.payload,
-      new Set(registrationUserIds),
+      groupingCompetitorIds,
     )
     if (nextPayload) {
       await tx.matchGrouping.update({

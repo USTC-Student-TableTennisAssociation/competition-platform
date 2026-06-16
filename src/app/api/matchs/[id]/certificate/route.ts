@@ -122,6 +122,17 @@ export async function POST(
       where: { id },
       include: {
         registrations: { select: { userId: true } },
+        teamRegistrations: {
+          select: {
+            status: true,
+            captainId: true,
+            members: {
+              select: {
+                userId: true,
+              },
+            },
+          },
+        },
         groupingResult: true,
         results: {
           select: {
@@ -140,9 +151,15 @@ export async function POST(
       return NextResponse.json({ error: "比赛不存在或已删除。" }, { status: 404 });
     }
 
-    const isRegistered = match.registrations.some(
-      (item) => item.userId === currentUser.id,
-    );
+    const isRegistered =
+      match.type === "team"
+        ? match.teamRegistrations.some(
+            (team) =>
+              team.status === "approved" &&
+              (team.captainId === currentUser.id ||
+                team.members.some((member) => member.userId === currentUser.id)),
+          )
+        : match.registrations.some((item) => item.userId === currentUser.id);
     if (!isRegistered) {
       return NextResponse.json({ error: "你未报名本次比赛，无法导出证明。" }, { status: 403 });
     }
@@ -154,6 +171,7 @@ export async function POST(
         groupingResult: match.groupingResult,
         groupingGeneratedAt: match.groupingGeneratedAt,
         registrations: match.registrations,
+        teamRegistrations: match.teamRegistrations,
         results: match.results,
       },
       currentUserId: currentUser.id,
