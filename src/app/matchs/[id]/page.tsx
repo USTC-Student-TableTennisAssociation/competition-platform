@@ -44,6 +44,10 @@ import {
   getResultPhase,
   resolveCompetitorType,
 } from "@/lib/match-competitor";
+import {
+  reconcileTeamGroupingPayload,
+  reconcileTeamResultCompetitorIds,
+} from "@/lib/server/match/team-grouping";
 
 const statusLabelMap = {
   registration: "报名中",
@@ -169,7 +173,7 @@ export default async function MatchDetailPage({
       ])
     : [null, null];
 
-  const certificateEligibility = currentUser && !isTeamMatch
+  const certificateEligibility = currentUser
     ? evaluateCertificateEligibility({
         match: {
           status: match.status,
@@ -177,6 +181,7 @@ export default async function MatchDetailPage({
           groupingResult: match.groupingResult,
           groupingGeneratedAt: match.groupingGeneratedAt,
           registrations: match.registrations,
+          teamRegistrations: match.teamRegistrations,
           results: match.results,
         },
         currentUserId: currentUser.id,
@@ -231,7 +236,7 @@ export default async function MatchDetailPage({
     isDoubleMatch ? getRegisteredDoublesTeams(match.id) : Promise.resolve([]),
   ]);
 
-  const groupingPayload = (match.groupingResult?.payload ?? null) as {
+  const storedGroupingPayload = (match.groupingResult?.payload ?? null) as {
     competitorType?: "user" | "team";
     config?: {
       groupCount?: number;
@@ -257,6 +262,26 @@ export default async function MatchDetailPage({
       }>;
     };
   } | null;
+  const groupingPayload =
+    isTeamMatch && storedGroupingPayload
+      ? reconcileTeamGroupingPayload(
+          storedGroupingPayload,
+          match.teamRegistrations
+            .filter(
+              (team) => team.status === TeamRegistrationStatus.approved,
+            )
+            .map((team) => ({ id: team.id, name: team.name })),
+        ).payload
+      : storedGroupingPayload;
+  const currentApprovedTeamIdentities = match.teamRegistrations
+    .filter((team) => team.status === TeamRegistrationStatus.approved)
+    .map((team) => ({ id: team.id, name: team.name }));
+  const competitionResults = isTeamMatch
+    ? reconcileTeamResultCompetitorIds(
+        match.results,
+        currentApprovedTeamIdentities,
+      )
+    : match.results;
   const groupingCompetitorType = resolveCompetitorType(
     groupingPayload?.competitorType,
   );
@@ -266,7 +291,7 @@ export default async function MatchDetailPage({
         knockoutRounds: groupingPayload.knockout.rounds,
         groups: groupingPayload.groups,
         qualifiersPerGroup: groupingPayload.config?.qualifiersPerGroup ?? 1,
-        results: match.results,
+        results: competitionResults,
         groupingGeneratedAt: match.groupingGeneratedAt ?? null,
         competitorType: groupingCompetitorType,
       })
@@ -277,7 +302,7 @@ export default async function MatchDetailPage({
       ? buildAdminEligibleOptions({
           groupingPayload,
           filledKnockoutRounds,
-          results: match.results,
+          results: competitionResults,
           groupingGeneratedAt: match.groupingGeneratedAt ?? null,
           competitorType: groupingCompetitorType,
         })
@@ -286,7 +311,7 @@ export default async function MatchDetailPage({
   const adminGroupBattleTables = groupingPayload
     ? buildAdminGroupBattleTables({
         groups: groupingPayload.groups,
-        results: match.results,
+        results: competitionResults,
         competitorType: groupingCompetitorType,
       })
     : [];
@@ -467,7 +492,7 @@ export default async function MatchDetailPage({
   const teamResultMemberIds = isTeamMatch
     ? Array.from(
         new Set(
-          match.results.flatMap((result) => [
+          competitionResults.flatMap((result) => [
             ...result.winnerTeamIds,
             ...result.loserTeamIds,
           ]),
@@ -484,7 +509,7 @@ export default async function MatchDetailPage({
     teamResultUsers.map((user) => [user.id, user.nickname]),
   );
   const teamMatchResultItems = isTeamMatch
-    ? match.results
+    ? competitionResults
         .filter((result) => {
           if (result.winnerMatchTeamId || result.loserMatchTeamId) return true;
           return (
@@ -879,7 +904,7 @@ export default async function MatchDetailPage({
           />
         )}
 
-      {!isTeamMatch && currentUser && certificateEligibility ? (
+      {currentUser && certificateEligibility ? (
         <ExportCertificateSection
           matchId={match.id}
           matchTitle={match.title}

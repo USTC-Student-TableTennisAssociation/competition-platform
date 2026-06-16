@@ -22,6 +22,11 @@ type CertificateMatch = {
   groupingResult: { payload: unknown } | null;
   groupingGeneratedAt: Date | null;
   registrations: Array<{ userId: string }>;
+  teamRegistrations?: Array<{
+    status: string;
+    captainId: string;
+    members: Array<{ userId: string }>;
+  }>;
   results: MatchResultLite[];
 };
 
@@ -51,14 +56,27 @@ function resultIncludesUser(result: MatchResultLite, userId: string) {
   return result.winnerTeamIds.includes(userId) || result.loserTeamIds.includes(userId);
 }
 
+function matchIncludesUser(match: CertificateMatch, userId: string) {
+  if (match.type === "team") {
+    return Boolean(
+      match.teamRegistrations?.some(
+        (team) =>
+          team.status === "approved" &&
+          (team.captainId === userId ||
+            team.members.some((member) => member.userId === userId)),
+      ),
+    );
+  }
+
+  return match.registrations.some((item) => item.userId === userId);
+}
+
 export function evaluateCertificateEligibility(params: {
   match: CertificateMatch;
   currentUserId: string;
 }): CertificateEligibility {
   const { match, currentUserId } = params;
-  const isRegistered = match.registrations.some(
-    (item) => item.userId === currentUserId,
-  );
+  const isRegistered = matchIncludesUser(match, currentUserId);
   if (!isRegistered) {
     return { eligible: false, reason: "你未报名本次比赛，无法导出参赛证明。" };
   }
