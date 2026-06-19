@@ -1,114 +1,315 @@
 # Git 工作流
 
-本文面向第一次或不太熟悉 Git 协作的同学，说明本项目推荐的分支、提交和 Pull Request 流程。
+本文说明本项目日常协作中如何查看分支、新建分支、提交改动、推送代码和打开 Pull Request。所有协作者应按本文约定提交改动。
 
-## 几个基本概念
+## 基本原则
 
-### Git 是什么
+* `main` 是默认稳定分支，对应线上可部署版本。
+* 所有功能、修复和文档调整都应从最新的 `main` 新建分支。
+* 不直接在 `main` 上开发或向 `main` 推送代码。
+* 一个分支应只处理一个明确任务。
+* 分支、commit 和 PR 说明应让其他维护者能够快速理解改动目的和影响范围。
+* PR 合并后，应及时删除已经完成的临时分支。
 
-Git 是代码版本管理工具。它会记录每一次修改，方便大家一起开发，也方便出问题时回头查看。
+## 常用概念
 
-### commit 是什么
+### branch
 
-commit 可以理解为一次“保存记录”。每个 commit 应该说明这次改了什么。
+branch 是分支，用于隔离未完成的改动。每个任务应在独立分支完成，并通过 PR 合并回 `main`。
 
-好的 commit 不是越大越好。一次 commit 最好只做一件相对清楚的事，例如：
+### commit
 
-- 修改登录页文案。
-- 修复报名按钮无法点击的问题。
-- 增加协作说明文档。
+commit 是一次提交记录，用于保存一组相关改动。每个 commit 应只表达一个清晰目的。
 
-### branch 是什么
+示例：
 
-branch 是分支。你可以把它理解成从主线代码上复制出来的一条工作线。
+* 修复报名按钮无法点击的问题。
+* 调整个人主页移动端样式。
+* 增加 Git 工作流说明。
 
-我们不要直接在 `main` 上改代码，而是新建一个分支，在自己的分支上修改，确认没问题后再通过 PR 合并回去。
+### Pull Request
 
-### Pull Request 是什么
+Pull Request，简称 PR，用于请求将一个分支的改动合并到目标分支。
 
-Pull Request，简称 PR，可以理解为“请求把我的修改合并进项目”。
+PR Review 用于确认改动是否清晰、可维护、可安全合并。PR 说明和讨论记录也是后续维护时的重要上下文。
 
-开 PR 之后，其他同学可以看到你改了什么、提出建议、帮你检查问题。PR 不是考试，也不是审核你这个人，它只是团队一起把代码变稳的过程。
+## 标准工作流程
 
-## 推荐协作流程
+一般改动应按以下流程进行：
 
-一般开发请按这个流程：
+1. 查看当前分支和工作区状态。
+2. 切换到 `main` 分支并同步最新代码。
+3. 从 `main` 新建工作分支。
+4. 在工作分支上修改代码或文档。
+5. 查看本地改动。
+6. 提交 commit。
+7. 推送分支到 GitHub。
+8. 打开 Pull Request。
+9. 根据 Review 意见继续修改。
+10. 检查通过后合并。
+11. 合并后清理临时分支。
 
-1. 从最新的 `main` 分支开始。
-2. 新建自己的功能分支。
-3. 在自己的分支上修改代码或文档。
-4. 提交 commit。
-5. 推送到 GitHub。
-6. 开 Pull Request。
-7. 根据 Review 意见继续修改。
-8. 通过检查后合并。
+## 查看分支和状态
 
-常用命令示例：
+查看当前所在分支：
 
 ```bash
-git checkout main
-git pull
-git checkout -b docs/add-collaboration-docs
+git branch --show-current
 ```
 
-修改完成后：
+查看当前工作区状态：
 
 ```bash
-git status
-git add CONTRIBUTING.md docs/collaboration/01-Git工作流.md
-git commit -m "docs: add collaboration guide"
+git status -sb
+```
+
+查看本地分支：
+
+```bash
+git branch
+```
+
+查看本地和远程分支：
+
+```bash
+git branch -a
+```
+
+查看本地分支与远程分支的对应关系：
+
+```bash
+git branch -vv
+```
+
+常见输出示例：
+
+```text
+* main
+  remotes/origin/HEAD -> origin/main
+  remotes/origin/main
+```
+
+其中：
+
+* `* main` 表示当前在本地 `main` 分支。
+* `origin/main` 表示 GitHub 远程仓库中的 `main` 分支在本地的记录。
+* `origin/HEAD -> origin/main` 表示远程仓库的默认分支是 `main`。
+
+如果 `git status -sb` 显示有未提交改动，应先确认这些改动是否属于当前任务。不要在不了解改动来源的情况下直接覆盖或丢弃。
+
+## 从 main 新建工作分支
+
+新任务应从最新的 `main` 开始。
+
+```bash
+git switch main
+git pull origin main
+```
+
+其中：
+
+* `git switch main`：切换到本地 `main` 分支。
+* `git pull origin main`：从远程仓库 `origin` 的 `main` 分支拉取最新代码。
+
+然后新建工作分支：
+
+```bash
+git switch -c docs/add-collaboration-docs
+```
+
+其中：
+
+* `-c` 表示创建新分支。
+* `docs/add-collaboration-docs` 是新分支名。
+
+分支名应符合下方“分支命名规范”。
+
+## 查看和提交改动
+
+完成代码或文档修改后，查看改动范围：
+
+```bash
+git status -sb
+```
+
+查看具体内容差异：
+
+```bash
+git diff
+```
+
+也可以使用 VS Code 的 Source Control 面板查看文件改动和具体差异。
+
+确认改动范围正确后，提交本次任务相关文件：
+
+```bash
+git add CONTRIBUTING.md docs/collaboration/01-git-workflow.md
+git commit -m "docs: 增加协作说明"
+```
+
+其中：
+
+* `git add`：把文件加入本次提交。
+* `git commit -m "..."`：创建提交记录。`-m` 是 `--message` 的缩写，后面的引号内容是本次提交说明。
+
+如果使用 VS Code，也可以在 Source Control 面板中完成暂存和提交。
+
+不要把无关改动一起提交。
+
+## 推送分支到 GitHub
+
+本地新建的分支一开始只存在于自己的电脑上。推送分支就是把这个分支和其中的 commit 上传到 GitHub，这样才能在 GitHub 页面打开 Pull Request。
+
+第一次推送新分支时：
+
+```bash
 git push -u origin docs/add-collaboration-docs
 ```
 
-然后到 GitHub 页面上打开 Pull Request。
+其中：
 
-## 分支命名
+* `git push`：把本地提交推送到远程仓库。
+* `-u`：设置本地分支与远程分支的跟踪关系。设置后，之后在同一分支上可以直接使用 `git push`。
+* `origin`：远程仓库名称，通常就是 GitHub 上的仓库。
+* `docs/add-collaboration-docs`：要推送的分支名。远程仓库中会创建同名分支。
 
-分支名建议使用英文小写，用 `/` 分组，用 `-` 连接单词。
-
-常见类型：
-
-| 类型 | 适合场景 | 示例 |
-| --- | --- | --- |
-| `feat/` | 新功能 | `feat/team-registration` |
-| `fix/` | 修复问题 | `fix/login-redirect` |
-| `docs/` | 文档修改 | `docs/add-collaboration-docs` |
-| `style/` | 样式或展示调整 | `style/profile-page` |
-| `refactor/` | 重构，不改变功能 | `refactor/match-actions` |
-| `chore/` | 工具、依赖、配置等杂项 | `chore/update-dependencies` |
-| `hotfix/` | 紧急线上修复 | `hotfix/certificate-export` |
-
-如果不确定用哪个，优先用最接近的类型，不必纠结太久。
-
-## 提交信息命名
-
-推荐格式：
+设置跟踪关系后，Git 会记住：
 
 ```text
-类型: 简短说明
+本地 docs/add-collaboration-docs 分支
+对应远程 origin/docs/add-collaboration-docs 分支
 ```
 
-英文类型建议使用：
+后续继续在同一分支提交时，通常只需要：
 
-| 类型 | 含义 | 示例 |
-| --- | --- | --- |
-| `feat` | 新功能 | `feat: add team match export` |
-| `fix` | 修复 bug | `fix: handle expired reset token` |
-| `docs` | 文档 | `docs: add contributing guide` |
-| `style` | 样式调整 | `style: improve mobile header spacing` |
-| `refactor` | 重构 | `refactor: simplify match status helpers` |
-| `chore` | 杂项维护 | `chore: update dependencies` |
-| `test` | 测试 | `test: add match grouping cases` |
+```bash
+git push
+```
 
-中文说明也可以，例如：
+如果使用 VS Code，也可以点击 Source Control 面板中的 `Publish Branch`。它通常等价于第一次推送当前分支，并建立本地分支和远程分支的跟踪关系。
+
+
+## 打开 Pull Request
+
+推送分支后，到 GitHub 仓库页面打开 Pull Request。
+
+常见方式：
+
+1. 推送分支后，GitHub 仓库页面通常会出现 `Compare & pull request` 按钮。
+2. 如果没有出现，可以进入仓库的 `Pull requests` 页面，点击 `New pull request`。
+3. 目标分支选择 `main`，来源分支选择自己的工作分支。
+
+方向应为：
 
 ```text
-docs: 增加协作说明
-fix: 修复报名后页面未刷新的问题
-feat: 新增团体赛结果导出
+docs/add-collaboration-docs → main
 ```
 
-尽量避免这些提交信息：
+含义是：
+
+```text
+请求把 docs/add-collaboration-docs 分支的改动合并到 main 分支。
+```
+
+PR 标题应简短说明改动内容，描述应按下方“PR 说明规范”填写。
+
+## 根据 Review 修改
+
+如果 PR 收到 Review 意见，应在同一个工作分支继续修改、提交并推送。
+
+```bash
+git status -sb
+git add docs/collaboration/01-git-workflow.md
+git commit -m "docs: 补充分支和推送命令说明"
+git push
+```
+
+新的 commit 会自动出现在原 PR 中，不需要重新打开 PR。
+
+commit 信息应说明具体修改内容，不建议写成：
+
+```text
+fix: 修复 Review 中指出的问题
+```
+
+应改为更具体的说明，例如：
+
+```text
+docs: 补充分支查看命令说明
+docs: 解释 git push 参数含义
+fix: 补充未登录用户处理逻辑
+```
+
+## PR 合并后的清理
+
+PR 合并后，回到本地 `main` 并同步远程最新代码：
+
+```bash
+git switch main
+git pull origin main
+```
+
+删除已经合并的本地临时分支：
+
+```bash
+git branch -d docs/add-collaboration-docs
+```
+
+如果 GitHub 页面没有自动删除远程分支，可以手动删除：
+
+```bash
+git push origin --delete docs/add-collaboration-docs
+```
+
+删除分支不会删除已经合并进 `main` 的代码。它只是清理已经完成的临时工作分支。
+
+## 分支命名规范
+
+分支名应使用英文小写，使用 `/` 分组，使用 `-` 连接单词。
+
+格式：
+
+```text
+类型/简短说明
+```
+
+常用类型：
+
+| 类型        | 适用场景                   | 示例                          |
+| ----------- | -------------------------- | ----------------------------- |
+| `feat/`     | 新功能                     | `feat/team-registration`      |
+| `fix/`      | 修复问题                   | `fix/login-redirect`          |
+| `docs/`     | 文档修改                   | `docs/add-collaboration-docs` |
+| `style/`    | 样式或展示调整             | `style/profile-page`          |
+| `refactor/` | 重构，不改变功能           | `refactor/match-actions`      |
+| `chore/`    | 工具、依赖、配置等维护工作 | `chore/update-dependencies`   |
+| `hotfix/`   | 紧急线上修复               | `hotfix/certificate-export`   |
+
+无法准确归类时，应选择最接近的类型，并在 PR 说明中补充背景。
+
+## commit 信息规范
+
+commit 信息应使用中文说明改动内容，类型前缀保留英文。
+
+格式：
+
+```text
+类型: 中文说明
+```
+
+常用类型：
+
+| 类型       | 含义     | 示例                              |
+| ---------- | -------- | --------------------------------- |
+| `feat`     | 新功能   | `feat: 新增团体赛结果导出`        |
+| `fix`      | 修复 bug | `fix: 修复报名后页面未刷新的问题` |
+| `docs`     | 文档     | `docs: 增加 Git 工作流说明`       |
+| `style`    | 样式调整 | `style: 调整个人主页移动端间距`   |
+| `refactor` | 重构     | `refactor: 简化比赛状态判断逻辑`  |
+| `chore`    | 杂项维护 | `chore: 更新项目依赖`             |
+| `test`     | 测试     | `test: 增加分组逻辑测试用例`      |
+
+提交信息应具体说明改动内容。不得使用无法说明改动内容的提交信息，例如：
 
 ```text
 update
@@ -118,26 +319,26 @@ fix
 不知道
 ```
 
-如果一次改动还没做完，但想先保存，可以用：
+如果需要临时保存未完成工作，可以使用 `wip` 前缀：
 
 ```text
 wip: 调整比赛详情页
 ```
 
-`wip` 表示 work in progress，也就是还在进行中。合并前最好把这类临时 commit 整理掉，或者至少确保 PR 说明写清楚。
+包含 `wip` 的提交不应作为最终状态合并。合并前应补充完成对应改动，或在 PR 中说明保留原因。
 
-## PR 说明应该写什么
+## PR 说明规范
 
-PR 描述里尽量写清楚：
+PR 描述应包含以下内容：
 
-- 这次改了什么。
-- 为什么要这样改。
-- 自己测试了什么。
-- 是否涉及数据库迁移。
-- 是否涉及环境变量。
-- 如果有界面变化，最好附截图。
+* 改动内容。
+* 改动原因或背景。
+* 已完成的验证方式。
+* 是否涉及数据库迁移。
+* 是否涉及环境变量。
+* 如果有界面变化，应附截图或说明影响页面。
 
-一个简单示例：
+示例：
 
 ```md
 ## 改动
@@ -145,9 +346,9 @@ PR 描述里尽量写清楚：
 - 新增 CONTRIBUTING.md
 - 新增 Git 工作流说明
 
-## 测试
+## 验证
 
-- 文档修改，无需运行构建
+- 文档修改，未运行构建
 
 ## 注意事项
 
@@ -155,27 +356,34 @@ PR 描述里尽量写清楚：
 - 不涉及环境变量
 ```
 
-## 修改数据库时要格外小心
+## 高风险改动
 
-这个项目的比赛、报名、赛果、ELO 和用户数据都依赖数据库。数据库相关改动需要更谨慎。
+涉及以下内容的 PR 应在说明中明确标注影响范围和验证方式：
 
-涉及以下文件时，请在 PR 里特别说明：
+* 数据库模型或迁移。
+* 认证、权限、登录态、CSRF。
+* 比赛报名、退赛、分组、赛果、ELO。
+* 管理员后台和批量操作。
+* 部署配置、环境变量、构建配置。
 
-- `prisma/schema.prisma`
-- `prisma/migrations/`
-- `src/lib/prisma.ts`
-- 任何会创建、修改、删除比赛或用户数据的 Server Action
+涉及以下文件时应特别说明：
 
-不要在生产环境直接试命令。迁移和部署流程请以维护者确认的方式执行。
+* `prisma/schema.prisma`
+* `prisma/migrations/`
+* `src/lib/prisma.ts`
+* 任何会创建、修改、删除比赛或用户数据的 Server Action
 
-## Review 时怎么沟通
+生产环境数据库迁移必须由维护者确认后执行，不得直接在生产环境试验命令。
 
-Review 的目标是让项目更稳定，不是挑错或否定别人。
+## Review 沟通规范
 
-提建议时尽量具体，例如：
+Review 应聚焦改动本身，包括正确性、可维护性、安全性和用户影响。
 
-- “这里是否需要处理未登录用户？”
-- “这个按钮在手机屏幕上可能会换行，可以测一下移动端。”
-- “这里改了 schema，PR 里可以补充 migration 说明。”
+提出意见时应尽量具体，例如：
 
-收到建议时也不用紧张。可以直接修改，也可以解释自己的想法。协作时把问题说清楚，比一次写对更重要。
+* “这里是否需要处理未登录用户？”
+* “这个按钮在手机屏幕上可能会换行，需要验证移动端。”
+* “这里改了 schema，PR 说明中需要补充 migration 影响。”
+
+收到 Review 意见后，应通过修改代码、补充说明或解释原因来回应。无法立即处理的问题应在 PR 中记录后续安排。
+
