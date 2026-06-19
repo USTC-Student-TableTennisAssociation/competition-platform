@@ -71,12 +71,13 @@ npm run dev
 
 ## 文档导航
 
-- [功能说明](docs/01-功能说明.md)
-- [社团使用场景](docs/02-社团使用场景.md)
-- [项目结构](docs/03-项目结构.md)
-- [技术架构](docs/04-技术架构.md)
-- [数据库与数据模型](docs/05-数据库与数据模型.md)
-- [部署说明](docs/06-部署说明.md)
-- [运维说明](docs/07-运维说明.md)
-- [权限与安全](docs/08-权限与安全.md)
-- [对外参考说明](docs/09-对外参考说明.md)
+- [完整文档目录](docs/README.md)
+- [功能说明](docs/product/01-功能说明.md)
+- [社团使用场景](docs/product/02-社团使用场景.md)
+- [项目结构](docs/engineering/01-项目结构.md)
+- [技术架构](docs/engineering/02-技术架构.md)
+- [数据库与数据模型](docs/engineering/03-数据库与数据模型.md)
+- [部署说明](docs/operations/01-部署说明.md)
+- [运维说明](docs/operations/02-运维说明.md)
+- [权限与安全](docs/engineering/04-权限与安全.md)
+- [对外参考说明](docs/product/03-对外参考说明.md)
