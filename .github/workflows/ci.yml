@@ -71,3 +71,43 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Prepare production release
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Never ship build-machine environment files.
+          rm -f .next/standalone/.env
+
+          # Next standalone does not copy these automatically.
+          rm -rf .next/standalone/public
+          rm -rf .next/standalone/.next/static
+          rm -rf .next/standalone/assets
+
+          cp -R public .next/standalone/public
+
+          mkdir -p .next/standalone/.next
+          cp -R .next/static .next/standalone/.next/static
+
+          cp -R assets .next/standalone/assets
+
+          # Basic release integrity checks.
+          test -f .next/standalone/server.js
+          test -f .next/standalone/assets/fonts/NotoSansSC-Regular.ttf
+          test ! -e .next/standalone/.env
+
+          tar \
+            -C .next/standalone \
+            -czf "release-${GITHUB_SHA}.tar.gz" \
+            .
+
+      - name: Upload production release
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-release-${{ github.sha }}
+          path: release-${{ github.sha }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7
