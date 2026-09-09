@@ -1,67 +1,16 @@
-import {
-  MatchStatus,
-  MatchType,
-  Prisma,
-  TeamRegistrationStatus,
-} from '@prisma/client'
-import { isMatchAllResultsFinished } from '@/lib/match-status'
-import { refundRegistrationRewardPoints } from '@/lib/server/match/rewards'
-import { removeCompetitorsFromGroupingPayload } from '@/lib/server/match/grouping-payload'
-
-type AuditContext = {
-  ip?: string | null
-  userAgent?: string | null
-}
+import { type Prisma } from '@prisma/client'
+import { lockUsersForUpdate } from '../user/lock-users'
+import { lockMatchForEngine } from './engine-guard'
 
 export type RemoveUserFromMatchResult = {
   matchId: string
   matchTitle: string
   removed: boolean
   removedUserIds: string[]
-  dissolvedTeamId: string | null
+  dissolvedTeamId: null
 }
 
-async function updateFinishedStatus(tx: Prisma.TransactionClient, matchId: string) {
-  const match = await tx.match.findUnique({
-    where: { id: matchId },
-    select: {
-      id: true,
-      type: true,
-      status: true,
-      format: true,
-      groupingGeneratedAt: true,
-      groupingResult: { select: { payload: true } },
-      results: {
-        select: {
-          winnerTeamIds: true,
-          loserTeamIds: true,
-          winnerMatchTeamId: true,
-          loserMatchTeamId: true,
-          confirmed: true,
-          score: true,
-          createdAt: true,
-          resultVerifiedAt: true,
-        },
-      },
-    },
-  })
-
-  if (!match || match.status === MatchStatus.finished) return
-  if (
-    isMatchAllResultsFinished({
-      format: match.format,
-      groupingGeneratedAt: match.groupingGeneratedAt,
-      groupingResult: match.groupingResult,
-      results: match.results,
-    })
-  ) {
-    await tx.match.update({
-      where: { id: match.id },
-      data: { status: MatchStatus.finished },
-    })
-  }
-}
-
+/** Account-ban cleanup for independent quick matches. Formal history is read-only. */
 export async function removeUserFromMatch(
   tx: Prisma.TransactionClient,
   params: {
@@ -69,183 +18,30 @@ export async function removeUserFromMatch(
     userId: string
     actorId: string
     reason: 'manager' | 'user_banned'
-    auditContext?: AuditContext
+    auditContext?: { ip?: string | null; userAgent?: string | null }
   },
 ): Promise<RemoveUserFromMatchResult> {
   const { matchId, userId, actorId, reason, auditContext } = params
-  const match = await tx.match.findUnique({
+  await lockMatchForEngine(tx, { matchId, expectedEngine: 'LEGACY', expectedQuickMatch: true })
+  const match = await tx.match.findUniqueOrThrow({
     where: { id: matchId },
-    select: {
-      id: true,
-      title: true,
-      type: true,
-      status: true,
-      teamMinMembers: true,
-      groupingResult: { select: { payload: true } },
-      registrations: { where: { userId }, select: { id: true } },
-    },
+    select: { title: true, status: true, createdBy: true },
   })
-
-  if (!match) throw new Error('比赛不存在。')
-  if (match.status === MatchStatus.finished) {
-    throw new Error('已结束比赛的历史参赛数据不可移除。')
+  if (match.status === 'finished') throw new Error('已结束比赛的历史参赛数据不可移除。')
+  await lockUsersForUpdate(tx, [actorId, userId])
+  const actor = await tx.user.findUnique({ where: { id: actorId }, select: { role: true, isBanned: true, emailVerifiedAt: true } })
+  if (!actor || actor.isBanned || !actor.emailVerifiedAt || (actor.role !== 'admin' && (reason === 'user_banned' || match.createdBy !== actorId))) {
+    throw new Error('无权处理该快速约球。')
   }
-
-  const removedUserIds = new Set<string>()
-  const removedGroupingCompetitorIds = new Set<string>()
-  let dissolvedTeamId: string | null = null
-  let removed = match.registrations.length > 0
-
-  if (match.type === MatchType.double) {
-    const doublesTeam = await tx.matchDoublesTeam.findFirst({
-      where: { matchId, members: { some: { userId } } },
-      select: {
-        id: true,
-        registeredAt: true,
-        members: { select: { userId: true } },
-      },
-    })
-
-    if (doublesTeam) {
-      dissolvedTeamId = doublesTeam.id
-      removed = true
-      doublesTeam.members.forEach((member) => removedUserIds.add(member.userId))
-      await tx.matchDoublesInvite.updateMany({
-        where: {
-          matchId,
-          status: 'pending',
-          OR: [
-            { inviterId: { in: [...removedUserIds] } },
-            { inviteeId: { in: [...removedUserIds] } },
-          ],
-        },
-        data: { status: 'voided', updatedAt: new Date() },
-      })
-      await tx.matchDoublesTeam.delete({ where: { id: doublesTeam.id } })
-    }
+  const reports = await tx.matchResult.deleteMany({ where: { matchId, confirmed: false, OR: [{ winnerTeamIds: { has: userId } }, { loserTeamIds: { has: userId } }] } })
+  const registrations = await tx.registration.deleteMany({ where: { matchId, userId } })
+  const removed = reports.count > 0 || registrations.count > 0
+  if (removed) {
+    await tx.auditLog.create({ data: {
+      actorId, action: 'quick_match.participant.remove', entityType: 'Match', entityId: matchId,
+      ip: auditContext?.ip ?? null, userAgent: auditContext?.userAgent ?? null,
+      details: { matchId, userId, reason, targetLabel: match.title },
+    } })
   }
-
-  if (match.type === MatchType.team) {
-    const team = await tx.matchTeam.findFirst({
-      where: {
-        matchId,
-        OR: [{ captainId: userId }, { members: { some: { userId } } }],
-      },
-      select: {
-        id: true,
-        captainId: true,
-        members: { select: { id: true, userId: true } },
-      },
-    })
-
-    if (team) {
-      removed = true
-      removedUserIds.add(userId)
-      if (team.captainId === userId) {
-        dissolvedTeamId = team.id
-        removedGroupingCompetitorIds.add(team.id)
-        await tx.matchTeam.delete({ where: { id: team.id } })
-      } else {
-        const membership = team.members.find((member) => member.userId === userId)
-        if (membership) {
-          await tx.matchTeamMember.delete({ where: { id: membership.id } })
-        }
-        const memberCount = team.members.length - (membership ? 1 : 0)
-        const minMembers = match.teamMinMembers ?? 3
-        const status =
-          memberCount >= minMembers
-            ? TeamRegistrationStatus.approved
-            : TeamRegistrationStatus.draft
-        if (status !== TeamRegistrationStatus.approved) {
-          removedGroupingCompetitorIds.add(team.id)
-        }
-        await tx.matchTeam.update({
-          where: { id: team.id },
-          data: {
-            status,
-            submittedAt:
-              status === TeamRegistrationStatus.approved ? undefined : null,
-            reviewNote: null,
-          },
-        })
-      }
-    }
-  }
-
-  if (removedUserIds.size === 0) removedUserIds.add(userId)
-  const registrationUserIds = [...removedUserIds]
-  const registrations = await tx.registration.findMany({
-    where: { matchId, userId: { in: registrationUserIds } },
-    select: { userId: true },
-  })
-  const registeredUserIds = new Set(registrations.map((registration) => registration.userId))
-
-  await tx.matchResult.deleteMany({
-    where: {
-      matchId,
-      confirmed: false,
-      OR: [
-        { winnerTeamIds: { hasSome: registrationUserIds } },
-        { loserTeamIds: { hasSome: registrationUserIds } },
-      ],
-    },
-  })
-  await tx.registration.deleteMany({
-    where: { matchId, userId: { in: registrationUserIds } },
-  })
-
-  for (const registeredUserId of registeredUserIds) {
-    await refundRegistrationRewardPoints(tx, {
-      userId: registeredUserId,
-      matchId,
-    })
-  }
-
-  if (match.groupingResult) {
-    const groupingCompetitorIds =
-      match.type === MatchType.team
-        ? removedGroupingCompetitorIds
-        : new Set(registrationUserIds)
-    const nextPayload = removeCompetitorsFromGroupingPayload(
-      match.groupingResult.payload,
-      groupingCompetitorIds,
-    )
-    if (nextPayload) {
-      await tx.matchGrouping.update({
-        where: { matchId },
-        data: { payload: nextPayload },
-      })
-    }
-  }
-
-  if (removed || registeredUserIds.size > 0) {
-    await tx.auditLog.create({
-      data: {
-        actorId,
-        action: 'match.registration.remove',
-        entityType: 'Registration',
-        entityId: `${matchId}:${userId}`,
-        ip: auditContext?.ip ?? null,
-        userAgent: auditContext?.userAgent ?? null,
-        details: {
-          matchId,
-          userId,
-          reason,
-          targetLabel: match.title,
-          removedUserIds: registrationUserIds,
-          dissolvedTeamId,
-        },
-      },
-    })
-  }
-
-  await updateFinishedStatus(tx, matchId)
-
-  return {
-    matchId,
-    matchTitle: match.title,
-    removed: removed || registeredUserIds.size > 0,
-    removedUserIds: registrationUserIds,
-    dissolvedTeamId,
-  }
+  return { matchId, matchTitle: match.title, removed, removedUserIds: removed ? [userId] : [], dissolvedTeamId: null }
 }

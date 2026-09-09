@@ -1,11 +1,11 @@
 import { CompetitionFormat } from "@prisma/client";
-import { pairKey, resolveFilledKnockoutRounds } from "@/lib/match-detail";
+import { pairKey, resolveFilledKnockoutRounds } from "./match-detail";
 import {
   getResultCompetitorIds,
   getResultPhase,
   resolveCompetitorType,
   type CompetitorType,
-} from "@/lib/match-competitor";
+} from "./match-competitor";
 
 type GroupingPayload = {
   competitorType?: CompetitorType;

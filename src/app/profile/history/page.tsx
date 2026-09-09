@@ -3,33 +3,7 @@ import { Calendar, ChevronLeft } from "lucide-react";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-
-function formatScoreText(score: unknown) {
-  if (typeof score === "string") return score;
-  if (typeof score === "object" && score && "text" in score) {
-    return String(score.text ?? "");
-  }
-  return "";
-}
-
-function getOpponentIds(result: {
-  winnerTeamIds: string[];
-  loserTeamIds: string[];
-}, currentUserId: string) {
-  return result.winnerTeamIds.includes(currentUserId)
-    ? result.loserTeamIds
-    : result.winnerTeamIds;
-}
-
-function formatOpponentLabel(
-  opponentIds: string[],
-  nicknameById: Map<string, string>,
-) {
-  return (
-    opponentIds.map((id) => nicknameById.get(id) ?? id).join(" / ") ||
-    "未知对手"
-  );
-}
+import { getUserCompetitionHistory } from "@/modules/competitions-v2/read-model/user-competition-history";
 
 export default async function ProfileHistoryPage() {
   const currentUser = await getCurrentUser();
@@ -38,42 +12,9 @@ export default async function ProfileHistoryPage() {
     redirect("/auth");
   }
 
-  const results = await prisma.matchResult.findMany({
-    where: {
-      confirmed: true,
-      OR: [
-        { winnerTeamIds: { has: currentUser.id } },
-        { loserTeamIds: { has: currentUser.id } },
-      ],
-    },
-    include: {
-      match: {
-        select: {
-          id: true,
-          title: true,
-          dateTime: true,
-        },
-      },
-    },
-    orderBy: [{ resultVerifiedAt: "desc" }, { createdAt: "desc" }],
+  const results = await getUserCompetitionHistory(prisma, currentUser.id, {
+    legacyOrder: "verifiedAt",
   });
-  const opponentIds = Array.from(
-    new Set(
-      results.flatMap((item) =>
-        getOpponentIds(item, currentUser.id),
-      ),
-    ),
-  );
-  const opponentRows =
-    opponentIds.length > 0
-      ? await prisma.user.findMany({
-          where: { id: { in: opponentIds } },
-          select: { id: true, nickname: true },
-        })
-      : [];
-  const opponentNicknameById = new Map(
-    opponentRows.map((user) => [user.id, user.nickname] as const),
-  );
 
   return (
     <div className="mx-auto max-w-6xl space-y-5">
@@ -109,36 +50,29 @@ export default async function ProfileHistoryPage() {
             </p>
           ) : (
             results.map((item) => {
-              const isWin = item.winnerTeamIds.includes(currentUser.id);
-              const scoreText = formatScoreText(item.score);
-              const opponentLabel = formatOpponentLabel(
-                getOpponentIds(item, currentUser.id),
-                opponentNicknameById,
-              );
-
               return (
                 <Link
                   key={item.id}
-                  href={`/matchs/${item.match.id}`}
+                  href={`/matchs/${item.matchId}`}
                   className="grid gap-3 px-4 py-3 text-sm transition hover:bg-white/[0.025] sm:grid-cols-[minmax(220px,1.4fr)_minmax(120px,0.8fr)_150px_140px_90px_110px] sm:items-center"
                 >
                   <div className="min-w-0">
                     <p className="truncate font-semibold text-slate-100">
-                      {item.match.title}
+                      {item.matchTitle}
                     </p>
                   </div>
                   <span className="min-w-0 truncate text-sky-300/90">
-                    vs {opponentLabel}
+                    vs {item.opponentLabel}
                   </span>
                   <span className="font-mono text-sm font-semibold tabular-nums text-slate-100">
-                    {scoreText || "-"}
+                    {item.scoreText || "-"}
                   </span>
                   <span className="inline-flex items-center gap-1 text-xs text-sky-300/85">
                     <Calendar className="h-3.5 w-3.5" />
-                    {item.match.dateTime.toLocaleDateString("zh-CN")}
+                    {item.matchDateTime.toLocaleDateString("zh-CN")}
                   </span>
-                  <span className={isWin ? "font-semibold text-emerald-300" : "font-semibold text-rose-300"}>
-                    {isWin ? "胜" : "负"}
+                  <span className={item.isWin ? "font-semibold text-emerald-300" : "font-semibold text-rose-300"}>
+                    {item.isWin ? "胜" : "负"}
                   </span>
                   <span className="text-xs font-semibold text-orange-200 sm:text-right">
                     查看详情

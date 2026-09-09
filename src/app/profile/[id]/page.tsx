@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { toClubId } from "@/lib/club-id";
 import BackLinkButton from "@/components/navigation/BackLinkButton";
 import ProfileOverview from "@/components/auth/ProfileOverview";
+import { getTermRegistrationCount } from "@/modules/competitions-v2/read-model/user-competition-history";
 
 function getCurrentTermStart() {
   const now = new Date();
@@ -81,13 +82,7 @@ export default async function PublicProfilePage({
         ],
       },
     }),
-    prisma.registration.count({
-      where: {
-        userId: user.id,
-        createdAt: { gte: termStart },
-        match: { isQuickMatch: false },
-      },
-    }),
+    getTermRegistrationCount(prisma, user.id, termStart),
   ]);
 
   return (

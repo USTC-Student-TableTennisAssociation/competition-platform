@@ -16,7 +16,7 @@ export const metadata: Metadata = {
     follow: false,
   },
   icons: {
-    icon: "/SVG/乒协徽章.svg",
+    icon: "/SVG/tta-badge.svg",
   },
 };
 

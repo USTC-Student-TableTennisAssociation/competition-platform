@@ -4,6 +4,7 @@
 
 ## 产品与使用场景
 
+- [重构后的比赛规则（2026-09-07）](product/04-rebuild-contract.md)
 - [功能说明](product/01-功能说明.md)
 - [社团使用场景](product/02-社团使用场景.md)
 - [对外参考说明](product/03-对外参考说明.md)
@@ -14,8 +15,11 @@
 - [技术架构](engineering/02-技术架构.md)
 - [数据库与数据模型](engineering/03-数据库与数据模型.md)
 - [权限与安全](engineering/04-权限与安全.md)
+- [V2 比赛内核与迁移约束](engineering/05-v2-competition-core.md)
 
 ## 部署与运维
+
+- [本地 PostgreSQL 开发环境](operations/03-local-postgres.md)
 
 - [部署说明](operations/01-部署说明.md)
 - [运维说明](operations/02-运维说明.md)

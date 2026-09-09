@@ -467,9 +467,20 @@ export default function AdminDashboardClient() {
               >
                 <option value="">请选择比赛</option>
                 {state.matches.map((match) => (
-                  <option key={match.id} value={match.id}>
+                  <option
+                    key={match.id}
+                    value={match.id}
+                    disabled={!match.canBulkRegister}
+                  >
                     {match.title}（已报名 {match.currentParticipants}{" "}
-                    {match.type === "team" ? "队" : "人"}）
+                    {match.participantUnit === "teams"
+                      ? "队"
+                      : match.participantUnit === "pairs"
+                        ? "组"
+                        : "人"}）
+                    {!match.canBulkRegister && match.bulkRegisterDisabledReason
+                      ? ` — ${match.bulkRegisterDisabledReason}`
+                      : ""}
                   </option>
                 ))}
               </select>

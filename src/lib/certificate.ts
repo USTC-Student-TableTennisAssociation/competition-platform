@@ -1,6 +1,11 @@
-import { randomBytes } from "node:crypto";
 import { buildGroupStandings, resolveFilledKnockoutRounds, type GroupingPayload } from "@/lib/match-detail";
-import { hashPassword, verifyPassword } from "@/lib/password";
+
+export {
+  generateCertificateNumber,
+  hashIdentityValue,
+  normalizeIdentityInput,
+  verifyIdentityValue,
+} from "./certificate-identity";
 
 export type CertificateEligibility = {
   eligible: boolean;
@@ -29,28 +34,6 @@ type CertificateMatch = {
   }>;
   results: MatchResultLite[];
 };
-
-export function normalizeIdentityInput(value: string) {
-  return value.replace(/\s+/g, " ").trim();
-}
-
-export function hashIdentityValue(value: string) {
-  return hashPassword(value);
-}
-
-export function verifyIdentityValue(value: string, storedHash: string) {
-  return verifyPassword(value, storedHash).ok;
-}
-
-function formatDatePart(value: number) {
-  return String(value).padStart(2, "0");
-}
-
-export function generateCertificateNumber(now = new Date()) {
-  const datePart = `${now.getFullYear()}${formatDatePart(now.getMonth() + 1)}${formatDatePart(now.getDate())}`;
-  const randomPart = randomBytes(3).toString("hex").toUpperCase();
-  return `PPC-${datePart}-${randomPart}`;
-}
 
 function resultIncludesUser(result: MatchResultLite, userId: string) {
   return result.winnerTeamIds.includes(userId) || result.loserTeamIds.includes(userId);

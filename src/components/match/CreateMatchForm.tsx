@@ -6,7 +6,21 @@ import { VENUE_OPTIONS } from "@/lib/locations";
 
 const initialState: MatchFormState = {};
 
-export default function CreateMatchForm() {
+export default function CreateMatchForm({
+  v2SingleGroupOnlyCreationRequestKey,
+  v2SingleGroupThenKnockoutCreationRequestKey,
+  v2DoubleGroupOnlyCreationRequestKey,
+  v2DoubleGroupThenKnockoutCreationRequestKey,
+  v2TeamGroupOnlyCreationRequestKey,
+  v2TeamGroupThenKnockoutCreationRequestKey,
+}: Readonly<{
+  v2SingleGroupOnlyCreationRequestKey: string | null;
+  v2SingleGroupThenKnockoutCreationRequestKey: string | null;
+  v2DoubleGroupOnlyCreationRequestKey: string | null;
+  v2DoubleGroupThenKnockoutCreationRequestKey: string | null;
+  v2TeamGroupOnlyCreationRequestKey: string | null;
+  v2TeamGroupThenKnockoutCreationRequestKey: string | null;
+}>) {
   const [state, formAction, pending] = useActionState(
     createMatchAction,
     initialState,
@@ -17,6 +31,24 @@ export default function CreateMatchForm() {
   const [matchFormat, setMatchFormat] = useState<
     "group_only" | "group_then_knockout"
   >("group_only");
+  const [stableV2SingleCreationRequestKey] = useState(
+    () => v2SingleGroupOnlyCreationRequestKey,
+  );
+  const [stableV2SingleGroupThenKnockoutCreationRequestKey] = useState(
+    () => v2SingleGroupThenKnockoutCreationRequestKey,
+  );
+  const [stableV2DoubleCreationRequestKey] = useState(
+    () => v2DoubleGroupOnlyCreationRequestKey,
+  );
+  const [stableV2DoubleGroupThenKnockoutCreationRequestKey] = useState(
+    () => v2DoubleGroupThenKnockoutCreationRequestKey,
+  );
+  const [stableV2TeamCreationRequestKey] = useState(
+    () => v2TeamGroupOnlyCreationRequestKey,
+  );
+  const [stableV2TeamGroupThenKnockoutCreationRequestKey] = useState(
+    () => v2TeamGroupThenKnockoutCreationRequestKey,
+  );
 
   // Native date/time inputs: yyyy-MM-dd / HH:mm
   const [matchDate, setMatchDate] = useState("");
@@ -25,8 +57,6 @@ export default function CreateMatchForm() {
   const [deadlineTime, setDeadlineTime] = useState("17:00");
   const [teamStartDate, setTeamStartDate] = useState("");
   const [teamStartTime, setTeamStartTime] = useState("09:00");
-  const [teamDeadlineDate, setTeamDeadlineDate] = useState("");
-  const [teamDeadlineTime, setTeamDeadlineTime] = useState("17:00");
   const [teamMinMembers, setTeamMinMembers] = useState(3);
   const [teamMaxMembers, setTeamMaxMembers] = useState(6);
   const timezoneOffsetInputRef = useRef<HTMLInputElement | null>(null);
@@ -75,10 +105,12 @@ export default function CreateMatchForm() {
     ? `${deadlineDate}T${deadlineTime}`
     : "";
   const teamRegistrationStartValue =
-    teamStartDate && teamStartTime ? `${teamStartDate}T${teamStartTime}` : "";
+    matchType === "team" && teamStartDate && teamStartTime
+      ? `${teamStartDate}T${teamStartTime}`
+      : "";
   const teamRegistrationDeadlineValue =
-    teamDeadlineDate && teamDeadlineTime
-      ? `${teamDeadlineDate}T${teamDeadlineTime}`
+    matchType === "team"
+      ? registrationDeadlineValue
       : "";
 
   const teamWindowInvalid =
@@ -94,8 +126,29 @@ export default function CreateMatchForm() {
       teamMaxMembers < teamMinMembers ||
       teamMaxMembers > 50);
 
+  const v2CreationRequestKey =
+    matchFormat === "group_only"
+      ? matchType === "single"
+        ? stableV2SingleCreationRequestKey
+        : matchType === "double"
+          ? stableV2DoubleCreationRequestKey
+          : stableV2TeamCreationRequestKey
+      : matchType === "single"
+        ? stableV2SingleGroupThenKnockoutCreationRequestKey
+        : matchType === "double"
+          ? stableV2DoubleGroupThenKnockoutCreationRequestKey
+          : stableV2TeamGroupThenKnockoutCreationRequestKey;
+  const submitsV2CreationRequestKey = v2CreationRequestKey !== null;
+
   return (
     <form action={formAction} className="space-y-8">
+      {v2CreationRequestKey ? (
+        <input
+          type="hidden"
+          name="creationRequestKey"
+          value={v2CreationRequestKey}
+        />
+      ) : null}
       {/* ===== 基础信息 ===== */}
       <section className="surface-card rounded-3xl p-5">
         <h2 className="mb-4 text-sm font-black tracking-wide text-teal-100">
@@ -158,7 +211,7 @@ export default function CreateMatchForm() {
       {/* ===== 时间设置 ===== */}
       <section className="surface-card rounded-3xl p-5">
         <h2 className="mb-4 text-sm font-black tracking-wide text-teal-100">
-          时间设置
+          {submitsV2CreationRequestKey ? "时间设置（北京时间）" : "时间设置"}
         </h2>
 
         {/* Hidden fields for server */}
@@ -295,6 +348,18 @@ export default function CreateMatchForm() {
             </select>
           </div>
         </div>
+        {matchType !== "team" ? (
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            {[{ name: "groupBestOf", label: "小组赛局制" }, ...(matchFormat === "group_then_knockout" ? [{ name: "knockoutBestOf", label: "淘汰赛局制" }] : [])].map(field => (
+              <label key={field.name} className="space-y-2 text-sm text-slate-300">
+                <span>{field.label}</span>
+                <select name={field.name} defaultValue="5" className="input-dark w-full rounded-2xl px-4 py-2">
+                  <option value="3">三局两胜</option><option value="5">五局三胜</option><option value="7">七局四胜</option>
+                </select>
+              </label>
+            ))}
+          </div>
+        ) : <p className="mt-4 text-sm text-slate-400">团体赛录入队伍总比分，按每场名单整队结算。</p>}
         <div className="mt-4 rounded-2xl bg-teal-400/8 px-3 py-2 text-xs leading-5 text-teal-100 ring-1 ring-teal-300/12">
           {formatTips}
         </div>
@@ -373,31 +438,7 @@ export default function CreateMatchForm() {
               </div>
             </div>
 
-            <div className="rounded-3xl bg-slate-950/36 p-4 ring-1 ring-white/8">
-              <p className="mb-3 text-sm font-medium text-slate-200">
-                团体报名截止时间 *
-              </p>
-              <div className="space-y-3">
-                <input
-                  type="date"
-                  aria-label="团体报名截止日期"
-                  required
-                  value={teamDeadlineDate}
-                  max={matchDate || undefined}
-                  onChange={(e) => setTeamDeadlineDate(e.target.value)}
-                  className="native-picker native-picker-date input-dark h-10 w-full rounded-2xl px-3 text-sm text-slate-100 accent-teal-500"
-                />
-                <input
-                  type="time"
-                  aria-label="团体报名截止时间"
-                  required
-                  value={teamDeadlineTime}
-                  step={1800}
-                  onChange={(e) => setTeamDeadlineTime(e.target.value)}
-                  className="native-picker native-picker-time input-dark h-10 w-full rounded-2xl px-3 text-sm text-slate-100 accent-teal-500"
-                />
-              </div>
-            </div>
+
           </div>
 
           {teamWindowInvalid ? (

@@ -4,7 +4,7 @@ import {
   getResultPhase,
   resolveCompetitorType,
   type CompetitorType,
-} from "@/lib/match-competitor";
+} from "./match-competitor";
 
 export type KnockoutRound = {
   name: string;

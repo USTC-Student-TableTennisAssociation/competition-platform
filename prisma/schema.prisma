@@ -30,6 +30,93 @@ enum CompetitionFormat {
   group_then_knockout
 }
 
+enum MatchEngineVersion {
+  LEGACY
+  V2
+}
+
+enum MatchEntryKind {
+  INDIVIDUAL
+  DOUBLES
+  TEAM
+}
+
+enum MatchEntryStatus {
+  DRAFT
+  ACTIVE
+  WITHDRAWN
+  DISQUALIFIED
+  ARCHIVED
+}
+
+enum MatchEntryMemberStatus {
+  ACTIVE
+  WITHDRAWN
+  REMOVED
+  DISQUALIFIED
+  SUPERSEDED
+}
+
+enum MatchGroupingSeedMethod {
+  MIN_DIFF
+  SNAKE
+}
+
+enum MatchFixtureStage {
+  GROUP
+  KNOCKOUT
+  FREE_PLAY
+}
+
+enum MatchFixtureStatus {
+  SCHEDULED
+  READY
+  COMPLETED
+  VOIDED
+}
+
+enum MatchFixtureSide {
+  SIDE_A
+  SIDE_B
+}
+
+enum MatchFixtureOutcome {
+  WINNER
+  LOSER
+}
+
+enum ResultRevisionStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+  VOIDED
+  SUPERSEDED
+}
+
+enum ResultResolutionKind {
+  PLAYED
+  FORFEIT
+}
+
+enum MatchFixtureAdministrativeResolutionKind {
+  NO_CONTEST
+  ADMIN_BYE
+}
+
+enum SettlementEventKind {
+  RESULT_APPLY
+  RESULT_REVERSAL
+  REGISTRATION_APPLY
+  REGISTRATION_REVERSAL
+}
+
+enum SettlementEventStatus {
+  PENDING
+  APPLIED
+  REVERSED
+  FAILED
+}
+
 enum RegistrationRole {
   player
   captain
@@ -126,20 +213,26 @@ model User {
 
   verificationTokens EmailVerificationToken[]
 
-  adminTrustedDevices AdminTrustedDevice[]
-  identity            UserIdentity?
-  certificates        ParticipationCertificate[]
-  doublesTeamsCreated MatchDoublesTeam[]    @relation("DoublesTeamCreator")
-  doublesTeamMembers  MatchDoublesTeamMember[]
-  doublesInvitesSent  MatchDoublesInvite[]  @relation("DoublesInviteInviter")
-  doublesInvitesReceived MatchDoublesInvite[] @relation("DoublesInviteInvitee")
-  createdMatchPosts   MatchPost[]           @relation("MatchPostCreator")
-  matchedMatchPosts   MatchPost[]           @relation("MatchPostMatchedUser")
-  matchApplications   MatchApplication[]    @relation("MatchApplicationApplicant")
-  captainedMatchTeams  MatchTeam[]           @relation("MatchTeamCaptain")
-  reviewedMatchTeams   MatchTeam[]           @relation("MatchTeamReviewer")
-  matchTeamMembers     MatchTeamMember[]
-  notificationOutbox  NotificationOutbox[]
+  adminTrustedDevices              AdminTrustedDevice[]
+  identity                         UserIdentity?
+  certificates                     ParticipationCertificate[]
+  doublesTeamsCreated              MatchDoublesTeam[]                     @relation("DoublesTeamCreator")
+  doublesTeamMembers               MatchDoublesTeamMember[]
+  doublesInvitesSent               MatchDoublesInvite[]                   @relation("DoublesInviteInviter")
+  doublesInvitesReceived           MatchDoublesInvite[]                   @relation("DoublesInviteInvitee")
+  createdMatchPosts                MatchPost[]                            @relation("MatchPostCreator")
+  matchedMatchPosts                MatchPost[]                            @relation("MatchPostMatchedUser")
+  matchApplications                MatchApplication[]                     @relation("MatchApplicationApplicant")
+  captainedMatchTeams              MatchTeam[]                            @relation("MatchTeamCaptain")
+  reviewedMatchTeams               MatchTeam[]                            @relation("MatchTeamReviewer")
+  matchTeamMembers                 MatchTeamMember[]
+  notificationOutbox               NotificationOutbox[]
+  matchEntryMembers                MatchEntryMember[]
+  sourcedMatchEntries              MatchEntry[]                           @relation("MatchEntrySourceUser")
+  resultRevisionsReported          ResultRevision[]                       @relation("ResultRevisionReporter")
+  resultRevisionsVerified          ResultRevision[]                       @relation("ResultRevisionVerifier")
+  fixtureAdministrativeResolutions MatchFixtureAdministrativeResolution[] @relation("FixtureAdministrativeResolver")
+  settlementEffects                SettlementEffect[]
 }
 
 model AdminTrustedDevice {
@@ -163,79 +256,389 @@ model SiteSetting {
 }
 
 model Match {
-  id                   String            @id @default(cuid())
-  title                String
-  description          String?
-  dateTime             DateTime
-  location             String?
-  isQuickMatch         Boolean           @default(false)
-  type                 MatchType
-  status               MatchStatus       @default(registration)
-  maxParticipants      Int
-  createdBy            String
-  rule                 Json?
-  format               CompetitionFormat @default(group_only)
-  registrationDeadline DateTime
-  groupingGeneratedAt  DateTime?
-  teamRegistrationStart DateTime?
-  teamRegistrationDeadline DateTime?
-  teamMinMembers       Int?
-  teamMaxMembers       Int?
-  createdAt            DateTime          @default(now())
-  updatedAt            DateTime          @updatedAt
+  id                         String             @id @default(cuid())
+  title                      String
+  description                String?
+  dateTime                   DateTime
+  location                   String?
+  isQuickMatch               Boolean            @default(false)
+  type                       MatchType
+  status                     MatchStatus        @default(registration)
+  engineVersion              MatchEngineVersion @default(LEGACY) @map("engine_version")
+  creationRequestKey         String?            @map("creation_request_key")
+  creationRequestFingerprint String?            @map("creation_request_fingerprint")
+  maxParticipants            Int
+  createdBy                  String
+  rule                       Json?
+  format                     CompetitionFormat  @default(group_only)
+  groupBestOf                Int                @default(5) @map("group_best_of")
+  knockoutBestOf             Int                @default(5) @map("knockout_best_of")
+  registrationDeadline       DateTime
+  groupingGeneratedAt        DateTime?
+  teamRegistrationStart      DateTime?
+  teamRegistrationDeadline   DateTime?
+  teamMinMembers             Int?
+  teamMaxMembers             Int?
+  createdAt                  DateTime           @default(now())
+  updatedAt                  DateTime           @updatedAt
 
-  creator        User                       @relation("MatchCreator", fields: [createdBy], references: [id], onDelete: Cascade)
-  registrations  Registration[]
-  results        MatchResult[]
-  eloHistory     EloHistory[]
-  reviews        Review[]
-  groupingResult MatchGrouping?
-  certificates   ParticipationCertificate[]
-  doublesTeams   MatchDoublesTeam[]
-  doublesTeamMembers MatchDoublesTeamMember[]
-  doublesInvites MatchDoublesInvite[]
-  teamRegistrations MatchTeam[]
-  teamMembers MatchTeamMember[]
+  creator                          User                                   @relation("MatchCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+  registrations                    Registration[]
+  results                          MatchResult[]
+  eloHistory                       EloHistory[]
+  reviews                          Review[]
+  groupingResult                   MatchGrouping?
+  certificates                     ParticipationCertificate[]
+  doublesTeams                     MatchDoublesTeam[]
+  doublesTeamMembers               MatchDoublesTeamMember[]
+  doublesInvites                   MatchDoublesInvite[]
+  teamRegistrations                MatchTeam[]
+  teamMembers                      MatchTeamMember[]
+  entries                          MatchEntry[]
+  fixtures                         MatchFixture[]
+  matchEntryMembers                MatchEntryMember[]
+  matchGroups                      MatchGroup[]
+  matchGroupEntries                MatchGroupEntry[]
+  qualificationSnapshots           MatchQualificationSnapshot[]
+  qualificationStandings           MatchQualificationStanding[]
+  fixtureAdministrativeResolutions MatchFixtureAdministrativeResolution[]
 
+  @@unique([createdBy, creationRequestKey], map: "match_creator_creation_request_key_unique")
   @@index([isQuickMatch])
 }
 
+/// A stable competitor identity within one match. `sourceKey` is an immutable
+/// typed snapshot (`individual:`, `doubles:`, or `team:`); typed source relations
+/// may become null without rewriting that key or the display-name snapshot.
+model MatchEntry {
+  id                  String           @id @default(cuid())
+  matchId             String           @map("match_id")
+  kind                MatchEntryKind
+  status              MatchEntryStatus @default(DRAFT)
+  sourceKey           String           @map("source_key")
+  sourceUserId        String?          @map("source_user_id")
+  sourceDoublesTeamId String?          @map("source_doubles_team_id")
+  sourceMatchTeamId   String?          @map("source_match_team_id")
+  displayNameSnapshot String           @map("display_name_snapshot")
+  seed                Int?
+  withdrawnAt         DateTime?        @map("withdrawn_at")
+  disqualifiedAt      DateTime?        @map("disqualified_at")
+  archivedAt          DateTime?        @map("archived_at")
+  version             Int              @default(0)
+  metadata            Json?
+  createdAt           DateTime         @default(now()) @map("created_at")
+  updatedAt           DateTime         @updatedAt @map("updated_at")
+
+  match                      Match                                  @relation(fields: [matchId], references: [id], onDelete: Restrict, map: "match_entry_match_id_fkey")
+  sourceUser                 User?                                  @relation("MatchEntrySourceUser", fields: [sourceUserId], references: [id], onDelete: SetNull, map: "match_entry_source_user_id_fkey")
+  sourceDoublesTeam          MatchDoublesTeam?                      @relation(fields: [sourceDoublesTeamId, matchId], references: [id, matchId], onDelete: Restrict, map: "match_entry_source_doubles_team_id_fkey")
+  sourceMatchTeam            MatchTeam?                             @relation(fields: [sourceMatchTeamId, matchId], references: [id, matchId], onDelete: Restrict, map: "match_entry_source_match_team_id_fkey")
+  members                    MatchEntryMember[]
+  fixturesAsSideA            MatchFixture[]                         @relation("MatchFixtureSideA")
+  fixturesAsSideB            MatchFixture[]                         @relation("MatchFixtureSideB")
+  winningRevisions           ResultRevision[]                       @relation("ResultRevisionWinner")
+  losingRevisions            ResultRevision[]                       @relation("ResultRevisionLoser")
+  fixtureLineups             MatchFixtureLineupMember[]
+  settlementEvents           SettlementEvent[]
+  groupEntries               MatchGroupEntry[]
+  qualificationStandings     MatchQualificationStanding[]
+  administrativeAdvancements MatchFixtureAdministrativeResolution[] @relation("FixtureAdministrativeAdvancingEntry")
+
+  @@unique([id, matchId], map: "match_entry_id_match_id_key")
+  @@unique([matchId, sourceKey], map: "match_entry_match_id_source_key_key")
+  @@unique([matchId, sourceUserId], map: "match_entry_match_source_user_key")
+  @@unique([matchId, sourceDoublesTeamId], map: "match_entry_match_source_doubles_key")
+  @@unique([matchId, sourceMatchTeamId], map: "match_entry_match_source_team_key")
+  @@index([matchId, status], map: "match_entry_match_id_status_idx")
+  @@index([sourceUserId], map: "match_entry_source_user_id_idx")
+  @@index([sourceDoublesTeamId], map: "match_entry_source_doubles_team_id_idx")
+  @@index([sourceMatchTeamId], map: "match_entry_source_match_team_id_idx")
+  @@map("match_entry")
+}
+
+/// A versioned roster snapshot. Membership rows are never rewritten to make a
+/// later roster look as if it participated in an earlier fixture. The migration
+/// also prevents one user from having two simultaneously active Entries in a Match.
+model MatchEntryMember {
+  id                  String                 @id @default(cuid())
+  matchId             String                 @map("match_id")
+  entryId             String                 @map("entry_id")
+  userId              String                 @map("user_id")
+  displayNameSnapshot String                 @map("display_name_snapshot")
+  role                RegistrationRole       @default(player)
+  status              MatchEntryMemberStatus @default(ACTIVE)
+  slot                Int
+  rosterVersion       Int                    @default(1) @map("roster_version")
+  effectiveFrom       DateTime               @default(now()) @map("effective_from")
+  effectiveUntil      DateTime?              @map("effective_until")
+  endReason           String?                @map("end_reason")
+  createdAt           DateTime               @default(now()) @map("created_at")
+
+  match          Match                      @relation(fields: [matchId], references: [id], onDelete: Restrict, map: "match_entry_member_match_id_fkey")
+  entry          MatchEntry                 @relation(fields: [entryId, matchId], references: [id, matchId], onDelete: Restrict, map: "match_entry_member_entry_match_fkey")
+  user           User                       @relation(fields: [userId], references: [id], onDelete: Restrict, map: "match_entry_member_user_id_fkey")
+  fixtureLineups MatchFixtureLineupMember[]
+
+  @@unique([id, entryId, matchId], map: "match_entry_member_identity_key")
+  @@unique([entryId, rosterVersion, slot], map: "match_entry_member_roster_slot_key")
+  @@unique([entryId, rosterVersion, userId], map: "match_entry_member_roster_user_key")
+  @@index([matchId, userId], map: "match_entry_member_match_user_idx")
+  @@index([userId], map: "match_entry_member_user_id_idx")
+  @@map("match_entry_member")
+}
+
+/// A stable, addressable match-up. For knockout fixtures the entries may remain
+/// null until their feeder fixtures have been decided.
+model MatchFixture {
+  id                 String             @id @default(cuid())
+  matchId            String             @map("match_id")
+  fixtureKey         String             @map("fixture_key")
+  stage              MatchFixtureStage
+  bestOf             Int                @default(5) @map("best_of")
+  status             MatchFixtureStatus @default(SCHEDULED)
+  groupId            String?            @map("group_id")
+  groupKey           String?            @map("group_key")
+  roundNumber        Int?               @map("round_number")
+  position           Int?
+  sideAEntryId       String?            @map("side_a_entry_id")
+  sideBEntryId       String?            @map("side_b_entry_id")
+  sideARosterVersion Int?               @map("side_a_roster_version")
+  sideBRosterVersion Int?               @map("side_b_roster_version")
+  scheduledAt        DateTime?          @map("scheduled_at")
+  startedAt          DateTime?          @map("started_at")
+  completedAt        DateTime?          @map("completed_at")
+  version            Int                @default(0)
+  metadata           Json?
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+
+  match                    Match                                 @relation(fields: [matchId], references: [id], onDelete: Restrict, map: "match_fixture_match_id_fkey")
+  group                    MatchGroup?                           @relation(fields: [groupId, matchId], references: [id, matchId], onDelete: NoAction, map: "match_fixture_group_match_fkey")
+  sideAEntry               MatchEntry?                           @relation("MatchFixtureSideA", fields: [sideAEntryId, matchId], references: [id, matchId], onDelete: NoAction, map: "match_fixture_side_a_entry_fkey")
+  sideBEntry               MatchEntry?                           @relation("MatchFixtureSideB", fields: [sideBEntryId, matchId], references: [id, matchId], onDelete: NoAction, map: "match_fixture_side_b_entry_fkey")
+  lineupMembers            MatchFixtureLineupMember[]
+  resultRevisions          ResultRevision[]
+  incomingDependencies     MatchFixtureDependency[]              @relation("MatchFixtureDependencyTarget")
+  outgoingDependencies     MatchFixtureDependency[]              @relation("MatchFixtureDependencySource")
+  administrativeResolution MatchFixtureAdministrativeResolution?
+
+  @@unique([id, matchId], map: "match_fixture_id_match_id_key")
+  @@unique([matchId, fixtureKey], map: "match_fixture_match_id_fixture_key_key")
+  @@index([matchId, stage, status], map: "match_fixture_match_stage_status_idx")
+  @@index([groupId, matchId], map: "match_fixture_group_match_idx")
+  @@index([sideAEntryId], map: "match_fixture_side_a_entry_idx")
+  @@index([sideBEntryId], map: "match_fixture_side_b_entry_idx")
+  @@map("match_fixture")
+}
+
+/// A terminal knockout decision that intentionally has no played/forfeit
+/// ResultRevision and therefore can never create settlement effects.
+model MatchFixtureAdministrativeResolution {
+  id                     String                                   @id @default(cuid())
+  matchId                String                                   @map("match_id")
+  fixtureId              String                                   @unique(map: "fixture_administrative_resolution_fixture_key") @map("fixture_id")
+  kind                   MatchFixtureAdministrativeResolutionKind
+  advancingEntryId       String?                                  @map("advancing_entry_id")
+  advancingRosterVersion Int?                                     @map("advancing_roster_version")
+  resolvedById           String                                   @map("resolved_by_id")
+  reason                 String
+  createdAt              DateTime                                 @default(now()) @map("created_at")
+
+  match          Match        @relation(fields: [matchId], references: [id], onDelete: Restrict, map: "fixture_administrative_resolution_match_fkey")
+  fixture        MatchFixture @relation(fields: [fixtureId, matchId], references: [id, matchId], onDelete: Restrict, map: "fixture_administrative_resolution_fixture_match_fkey")
+  advancingEntry MatchEntry?  @relation("FixtureAdministrativeAdvancingEntry", fields: [advancingEntryId, matchId], references: [id, matchId], onDelete: NoAction, map: "fixture_administrative_resolution_advancing_entry_fkey")
+  resolvedBy     User         @relation("FixtureAdministrativeResolver", fields: [resolvedById], references: [id], onDelete: Restrict, map: "fixture_administrative_resolution_resolved_by_fkey")
+
+  @@unique([id, fixtureId, matchId], map: "fixture_administrative_resolution_identity_key")
+  @@unique([fixtureId, matchId], map: "fixture_administrative_resolution_fixture_match_key")
+  @@index([matchId, kind], map: "fixture_administrative_resolution_match_kind_idx")
+  @@index([advancingEntryId], map: "fixture_administrative_resolution_advancing_entry_idx")
+  @@index([resolvedById], map: "fixture_administrative_resolution_resolved_by_idx")
+  @@map("match_fixture_administrative_resolution")
+}
+
+/// The fixture's settlement roster. Current team results settle this entire
+/// frozen roster; these rows are not evidence that every player actually played.
+/// Future actual-lineup settlement must record participation explicitly and
+/// version its settlement policy without rewriting these historical recipients.
+/// The composite foreign key guarantees
+/// that an entry member is recorded only for the Entry it belongs to. The V2
+/// service must additionally verify that the Entry is assigned to the chosen side.
+model MatchFixtureLineupMember {
+  id            String           @id @default(cuid())
+  matchId       String           @map("match_id")
+  fixtureId     String           @map("fixture_id")
+  entryId       String           @map("entry_id")
+  entryMemberId String           @map("entry_member_id")
+  side          MatchFixtureSide
+  position      Int
+  createdAt     DateTime         @default(now()) @map("created_at")
+
+  fixture     MatchFixture     @relation(fields: [fixtureId, matchId], references: [id, matchId], onDelete: Restrict, map: "fixture_lineup_fixture_match_fkey")
+  entry       MatchEntry       @relation(fields: [entryId, matchId], references: [id, matchId], onDelete: NoAction, map: "fixture_lineup_entry_match_fkey")
+  entryMember MatchEntryMember @relation(fields: [entryMemberId, entryId, matchId], references: [id, entryId, matchId], onDelete: NoAction, map: "fixture_lineup_entry_member_fkey")
+
+  @@unique([fixtureId, side, position], map: "fixture_lineup_fixture_side_position_key")
+  @@unique([fixtureId, entryMemberId], map: "fixture_lineup_fixture_member_key")
+  @@index([entryId], map: "fixture_lineup_entry_id_idx")
+  @@index([entryMemberId, entryId, matchId], map: "fixture_lineup_entry_member_idx")
+  @@map("match_fixture_lineup_member")
+}
+
+/// An explicit knockout dependency edge. It keeps the bracket graph relational
+/// instead of hiding advancement rules in fixture metadata.
+model MatchFixtureDependency {
+  id                            String               @id @default(cuid())
+  matchId                       String               @map("match_id")
+  sourceFixtureId               String?              @map("source_fixture_id")
+  sourceOutcome                 MatchFixtureOutcome? @map("source_outcome")
+  sourceQualificationStandingId String?              @unique(map: "fixture_dependency_qualification_source_key") @map("source_qualification_standing_id")
+  targetFixtureId               String               @map("target_fixture_id")
+  targetSide                    MatchFixtureSide     @map("target_side")
+  createdAt                     DateTime             @default(now()) @map("created_at")
+
+  sourceFixture               MatchFixture?               @relation("MatchFixtureDependencySource", fields: [sourceFixtureId, matchId], references: [id, matchId], onDelete: Restrict, map: "fixture_dependency_source_match_fkey")
+  sourceQualificationStanding MatchQualificationStanding? @relation("MatchFixtureDependencyQualificationSource", fields: [sourceQualificationStandingId, matchId], references: [id, matchId], onDelete: Restrict, map: "fixture_dependency_qualification_match_fkey")
+  targetFixture               MatchFixture                @relation("MatchFixtureDependencyTarget", fields: [targetFixtureId, matchId], references: [id, matchId], onDelete: Restrict, map: "fixture_dependency_target_match_fkey")
+
+  @@unique([targetFixtureId, targetSide], map: "fixture_dependency_target_side_key")
+  @@unique([sourceFixtureId, sourceOutcome], map: "fixture_dependency_source_outcome_key")
+  @@index([matchId], map: "fixture_dependency_match_id_idx")
+  @@index([sourceQualificationStandingId, matchId], map: "fixture_dependency_qualification_match_idx")
+  @@map("match_fixture_dependency")
+}
+
+/// Immutable result history for a fixture. The migration adds partial unique
+/// indexes so a fixture can have at most one PENDING and one CONFIRMED revision.
+model ResultRevision {
+  id                   String               @id @default(cuid())
+  matchId              String               @map("match_id")
+  fixtureId            String               @map("fixture_id")
+  revisionNumber       Int                  @map("revision_number")
+  status               ResultRevisionStatus @default(PENDING)
+  resolutionKind       ResultResolutionKind @default(PLAYED) @map("resolution_kind")
+  winnerEntryId        String?              @map("winner_entry_id")
+  loserEntryId         String?              @map("loser_entry_id")
+  score                Json
+  reportedById         String               @map("reported_by_id")
+  verifiedById         String?              @map("verified_by_id")
+  supersedesRevisionId String?              @map("supersedes_revision_id")
+  reason               String?
+  resolvedAt           DateTime?            @map("resolved_at")
+  createdAt            DateTime             @default(now()) @map("created_at")
+  updatedAt            DateTime             @updatedAt @map("updated_at")
+
+  fixture          MatchFixture      @relation(fields: [fixtureId, matchId], references: [id, matchId], onDelete: Restrict, map: "result_revision_fixture_match_fkey")
+  winnerEntry      MatchEntry?       @relation("ResultRevisionWinner", fields: [winnerEntryId, matchId], references: [id, matchId], onDelete: NoAction, map: "result_revision_winner_entry_fkey")
+  loserEntry       MatchEntry?       @relation("ResultRevisionLoser", fields: [loserEntryId, matchId], references: [id, matchId], onDelete: NoAction, map: "result_revision_loser_entry_fkey")
+  reportedBy       User              @relation("ResultRevisionReporter", fields: [reportedById], references: [id], onDelete: Restrict, map: "result_revision_reported_by_fkey")
+  verifiedBy       User?             @relation("ResultRevisionVerifier", fields: [verifiedById], references: [id], onDelete: Restrict, map: "result_revision_verified_by_fkey")
+  supersedes       ResultRevision?   @relation("ResultRevisionSupersession", fields: [supersedesRevisionId, fixtureId, matchId], references: [id, fixtureId, matchId], onDelete: Restrict, map: "result_revision_supersedes_fkey")
+  supersededBy     ResultRevision[]  @relation("ResultRevisionSupersession")
+  settlementEvents SettlementEvent[]
+
+  @@unique([fixtureId, revisionNumber], map: "result_revision_fixture_revision_key")
+  @@unique([id, fixtureId, matchId], map: "result_revision_identity_key")
+  @@index([supersedesRevisionId, fixtureId, matchId], map: "result_revision_supersedes_identity_idx")
+  @@index([fixtureId, status], map: "result_revision_fixture_status_idx")
+  @@index([reportedById], map: "result_revision_reported_by_idx")
+  @@index([verifiedById], map: "result_revision_verified_by_idx")
+  @@index([winnerEntryId], map: "result_revision_winner_entry_idx")
+  @@index([loserEntryId], map: "result_revision_loser_entry_idx")
+  @@map("result_revision")
+}
+
+/// One atomic result or registration settlement command. Exactly one of the
+/// revision/entry subjects is present; effects and aggregates commit together.
+model SettlementEvent {
+  id               String                @id @default(cuid())
+  idempotencyKey   String                @unique(map: "settlement_event_idempotency_key") @map("idempotency_key")
+  kind             SettlementEventKind
+  status           SettlementEventStatus @default(PENDING)
+  resultRevisionId String?               @map("result_revision_id")
+  matchEntryId     String?               @map("match_entry_id")
+  reversesEventId  String?               @unique(map: "settlement_event_reverses_event_id_key") @map("reverses_event_id")
+  metadata         Json?
+  failureReason    String?               @map("failure_reason")
+  appliedAt        DateTime?             @map("applied_at")
+  createdAt        DateTime              @default(now()) @map("created_at")
+  updatedAt        DateTime              @updatedAt @map("updated_at")
+
+  resultRevision ResultRevision?    @relation(fields: [resultRevisionId], references: [id], onDelete: Restrict, map: "settlement_event_result_revision_fkey")
+  matchEntry     MatchEntry?        @relation(fields: [matchEntryId], references: [id], onDelete: Restrict, map: "settlement_event_match_entry_fkey")
+  reverses       SettlementEvent?   @relation("SettlementEventReversal", fields: [reversesEventId], references: [id], onDelete: Restrict, map: "settlement_event_reverses_fkey")
+  reversedBy     SettlementEvent?   @relation("SettlementEventReversal")
+  effects        SettlementEffect[]
+
+  @@unique([resultRevisionId, kind], map: "settlement_event_revision_kind_key")
+  @@index([matchEntryId], map: "settlement_event_match_entry_id_idx")
+  @@index([status, createdAt], map: "settlement_event_status_created_idx")
+  @@map("settlement_event")
+}
+
+/// Per-user values produced by an aggregate settlement event. Nullable triplets
+/// mean that dimension is unaffected; SQL checks keep before/after/delta coherent.
+model SettlementEffect {
+  id                 String   @id @default(cuid())
+  eventId            String   @map("event_id")
+  userId             String   @map("user_id")
+  eloBefore          Int?     @map("elo_before")
+  eloAfter           Int?     @map("elo_after")
+  eloDelta           Int?     @map("elo_delta")
+  pointsBefore       Int?     @map("points_before")
+  pointsAfter        Int?     @map("points_after")
+  pointsDelta        Int?     @map("points_delta")
+  winsDelta          Int      @default(0) @map("wins_delta")
+  lossesDelta        Int      @default(0) @map("losses_delta")
+  matchesPlayedDelta Int      @default(0) @map("matches_played_delta")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  event SettlementEvent @relation(fields: [eventId], references: [id], onDelete: Restrict, map: "settlement_effect_event_id_fkey")
+  user  User            @relation(fields: [userId], references: [id], onDelete: Restrict, map: "settlement_effect_user_id_fkey")
+
+  @@unique([eventId, userId], map: "settlement_effect_event_user_key")
+  @@index([userId, createdAt], map: "settlement_effect_user_created_idx")
+  @@map("settlement_effect")
+}
+
 model MatchTeam {
-  id          String                 @id @default(cuid())
-  matchId     String                 @map("match_id")
-  captainId   String                 @map("captain_id")
-  name        String
-  inviteCode  String                 @unique @map("invite_code")
-  contact     String?
-  remark      String?
-  reviewNote  String?                @map("review_note")
-  status      TeamRegistrationStatus @default(draft)
-  submittedAt DateTime?              @map("submitted_at")
-  reviewedAt  DateTime?              @map("reviewed_at")
-  reviewedById String?               @map("reviewed_by_id")
-  createdAt   DateTime               @default(now()) @map("created_at")
-  updatedAt   DateTime               @updatedAt @map("updated_at")
+  id           String                 @id @default(cuid())
+  matchId      String                 @map("match_id")
+  captainId    String                 @map("captain_id")
+  name         String
+  inviteCode   String                 @unique @map("invite_code")
+  contact      String?
+  remark       String?
+  reviewNote   String?                @map("review_note")
+  status       TeamRegistrationStatus @default(draft)
+  submittedAt  DateTime?              @map("submitted_at")
+  reviewedAt   DateTime?              @map("reviewed_at")
+  reviewedById String?                @map("reviewed_by_id")
+  createdAt    DateTime               @default(now()) @map("created_at")
+  updatedAt    DateTime               @updatedAt @map("updated_at")
 
-  match      Match             @relation(fields: [matchId], references: [id], onDelete: Cascade)
-  captain    User              @relation("MatchTeamCaptain", fields: [captainId], references: [id], onDelete: Cascade)
-  reviewedBy User?             @relation("MatchTeamReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
-  members    MatchTeamMember[]
-  wonResults MatchResult[]     @relation("MatchResultWinnerTeam")
-  lostResults MatchResult[]     @relation("MatchResultLoserTeam")
+  match               Match             @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  captain             User              @relation("MatchTeamCaptain", fields: [captainId], references: [id], onDelete: Cascade)
+  reviewedBy          User?             @relation("MatchTeamReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  members             MatchTeamMember[]
+  wonResults          MatchResult[]     @relation("MatchResultWinnerTeam")
+  lostResults         MatchResult[]     @relation("MatchResultLoserTeam")
+  sourcedMatchEntries MatchEntry[]
 
+  @@unique([id, matchId], map: "match_team_id_match_id_key")
   @@index([matchId, status])
   @@index([captainId])
   @@map("match_team")
 }
 
 model MatchTeamMember {
-  id        String   @id @default(cuid())
-  teamId    String   @map("team_id")
-  matchId   String   @map("match_id")
-  userId    String   @map("user_id")
-  joinedAt  DateTime @default(now()) @map("joined_at")
+  id       String   @id @default(cuid())
+  teamId   String   @map("team_id")
+  matchId  String   @map("match_id")
+  userId   String   @map("user_id")
+  joinedAt DateTime @default(now()) @map("joined_at")
 
-  team  MatchTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  team  MatchTeam @relation(fields: [teamId, matchId], references: [id, matchId], onDelete: Cascade, map: "match_team_member_team_id_match_id_fkey")
   match Match     @relation(fields: [matchId], references: [id], onDelete: Cascade)
   user  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -247,16 +650,18 @@ model MatchTeamMember {
 }
 
 model MatchDoublesTeam {
-  id          String    @id @default(cuid())
-  matchId     String    @map("match_id")
-  createdById String    @map("created_by_id")
-  createdAt   DateTime  @default(now()) @map("created_at")
+  id           String    @id @default(cuid())
+  matchId      String    @map("match_id")
+  createdById  String    @map("created_by_id")
+  createdAt    DateTime  @default(now()) @map("created_at")
   registeredAt DateTime? @map("registered_at")
 
-  match   Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
-  creator User  @relation("DoublesTeamCreator", fields: [createdById], references: [id], onDelete: Cascade)
-  members MatchDoublesTeamMember[]
+  match               Match                    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  creator             User                     @relation("DoublesTeamCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  members             MatchDoublesTeamMember[]
+  sourcedMatchEntries MatchEntry[]
 
+  @@unique([id, matchId], map: "match_doubles_team_id_match_id_key")
   @@index([matchId, createdAt])
   @@map("match_doubles_team")
 }
@@ -268,7 +673,7 @@ model MatchDoublesTeamMember {
   userId  String @map("user_id")
   slot    Int
 
-  team  MatchDoublesTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  team  MatchDoublesTeam @relation(fields: [teamId, matchId], references: [id, matchId], onDelete: Cascade, map: "match_doubles_team_member_team_id_match_id_fkey")
   match Match            @relation(fields: [matchId], references: [id], onDelete: Cascade)
   user  User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -337,29 +742,29 @@ model Registration {
 }
 
 model MatchResult {
-  id               String    @id @default(cuid())
-  matchId          String
-  winnerId         String?
-  loserId          String?
-  winnerMatchTeamId String?  @map("winner_match_team_id")
-  loserMatchTeamId String?   @map("loser_match_team_id")
-  winnerTeamIds    String[]  @default([])
-  loserTeamIds     String[]  @default([])
-  score            Json
-  reportedBy       String
-  confirmed        Boolean   @default(false)
-  resultVerifiedAt DateTime?
-  verifierId       String?
-  createdAt        DateTime  @default(now())
+  id                String    @id @default(cuid())
+  matchId           String
+  winnerId          String?
+  loserId           String?
+  winnerMatchTeamId String?   @map("winner_match_team_id")
+  loserMatchTeamId  String?   @map("loser_match_team_id")
+  winnerTeamIds     String[]  @default([])
+  loserTeamIds      String[]  @default([])
+  score             Json
+  reportedBy        String
+  confirmed         Boolean   @default(false)
+  resultVerifiedAt  DateTime?
+  verifierId        String?
+  createdAt         DateTime  @default(now())
 
-  match      Match        @relation(fields: [matchId], references: [id], onDelete: Cascade)
-  winner     User?        @relation("ResultWinner", fields: [winnerId], references: [id], onDelete: SetNull)
-  loser      User?        @relation("ResultLoser", fields: [loserId], references: [id], onDelete: SetNull)
-  reporter   User         @relation("ResultReporter", fields: [reportedBy], references: [id], onDelete: Cascade)
-  verifier   User?        @relation("ResultVerifier", fields: [verifierId], references: [id], onDelete: SetNull)
-  winnerMatchTeam MatchTeam? @relation("MatchResultWinnerTeam", fields: [winnerMatchTeamId], references: [id], onDelete: SetNull)
-  loserMatchTeam MatchTeam? @relation("MatchResultLoserTeam", fields: [loserMatchTeamId], references: [id], onDelete: SetNull)
-  eloHistory EloHistory[]
+  match           Match        @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  winner          User?        @relation("ResultWinner", fields: [winnerId], references: [id], onDelete: SetNull)
+  loser           User?        @relation("ResultLoser", fields: [loserId], references: [id], onDelete: SetNull)
+  reporter        User         @relation("ResultReporter", fields: [reportedBy], references: [id], onDelete: Cascade)
+  verifier        User?        @relation("ResultVerifier", fields: [verifierId], references: [id], onDelete: SetNull)
+  winnerMatchTeam MatchTeam?   @relation("MatchResultWinnerTeam", fields: [winnerMatchTeamId], references: [id], onDelete: SetNull)
+  loserMatchTeam  MatchTeam?   @relation("MatchResultLoserTeam", fields: [loserMatchTeamId], references: [id], onDelete: SetNull)
+  eloHistory      EloHistory[]
 
   @@index([winnerId])
   @@index([loserId])
@@ -525,12 +930,134 @@ model LeaderboardCache {
 }
 
 model MatchGrouping {
-  id        String   @id @default(cuid())
-  matchId   String   @unique
-  payload   Json
-  createdAt DateTime @default(now())
+  id                     String                   @id @default(cuid())
+  matchId                String                   @unique
+  payload                Json
+  v2SchemaVersion        Int?                     @map("v2_schema_version")
+  seedMethod             MatchGroupingSeedMethod? @map("seed_method")
+  standingsPolicyVersion Int?                     @map("standings_policy_version")
+  qualifiersPerGroup     Int?                     @map("qualifiers_per_group")
+  bracketPolicyVersion   Int?                     @map("bracket_policy_version")
+  createdAt              DateTime                 @default(now())
 
-  match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  match                 Match                       @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  groups                MatchGroup[]
+  qualificationSnapshot MatchQualificationSnapshot?
+
+  @@unique([id, matchId], map: "match_grouping_id_match_id_key")
+}
+
+/// One relational group in a V2 grouping publication. `matchId` is repeated so
+/// every child edge can prove that it belongs to the same competition.
+model MatchGroup {
+  id          String   @id @default(cuid())
+  matchId     String   @map("match_id")
+  groupingId  String   @map("grouping_id")
+  groupKey    String   @map("group_key")
+  displayName String   @map("display_name")
+  position    Int
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  match                  Match                        @relation(fields: [matchId], references: [id], onDelete: Restrict, map: "match_group_match_id_fkey")
+  grouping               MatchGrouping                @relation(fields: [groupingId, matchId], references: [id, matchId], onDelete: Restrict, map: "match_group_grouping_match_fkey")
+  entries                MatchGroupEntry[]
+  fixtures               MatchFixture[]
+  qualificationStandings MatchQualificationStanding[]
+
+  @@unique([id, matchId], map: "match_group_id_match_id_key")
+  @@unique([groupingId, groupKey], map: "match_group_grouping_key_key")
+  @@unique([groupingId, position], map: "match_group_grouping_position_key")
+  @@index([matchId], map: "match_group_match_id_idx")
+  @@map("match_group")
+}
+
+/// Frozen publication-time seeding inputs. These values make the grouping and
+/// later knockout placement reproducible even after Entry/user data changes.
+model MatchGroupEntry {
+  id             String   @id @default(cuid())
+  matchId        String   @map("match_id")
+  groupId        String   @map("group_id")
+  entryId        String   @map("entry_id")
+  position       Int
+  globalSeedRank Int      @map("global_seed_rank")
+  seedElo        Int      @map("seed_elo")
+  seedPoints     Int      @map("seed_points")
+  entryVersion   Int      @map("entry_version")
+  rosterVersion  Int      @map("roster_version")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  match                  Match                        @relation(fields: [matchId], references: [id], onDelete: Restrict, map: "match_group_entry_match_id_fkey")
+  group                  MatchGroup                   @relation(fields: [groupId, matchId], references: [id, matchId], onDelete: Restrict, map: "match_group_entry_group_match_fkey")
+  entry                  MatchEntry                   @relation(fields: [entryId, matchId], references: [id, matchId], onDelete: Restrict, map: "match_group_entry_entry_match_fkey")
+  qualificationStandings MatchQualificationStanding[]
+
+  @@unique([id, matchId], map: "match_group_entry_id_match_id_key")
+  @@unique([groupId, entryId], map: "match_group_entry_group_entry_key")
+  @@unique([groupId, entryId, matchId], map: "match_group_entry_membership_identity_key")
+  @@unique([groupId, position], map: "match_group_entry_group_position_key")
+  @@unique([matchId, entryId], map: "match_group_entry_match_entry_key")
+  @@unique([matchId, globalSeedRank], map: "match_group_entry_match_seed_rank_key")
+  @@index([entryId], map: "match_group_entry_entry_id_idx")
+  @@map("match_group_entry")
+}
+
+/// Immutable qualification decision for one grouping publication. The source
+/// fingerprint binds it to the complete authoritative ResultRevision set.
+model MatchQualificationSnapshot {
+  id                        String   @id @default(cuid())
+  matchId                   String   @map("match_id")
+  groupingId                String   @unique(map: "match_qualification_snapshot_grouping_id_key") @map("grouping_id")
+  schemaVersion             Int      @map("schema_version")
+  standingsPolicyVersion    Int      @map("standings_policy_version")
+  sourceRevisionFingerprint String   @map("source_revision_fingerprint")
+  createdAt                 DateTime @default(now()) @map("created_at")
+
+  match     Match                        @relation(fields: [matchId], references: [id], onDelete: Restrict, map: "match_qualification_snapshot_match_id_fkey")
+  grouping  MatchGrouping                @relation(fields: [groupingId, matchId], references: [id, matchId], onDelete: Restrict, map: "match_qualification_snapshot_grouping_match_fkey")
+  standings MatchQualificationStanding[]
+
+  @@unique([id, matchId], map: "match_qualification_snapshot_id_match_id_key")
+  @@unique([groupingId, matchId], map: "match_qualification_snapshot_grouping_match_key")
+  @@index([matchId], map: "match_qualification_snapshot_match_id_idx")
+  @@map("match_qualification_snapshot")
+}
+
+/// A frozen group ranking row. The membership composite relation prevents a
+/// standing from pairing a group with an Entry that was published elsewhere.
+model MatchQualificationStanding {
+  id                  String   @id @default(cuid())
+  matchId             String   @map("match_id")
+  snapshotId          String   @map("snapshot_id")
+  groupId             String   @map("group_id")
+  entryId             String   @map("entry_id")
+  rank                Int
+  played              Int
+  wins                Int
+  losses              Int
+  scoreFor            Int      @map("score_for")
+  scoreAgainst        Int      @map("score_against")
+  scoreDifferential   Int      @map("score_differential")
+  qualified           Boolean
+  qualificationOrder  Int?     @map("qualification_order")
+  ineligibilityReason String?  @map("ineligibility_reason")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  match               Match                      @relation(fields: [matchId], references: [id], onDelete: Restrict, map: "match_qualification_standing_match_id_fkey")
+  snapshot            MatchQualificationSnapshot @relation(fields: [snapshotId, matchId], references: [id, matchId], onDelete: Restrict, map: "match_qualification_standing_snapshot_match_fkey")
+  group               MatchGroup                 @relation(fields: [groupId, matchId], references: [id, matchId], onDelete: Restrict, map: "match_qualification_standing_group_match_fkey")
+  entry               MatchEntry                 @relation(fields: [entryId, matchId], references: [id, matchId], onDelete: Restrict, map: "match_qualification_standing_entry_match_fkey")
+  groupEntry          MatchGroupEntry            @relation(fields: [groupId, entryId, matchId], references: [groupId, entryId, matchId], onDelete: Restrict, map: "match_qualification_standing_membership_fkey")
+  fixtureDependencies MatchFixtureDependency[]   @relation("MatchFixtureDependencyQualificationSource")
+
+  @@unique([id, matchId], map: "match_qualification_standing_id_match_id_key")
+  @@unique([snapshotId, groupId, entryId], map: "match_qualification_standing_snapshot_membership_key")
+  @@unique([snapshotId, entryId], map: "match_qualification_standing_snapshot_entry_key")
+  @@unique([snapshotId, groupId, rank], map: "match_qualification_standing_snapshot_group_rank_key")
+  @@unique([snapshotId, qualificationOrder], map: "match_qualification_standing_snapshot_order_key")
+  @@index([matchId], map: "match_qualification_standing_match_id_idx")
+  @@index([groupId, entryId, matchId], map: "match_qualification_standing_membership_idx")
+  @@index([entryId], map: "match_qualification_standing_entry_id_idx")
+  @@map("match_qualification_standing")
 }
 
 model RankingSnapshot {
@@ -543,19 +1070,19 @@ model RankingSnapshot {
 }
 
 model MatchPost {
-  id                String          @id @default(cuid())
-  creatorId         String
-  description       String?
-  playAt            DateTime
-  durationMinutes   Int
-  location          String
-  minElo            Int?
-  maxElo            Int?
-  isRatedPreferred  Boolean         @default(false)
-  status            MatchPostStatus @default(OPEN)
-  matchedUserId     String?
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  id               String          @id @default(cuid())
+  creatorId        String
+  description      String?
+  playAt           DateTime
+  durationMinutes  Int
+  location         String
+  minElo           Int?
+  maxElo           Int?
+  isRatedPreferred Boolean         @default(false)
+  status           MatchPostStatus @default(OPEN)
+  matchedUserId    String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
 
   creator      User               @relation("MatchPostCreator", fields: [creatorId], references: [id], onDelete: Cascade)
   matchedUser  User?              @relation("MatchPostMatchedUser", fields: [matchedUserId], references: [id], onDelete: SetNull)

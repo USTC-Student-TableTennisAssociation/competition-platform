@@ -1,7 +1,14 @@
 import { NextResponse } from "next/server";
-import { TeamRegistrationStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
+import {
+  TEAM_REGISTRATION_CSV_HEADERS,
+  mapV2TeamRegistrationCsvRows,
+} from "@/modules/competitions-v2/adapters/team-registration-csv";
+import {
+  V2TeamRegistrationIntegrityError,
+  getV2TeamRegistrationReadState,
+} from "@/modules/competitions-v2/read-model/team-registration";
 
 export const runtime = "nodejs";
 
@@ -21,88 +28,62 @@ export async function GET(
     return NextResponse.json({ error: "仅管理员可导出团体报名名单。" }, { status: 403 });
   }
 
-  const match = await prisma.match.findUnique({
+  const discriminator = await prisma.match.findUnique({
     where: { id },
-    include: {
-      teamRegistrations: {
-        where: {
-          status: {
-            not: TeamRegistrationStatus.cancelled,
-          },
-          captain: { isBanned: false },
-          members: { none: { user: { isBanned: true } } },
-        },
-        include: {
-          captain: {
-            select: {
-              nickname: true,
-            },
-          },
-          members: {
-            where: {
-              user: { isBanned: false },
-            },
-            include: {
-              user: {
-                select: {
-                  nickname: true,
-                },
-              },
-            },
-            orderBy: { joinedAt: "asc" },
-          },
-        },
-        orderBy: { createdAt: "asc" },
-      },
-    },
+    select: { id: true, type: true, engineVersion: true },
   });
 
-  if (!match) {
+  if (!discriminator) {
     return NextResponse.json({ error: "比赛不存在。" }, { status: 404 });
   }
 
-  if (match.type !== "team") {
+  if (discriminator.type !== "team") {
     return NextResponse.json({ error: "该比赛不是团体赛。" }, { status: 400 });
   }
 
-  const headers = [
-    "比赛名",
-    "队名",
-    "状态",
-    "队长",
-    "联系方式",
-    "队员列表",
-    "人数",
-    "备注",
-    "审核备注",
-  ];
+  if (discriminator.engineVersion === "V2") {
+    try {
+      const state = await getV2TeamRegistrationReadState(prisma, id);
+      if (state.kind !== "TEAM_V2_REGISTRATION") {
+        return NextResponse.json(
+          { error: "该 V2 团体赛当前不支持导出报名名单。" },
+          { status: 409 },
+        );
+      }
+      return csvResponse(id, [
+        TEAM_REGISTRATION_CSV_HEADERS,
+        ...mapV2TeamRegistrationCsvRows(state),
+      ]);
+    } catch (error) {
+      if (error instanceof V2TeamRegistrationIntegrityError) {
+        console.error("[V2_TEAM_REGISTRATION_EXPORT_INTEGRITY]", {
+          matchId: id,
+          entityId: error.entityId,
+        });
+        return NextResponse.json(
+          { error: "V2 团体报名数据异常，暂不能导出，请联系管理员。" },
+          { status: 409 },
+        );
+      }
+      throw error;
+    }
+  }
 
-  const minMembers = match.teamMinMembers ?? 3;
-  const rows = match.teamRegistrations.map((team) => {
-    const members = team.members
-      .map((member) => member.user.nickname)
-      .join("；");
-    return [
-      match.title,
-      team.name,
-      team.members.length >= minMembers ? "已成队" : "组建中",
-      team.captain.nickname,
-      team.contact ?? "",
-      members,
-      team.members.length,
-      team.remark ?? "",
-      team.reviewNote ?? "",
-    ];
-  });
+  return NextResponse.json({ error: "历史比赛已归档，不再提供报名名单导出。" }, { status: 410 });
+}
 
-  const csv = [headers, ...rows]
+function csvResponse(
+  matchId: string,
+  rows: readonly (readonly unknown[])[],
+) {
+  const csv = rows
     .map((row) => row.map(csvCell).join(","))
     .join("\n");
 
   return new NextResponse(`\uFEFF${csv}`, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="team-registrations-${id}.csv"`,
+      "Content-Disposition": `attachment; filename="team-registrations-${matchId}.csv"`,
       "Cache-Control": "no-store",
     },
   });

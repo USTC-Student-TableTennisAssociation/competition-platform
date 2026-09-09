@@ -6,6 +6,16 @@ import { prisma } from '@/lib/prisma'
 import { getCurrentUser } from '@/lib/auth'
 import { validateCsrfToken } from '@/lib/csrf'
 import { settleSinglesElo, settleTeamElo } from '@/lib/elo'
+import {
+  lockMatchForEngine,
+  lockMatchResultForUpdate,
+  MatchEngineGuardError,
+} from '@/lib/server/match/engine-guard'
+import {
+  getQuickResultState,
+  QUICK_MATCH_VOID_DESCRIPTION,
+} from '@/lib/server/match/quick-result-state'
+import { lockUsersForUpdate } from '@/lib/server/user/lock-users'
 
 export type QuickMatchFormState = {
   error?: string
@@ -15,7 +25,6 @@ export type QuickMatchFormState = {
 const QUICK_MATCH_TITLE_PREFIX = '[快速比赛]'
 const QUICK_MATCH_TIMEOUT_MS = 24 * 60 * 60 * 1000
 const QUICK_MATCH_ACTIVE_DESC = '由快速比赛功能创建'
-const QUICK_MATCH_VOID_DESC = '由快速比赛功能创建（已作废）'
 
 function isQuickMatchMatch(match: { title: string; isQuickMatch?: boolean | null }) {
   return match.isQuickMatch ?? match.title.startsWith(QUICK_MATCH_TITLE_PREFIX)
@@ -42,6 +51,8 @@ async function applyQuickMatchElo(
   payload: { matchId: string; winnerTeamIds: string[]; loserTeamIds: string[] },
 ) {
   const allParticipantIds = [...payload.winnerTeamIds, ...payload.loserTeamIds]
+  await lockUsersForUpdate(tx, allParticipantIds)
+
   const users = await tx.user.findMany({
     where: { id: { in: allParticipantIds } },
     select: {
@@ -106,30 +117,70 @@ async function applyQuickMatchElo(
 
 async function invalidateQuickResult(params: {
   resultId: string
-  matchId: string
-  existingScore: unknown
   reason: 'rejected' | 'timeout'
 }) {
-  const baseScore = normalizeScore(params.existingScore)
+  const binding = await prisma.matchResult.findUnique({
+    where: { id: params.resultId },
+    select: { matchId: true },
+  })
+  if (!binding) return 'missing' as const
 
-  await prisma.$transaction([
-    prisma.matchResult.update({
-      where: { id: params.resultId },
-      data: {
-        score: {
-          ...baseScore,
-          invalidatedAt: new Date().toISOString(),
-          invalidReason: params.reason,
-        },
+  try {
+    return await prisma.$transaction(async (tx) => {
+      await lockMatchForEngine(tx, {
+        matchId: binding.matchId,
+        expectedEngine: 'LEGACY',
+        expectedQuickMatch: true,
+      })
+      await lockMatchResultForUpdate(tx, params.resultId)
+
+      const latest = await tx.matchResult.findUnique({
+        where: { id: params.resultId },
+        include: { match: true },
+      })
+      if (!latest || latest.matchId !== binding.matchId) return 'missing' as const
+      if (!isQuickMatchMatch(latest.match)) return 'not-quick-match' as const
+
+      const state = getQuickResultState(latest)
+      if (state === 'confirmed') return 'confirmed' as const
+      if (state === 'invalidated') return 'already-invalidated' as const
+
+      await invalidateLockedQuickResult(tx, latest, params.reason)
+      return 'invalidated' as const
+    })
+  } catch (error) {
+    if (error instanceof MatchEngineGuardError) {
+      if (error.code === 'MATCH_NOT_FOUND') return 'missing' as const
+      if (error.code === 'QUICK_MATCH_MISMATCH') return 'not-quick-match' as const
+      if (error.code === 'ENGINE_MISMATCH') return 'wrong-engine' as const
+    }
+    throw error
+  }
+}
+
+async function invalidateLockedQuickResult(
+  tx: Prisma.TransactionClient,
+  result: { id: string; matchId: string; score: unknown },
+  reason: 'rejected' | 'timeout',
+) {
+  const baseScore = normalizeScore(result.score)
+
+  await tx.matchResult.update({
+    where: { id: result.id },
+    data: {
+      score: {
+        ...baseScore,
+        invalidatedAt: new Date().toISOString(),
+        invalidReason: reason,
       },
-    }),
-    prisma.match.update({
-      where: { id: params.matchId },
-      data: {
-        description: QUICK_MATCH_VOID_DESC,
-      },
-    }),
-  ])
+    },
+  })
+  await tx.match.update({
+    where: { id: result.matchId },
+    data: {
+      description: QUICK_MATCH_VOID_DESCRIPTION,
+    },
+  })
 }
 
 export async function reportQuickMatchResultAction(
@@ -219,6 +270,7 @@ export async function reportQuickMatchResultAction(
         maxParticipants: 2,
         location: '快速比赛',
         isQuickMatch: true,
+        engineVersion: 'LEGACY',
         createdBy: currentUser.id,
       },
       select: { id: true },
@@ -282,20 +334,35 @@ export async function confirmQuickMatchResultAction(
 
   if (!result) return { error: '赛果不存在。' }
   if (!isQuickMatchMatch(result.match)) return { error: '不是快速比赛赛果。' }
+  if (result.match.engineVersion !== 'LEGACY') {
+    return { error: '该赛果不由旧版快速比赛流程处理。' }
+  }
 
-  if (result.confirmed) {
+  const initialState = getQuickResultState(result)
+  if (initialState === 'confirmed') {
     return { success: '该赛果已确认。' }
   }
 
   if (isExpired(result.createdAt)) {
-    await invalidateQuickResult({
+    const outcome = await invalidateQuickResult({
       resultId: result.id,
-      matchId: result.matchId,
-      existingScore: result.score,
       reason: 'timeout',
     })
+    if (outcome === 'confirmed') {
+      return { success: '该赛果已确认。' }
+    }
+    if (outcome === 'missing') return { error: '赛果不存在。' }
+    if (outcome === 'not-quick-match') return { error: '不是快速比赛赛果。' }
+    if (outcome === 'wrong-engine') {
+      return { error: '该赛果不由旧版快速比赛流程处理。' }
+    }
     revalidatePath('/quick-match')
-    return { error: '该赛果已超过 24 小时未确认，已作废。' }
+    return {
+      error:
+        outcome === 'already-invalidated'
+          ? '该赛果已作废，不能确认。'
+          : '该赛果已超过 24 小时未确认，已作废。',
+    }
   }
 
   const isOpponent =
@@ -306,25 +373,41 @@ export async function confirmQuickMatchResultAction(
   if (!isOpponent && !isAdmin) {
     return { error: '仅对手或管理员可确认。' }
   }
+  if (initialState === 'invalidated') {
+    return { error: '该赛果已作废，不能确认。' }
+  }
 
   try {
-    await prisma.$transaction(async (tx) => {
+    const outcome = await prisma.$transaction(async (tx) => {
+      await lockMatchForEngine(tx, {
+        matchId: result.matchId,
+        expectedEngine: 'LEGACY',
+        expectedQuickMatch: true,
+      })
+      await lockMatchResultForUpdate(tx, result.id)
+
       const latest = await tx.matchResult.findUnique({
         where: { id: result.id },
         include: { match: true },
       })
-      if (!latest) throw new Error('赛果不存在。')
+      if (!latest || latest.matchId !== result.matchId) throw new Error('赛果不存在。')
       if (!isQuickMatchMatch(latest.match)) throw new Error('不是快速比赛赛果。')
-      if (latest.confirmed) return
+
+      const state = getQuickResultState(latest)
+      if (state === 'confirmed') return 'already-confirmed' as const
+      if (state === 'invalidated') return 'invalidated' as const
+
+      const latestIsOpponent =
+        (latest.winnerTeamIds.includes(currentUser.id) ||
+          latest.loserTeamIds.includes(currentUser.id)) &&
+        currentUser.id !== latest.reportedBy
+      if (!latestIsOpponent && currentUser.role !== 'admin') {
+        throw new Error('仅对手或管理员可确认。')
+      }
 
       if (isExpired(latest.createdAt)) {
-        await invalidateQuickResult({
-          resultId: latest.id,
-          matchId: latest.matchId,
-          existingScore: latest.score,
-          reason: 'timeout',
-        })
-        throw new Error('该赛果已超过 24 小时未确认，已作废。')
+        await invalidateLockedQuickResult(tx, latest, 'timeout')
+        return 'expired' as const
       }
 
       await applyQuickMatchElo(tx, {
@@ -341,9 +424,24 @@ export async function confirmQuickMatchResultAction(
           verifierId: currentUser.id,
         },
       })
+      return 'confirmed' as const
     })
+
+    if (outcome === 'invalidated') {
+      return { error: '该赛果已作废，不能确认。' }
+    }
+    if (outcome === 'expired') {
+      revalidatePath('/quick-match')
+      return { error: '该赛果已超过 24 小时未确认，已作废。' }
+    }
+    if (outcome === 'already-confirmed') {
+      return { success: '该赛果已确认。' }
+    }
   } catch (error) {
     console.error('confirmQuickMatchResultAction failed', error)
+    if (error instanceof MatchEngineGuardError) {
+      return { error: '该赛果不由旧版快速比赛流程处理。' }
+    }
     return { error: error instanceof Error ? error.message : '确认失败。' }
   }
 
@@ -370,7 +468,11 @@ export async function rejectQuickMatchResultAction(
 
   if (!result) return { error: '赛果不存在。' }
   if (!isQuickMatchMatch(result.match)) return { error: '不是快速比赛赛果。' }
-  if (result.confirmed) return { error: '已确认赛果不可拒绝。' }
+  if (result.match.engineVersion !== 'LEGACY') {
+    return { error: '该赛果不由旧版快速比赛流程处理。' }
+  }
+  const initialState = getQuickResultState(result)
+  if (initialState === 'confirmed') return { error: '已确认赛果不可拒绝。' }
 
   const isOpponent =
     (result.winnerTeamIds.includes(currentUser.id) || result.loserTeamIds.includes(currentUser.id)) &&
@@ -380,16 +482,27 @@ export async function rejectQuickMatchResultAction(
   if (!isOpponent && !isAdmin) {
     return { error: '仅对手或管理员可拒绝。' }
   }
+  if (initialState === 'invalidated') return { success: '该赛果已作废。' }
 
-  await invalidateQuickResult({
+  const outcome = await invalidateQuickResult({
     resultId: result.id,
-    matchId: result.matchId,
-    existingScore: result.score,
     reason: 'rejected',
   })
 
+  if (outcome === 'confirmed') return { error: '已确认赛果不可拒绝。' }
+  if (outcome === 'missing') return { error: '赛果不存在。' }
+  if (outcome === 'not-quick-match') return { error: '不是快速比赛赛果。' }
+  if (outcome === 'wrong-engine') {
+    return { error: '该赛果不由旧版快速比赛流程处理。' }
+  }
+
   revalidatePath('/quick-match')
-  return { success: '已拒绝该赛果，结果已作废。' }
+  return {
+    success:
+      outcome === 'already-invalidated'
+        ? '该赛果已作废。'
+        : '已拒绝该赛果，结果已作废。',
+  }
 }
 
 export async function cleanupExpiredQuickResultsForUser(userId: string) {
@@ -402,20 +515,17 @@ export async function cleanupExpiredQuickResultsForUser(userId: string) {
       OR: [{ winnerTeamIds: { has: userId } }, { loserTeamIds: { has: userId } }],
       match: {
         isQuickMatch: true,
+        engineVersion: 'LEGACY',
       },
     },
     select: {
       id: true,
-      matchId: true,
-      score: true,
     },
   })
 
   for (const item of expired) {
     await invalidateQuickResult({
       resultId: item.id,
-      matchId: item.matchId,
-      existingScore: item.score,
       reason: 'timeout',
     })
   }

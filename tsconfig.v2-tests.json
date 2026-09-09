@@ -1,0 +1,44 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowJs": false,
+    "declaration": false,
+    "incremental": false,
+    "isolatedModules": false,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": false,
+    "outDir": "./.v2-test-build",
+    "rootDir": "./src",
+    "sourceMap": false,
+    "target": "ES2020",
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "src/lib/elo.ts",
+    "src/lib/server/certificate-records.ts",
+    "src/lib/server/certificate-records.test.ts",
+    "src/lib/server/match/doubles-source.ts",
+    "src/lib/server/match/doubles-source.test.ts",
+    "src/lib/server/match/doubles-source.integration.test.ts",
+    "src/lib/server/match/quick-result-state.ts",
+    "src/lib/server/match/quick-result-state.test.ts",
+    "src/lib/server/match/engine-guard.ts",
+    "src/lib/server/match/engine-guard.test.ts",
+    "src/lib/server/match/remove-participant.ts",
+    "src/lib/server/match/remove-participant.test.ts",
+    "src/lib/server/match/rewards.ts",
+    "src/lib/server/match/rewards.test.ts",
+    "src/lib/server/match/team-source.ts",
+    "src/lib/server/match/team-source.test.ts",
+    "src/lib/server/user/hard-delete-users.ts",
+    "src/lib/server/user/hard-delete-users.test.ts",
+    "src/lib/server/user/ban-user.ts",
+    "src/lib/server/user/ban-user.test.ts",
+    "src/lib/server/user/lock-users.ts",
+    "src/lib/server/user/lock-users.test.ts",
+    "src/modules/competitions-v2/**/*.ts"
+  ]
+}

@@ -63,6 +63,8 @@ type Props = {
   minMembers: number;
   maxMembers: number;
   teams: TeamRegistrationItem[];
+  allowCancellation?: boolean;
+  captainCancellationOpen?: boolean;
 };
 
 const initialState: MatchFormState = {};
@@ -607,6 +609,8 @@ export default function TeamRegistrationPanel({
   minMembers,
   maxMembers,
   teams,
+  allowCancellation = true,
+  captainCancellationOpen = registrationOpen,
 }: Props) {
   const [buildingPage, setBuildingPage] = useState(1);
   const [formedPage, setFormedPage] = useState(1);
@@ -737,7 +741,8 @@ export default function TeamRegistrationPanel({
 
               <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                 {currentUserId === myTeam.captainId &&
-                registrationOpen &&
+                captainCancellationOpen &&
+                allowCancellation &&
                 myTeam.status !== "cancelled" ? (
                   <CancelTeamButton teamId={myTeam.id} label="解散队伍" />
                 ) : null}
@@ -890,7 +895,7 @@ export default function TeamRegistrationPanel({
                   <div className="mt-3">
                     <TeamMembersList team={team} canRemove={false} />
                   </div>
-                  {team.status !== "cancelled" ? (
+                  {allowCancellation && team.status !== "cancelled" ? (
                     <div className="mt-3">
                       <CancelTeamButton teamId={team.id} label="删除队伍" />
                     </div>
