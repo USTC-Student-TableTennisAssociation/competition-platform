@@ -69,6 +69,15 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Validate PM2 config
+        run: |
+          node -e "
+            const config = require('./deploy/ecosystem.config.cjs');
+            if (!Array.isArray(config.apps) || config.apps.length !== 1) process.exit(1);
+            if (config.apps[0].name !== 'kedapp') process.exit(1);
+            if (config.apps[0].script !== 'server.js') process.exit(1);
+          "
+
       - name: Build
         run: npm run build
 
@@ -92,6 +101,9 @@ jobs:
           cp -R .next/static .next/standalone/.next/static
 
           cp -R assets .next/standalone/assets
+          cp deploy/ecosystem.config.cjs .next/standalone/ecosystem.config.cjs
+
+          printf '%s\n' "$GITHUB_SHA" > .next/standalone/REVISION
 
           # Basic release integrity checks.
           test -f .next/standalone/server.js
