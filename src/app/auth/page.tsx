@@ -15,7 +15,7 @@ export default async function AuthPage() {
         <div className="mb-6 flex flex-col items-center gap-4 overflow-hidden rounded-2xl border border-slate-700/70 bg-slate-900/85 p-4 shadow-lg shadow-black/20 sm:flex-row sm:justify-start sm:p-6">
           <div className="flex shrink-0 items-center justify-center">
             <Image
-              src="/SVG/乒协徽章.svg"
+              src="/SVG/tta-badge.svg"
               alt="USTC TTA 徽章"
               width={80}
               height={80}
@@ -25,7 +25,7 @@ export default async function AuthPage() {
           </div>
           <div className="flex min-w-0 w-full items-center sm:justify-start">
             <Image
-              src="/SVG/乒协文字.svg"
+              src="/SVG/tta-wordmark.svg"
               alt="中国科学技术大学乒乓球协会"
               width={480}
               height={120}

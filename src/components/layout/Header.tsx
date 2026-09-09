@@ -75,7 +75,7 @@ export default function Header({
           >
             <span className="grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-md border border-white/[0.08] bg-white/[0.035]">
               <Image
-                src="/SVG/乒协徽章.svg"
+                src="/SVG/tta-badge.svg"
                 alt="USTC TTA"
                 width={28}
                 height={28}
@@ -83,11 +83,11 @@ export default function Header({
               />
             </span>
             <Image
-              src="/SVG/乒协文字.svg"
+              src="/SVG/tta-wordmark.svg"
               alt="乒协赛事平台"
               width={132}
               height={28}
-              className="h-7 w-auto object-contain"
+              className="h-7 w-auto min-w-0 object-contain"
               priority
             />
           </Link>
@@ -145,7 +145,7 @@ export default function Header({
 
           <button
             type="button"
-            className="btn-secondary rounded-md p-2 text-slate-200 md:hidden"
+            className="btn-secondary shrink-0 rounded-md p-2 text-slate-200 md:hidden"
             aria-label="打开菜单"
             onClick={() => setIsMenuOpen((prev) => !prev)}
           >

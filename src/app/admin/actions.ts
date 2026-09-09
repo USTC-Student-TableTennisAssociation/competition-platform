@@ -1,19 +1,30 @@
 'use server'
 
-import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto'
-import { cookies } from 'next/headers'
-import { revalidatePath } from 'next/cache'
-import { MatchStatus, TeamRegistrationStatus } from '@prisma/client'
-import { prisma } from '@/lib/prisma'
+import { getAuditContext,writeAuditLog } from '@/lib/audit-log'
 import { getCurrentUser } from '@/lib/auth'
+import { sendAzureEmail } from '@/lib/azure-email'
 import { validateCsrfToken } from '@/lib/csrf'
 import { hashPassword } from '@/lib/password'
-import { shouldUseSecureCookies } from '@/lib/session'
-import { sendAzureEmail } from '@/lib/azure-email'
-import { getAuditContext, writeAuditLog } from '@/lib/audit-log'
-import { isMatchAllResultsFinished } from '@/lib/match-status'
-import { setUserBanState } from '@/lib/server/user/ban-user'
+import { prisma } from '@/lib/prisma'
+import { lockMatchForEngine } from '@/lib/server/match/engine-guard'
 import { deliverNotificationOutboxItems } from '@/lib/server/notification/outbox'
+import { lockAdminRoleChangeMutex } from '@/lib/server/user/admin-role-mutex'
+import { setUserBanState,setUsersBanState } from '@/lib/server/user/ban-user'
+import {
+getHardDeleteUsersBlockedMessage,
+hardDeleteUsersWithoutBusinessHistory,
+} from '@/lib/server/user/hard-delete-users'
+import { lockUsersForUpdate } from '@/lib/server/user/lock-users'
+import { shouldUseSecureCookies } from '@/lib/session'
+import { createV2EntryInTransaction } from '@/modules/competitions-v2/application/entries'
+import {
+resolveAdminBulkRegistrationPolicy,
+resolveMatchListRegistrationSummary,
+} from '@/modules/competitions-v2/read-model/match-list-registration'
+import { MatchStatus,TeamRegistrationStatus } from '@prisma/client'
+import { revalidatePath } from 'next/cache'
+import { cookies } from 'next/headers'
+import { createHash,createHmac,randomBytes,randomInt,timingSafeEqual } from 'node:crypto'
 
 const ADMIN_REAUTH_COOKIE = 'ustc_tta_admin_reauth'
 const ADMIN_EMAIL_CHALLENGE_COOKIE = 'ustc_tta_admin_email_challenge'
@@ -39,10 +50,16 @@ export type AdminDashboardMatch = {
   id: string
   title: string
   status: string
-  type: string
+  engineVersion: 'LEGACY' | 'V2'
+  isQuickMatch: boolean
+  type: 'single' | 'double' | 'team'
+  format: 'group_only' | 'group_then_knockout'
   dateTime: string
   registrationDeadline: string
   currentParticipants: number
+  participantUnit: 'people' | 'pairs' | 'teams'
+  canBulkRegister: boolean
+  bulkRegisterDisabledReason: string | null
 }
 
 export type AdminDashboardAuditLog = {
@@ -84,6 +101,7 @@ type AdminDashboardUserRow = {
   updatedAt: Date
   registrations: Array<{ createdAt: Date }>
   reportedResults: Array<{ createdAt: Date }>
+  resultRevisionsReported: Array<{ createdAt: Date }>
   createdMatches: Array<{ createdAt: Date }>
 }
 
@@ -92,6 +110,8 @@ type AdminDashboardMatchRow = {
   title: string
   type: 'single' | 'double' | 'team'
   status: MatchStatus
+  engineVersion: 'LEGACY' | 'V2'
+  isQuickMatch: boolean
   format: 'group_only' | 'group_then_knockout'
   groupingGeneratedAt: Date | null
   groupingResult: { payload: unknown } | null
@@ -107,6 +127,7 @@ type AdminDashboardMatchRow = {
   registrationDeadline: Date
   _count: {
     registrations: number
+    entries: number
   }
   teamRegistrations: Array<{ id: string }>
 }
@@ -116,9 +137,7 @@ type AdminEditableUserRow = {
   role: 'user' | 'admin'
 }
 
-type AdminRegisterUserRow = {
-  id: string
-}
+
 
 const INITIAL_ADMIN_DASHBOARD_STATE: AdminDashboardState = {
   unlocked: false,
@@ -344,6 +363,20 @@ async function fetchAdminDashboardData() {
           orderBy: { createdAt: 'desc' },
           select: { createdAt: true },
         },
+        resultRevisionsReported: {
+          where: {
+            fixture: {
+              stage: { in: ['GROUP', 'KNOCKOUT'] },
+              match: {
+                engineVersion: 'V2',
+                isQuickMatch: false,
+              },
+            },
+          },
+          take: 1,
+          orderBy: { createdAt: 'desc' },
+          select: { createdAt: true },
+        },
         createdMatches: {
           take: 1,
           orderBy: { createdAt: 'desc' },
@@ -358,6 +391,8 @@ async function fetchAdminDashboardData() {
         title: true,
         type: true,
         status: true,
+        engineVersion: true,
+        isQuickMatch: true,
         format: true,
         groupingGeneratedAt: true,
         groupingResult: { select: { payload: true } },
@@ -377,6 +412,9 @@ async function fetchAdminDashboardData() {
         _count: {
           select: {
             registrations: { where: { user: { isBanned: false } } },
+            entries: {
+              where: { status: 'ACTIVE' },
+            },
           },
         },
         teamRegistrations: {
@@ -420,36 +458,12 @@ async function fetchAdminDashboardData() {
     console.error('fetchAdminDashboardData siteSetting failed', error)
   }
 
-  const matchesToFinish = matches.filter(
-    (match: AdminDashboardMatchRow) =>
-      match.type !== 'team' &&
-      match.status !== MatchStatus.finished &&
-      isMatchAllResultsFinished({
-        format: match.format,
-        groupingGeneratedAt: match.groupingGeneratedAt,
-        groupingResult: match.groupingResult,
-        results: match.results,
-      }),
-  )
-
-  if (matchesToFinish.length > 0) {
-    await prisma.$transaction(
-      matchesToFinish.map((match) =>
-        prisma.match.update({
-          where: { id: match.id },
-          data: { status: MatchStatus.finished },
-        }),
-      ),
-    )
-  }
-
-  const finishedMatchIds = new Set(matchesToFinish.map((match) => match.id))
-
   const mappedUsers: AdminDashboardUser[] = users.map((user: AdminDashboardUserRow) => {
     const lastActivityCandidates = [
       user.updatedAt,
       user.registrations[0]?.createdAt,
       user.reportedResults[0]?.createdAt,
+      user.resultRevisionsReported[0]?.createdAt,
       user.createdMatches[0]?.createdAt,
     ].filter((value): value is Date => Boolean(value))
 
@@ -470,16 +484,43 @@ async function fetchAdminDashboardData() {
     }
   })
 
-  const mappedMatches: AdminDashboardMatch[] = matches.map((match: AdminDashboardMatchRow) => ({
-    id: match.id,
-    title: match.title,
-    type: match.type,
-    status: finishedMatchIds.has(match.id) ? MatchStatus.finished : match.status,
-    dateTime: match.dateTime.toISOString(),
-    registrationDeadline: match.registrationDeadline.toISOString(),
-    currentParticipants:
-      match.type === 'team' ? match.teamRegistrations.length : match._count.registrations,
-  }))
+  const mappedMatches: AdminDashboardMatch[] = matches.map((match: AdminDashboardMatchRow) => {
+    const identity = {
+      engineVersion: match.engineVersion,
+      isQuickMatch: match.isQuickMatch,
+      type: match.type,
+      format: match.format,
+    }
+    const registrationSummary = resolveMatchListRegistrationSummary({
+      ...identity,
+      legacyParticipantCount:
+        match.type === 'team' ? match.teamRegistrations.length : match._count.registrations,
+      legacyCurrentUserRegistered: false,
+      activeEntryCount: match._count.entries,
+      currentUserActiveEntryKinds: [],
+    })
+    const bulkRegistrationPolicy = resolveAdminBulkRegistrationPolicy({
+      ...identity,
+      status: match.status,
+      groupingGeneratedAt: match.groupingGeneratedAt,
+    })
+
+    return {
+      id: match.id,
+      title: match.title,
+      engineVersion: match.engineVersion,
+      isQuickMatch: match.isQuickMatch,
+      type: match.type,
+      format: match.format,
+      status: match.engineVersion === 'LEGACY' ? MatchStatus.finished : match.status,
+      dateTime: match.dateTime.toISOString(),
+      registrationDeadline: match.registrationDeadline.toISOString(),
+      currentParticipants: registrationSummary.participants,
+      participantUnit: registrationSummary.participantUnit,
+      canBulkRegister: bulkRegistrationPolicy.canBulkRegister,
+      bulkRegisterDisabledReason: bulkRegistrationPolicy.disabledReason,
+    }
+  })
 
   const mappedAuditLogs: AdminDashboardAuditLog[] = auditLogs.map((log) => ({
     id: log.id,
@@ -720,7 +761,9 @@ export async function adminDashboardAction(
       const banned = String(formData.get('banned') ?? '') === 'true'
 
       if (!userId) throw new Error('缺少用户 ID。')
-      if (userId === admin.userId) throw new Error('不能封禁当前管理员自己。')
+      if (banned && userId === admin.userId) {
+        throw new Error('不能封禁当前管理员自己。')
+      }
 
       const result = await prisma.$transaction(
         (tx) =>
@@ -730,10 +773,17 @@ export async function adminDashboardAction(
             actorId: admin.userId,
             auditContext,
           }),
-        { maxWait: 5_000, timeout: 30_000 },
+        {
+          isolationLevel: 'Serializable',
+          maxWait: 5_000,
+          timeout: 30_000,
+        },
       )
       result.removedMatches.forEach((match) => {
         affectedMatchIds.add(match.id)
+      })
+      result.v2CorrectionCleanups.forEach((effect) => {
+        affectedMatchIds.add(effect.matchId)
       })
       if (result.notificationOutboxId) {
         notificationOutboxIds.add(result.notificationOutboxId)
@@ -761,14 +811,19 @@ export async function adminDashboardAction(
         },
       })
 
-      const protectedIds = new Set<string>([admin.userId])
-      targets.forEach((target: AdminEditableUserRow) => {
-        if (target.role === 'admin') {
-          protectedIds.add(target.id)
-        }
-      })
+      const protectedIds = new Set<string>()
+      if (banned) {
+        protectedIds.add(admin.userId)
+        targets.forEach((target: AdminEditableUserRow) => {
+          if (target.role === 'admin') {
+            protectedIds.add(target.id)
+          }
+        })
+      }
 
-      const editableIds = selectedUserIds.filter((id: string) => !protectedIds.has(id))
+      const editableIds = selectedUserIds
+        .filter((id: string) => !protectedIds.has(id))
+        .sort()
       if (editableIds.length === 0) {
         throw new Error('未找到可操作用户（管理员账号不可批量封禁）。')
       }
@@ -784,17 +839,12 @@ export async function adminDashboardAction(
 
       const results = await prisma.$transaction(
         async (tx) => {
-          const changed = []
-          for (const userId of editableIds) {
-            changed.push(
-              await setUserBanState(tx, {
-                userId,
-                banned,
-                actorId: admin.userId,
-                auditContext,
-              }),
-            )
-          }
+          const changed = await setUsersBanState(tx, {
+            userIds: editableIds,
+            banned,
+            actorId: admin.userId,
+            auditContext,
+          })
 
           await tx.auditLog.create({
             data: {
@@ -815,10 +865,17 @@ export async function adminDashboardAction(
 
           return changed
         },
-        { maxWait: 5_000, timeout: 30_000 },
+        {
+          isolationLevel: 'Serializable',
+          maxWait: 5_000,
+          timeout: 30_000,
+        },
       )
       results.forEach((result) => {
         result.removedMatches.forEach((match) => affectedMatchIds.add(match.id))
+        result.v2CorrectionCleanups.forEach((effect) => {
+          affectedMatchIds.add(effect.matchId)
+        })
         if (result.notificationOutboxId) {
           notificationOutboxIds.add(result.notificationOutboxId)
         }
@@ -828,30 +885,17 @@ export async function adminDashboardAction(
     if (intent === 'deleteUser') {
       const userId = String(formData.get('userId') ?? '')
       if (!userId) throw new Error('缺少用户 ID。')
-      if (userId === admin.userId) throw new Error('不能删除当前管理员自己。')
 
-      const target = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { role: true, nickname: true, email: true },
-      })
-
-      if (target?.role === 'admin') {
-        throw new Error('不允许直接删除管理员账号。')
-      }
-
-      await prisma.user.delete({ where: { id: userId } })
-
-      await writeAuditLog({
-        actorId: admin.userId,
-        action: 'user.delete',
-        entityType: 'User',
-        entityId: userId,
-        details: {
-          targetLabel: target ? `${target.nickname} (${target.email})` : userId,
-        },
-        ip: auditContext.ip,
-        userAgent: auditContext.userAgent,
-      })
+      await prisma.$transaction(
+        (tx) =>
+          hardDeleteUsersWithoutBusinessHistory(tx, {
+            actorId: admin.userId,
+            userIds: [userId],
+            mode: 'single',
+            auditContext,
+          }),
+        { isolationLevel: 'Serializable', maxWait: 5_000, timeout: 30_000 },
+      )
     }
 
     if (intent === 'bulkDeleteUsers') {
@@ -862,58 +906,16 @@ export async function adminDashboardAction(
         throw new Error('请先选择要删除的用户。')
       }
 
-      const targets = await prisma.user.findMany({
-        where: {
-          id: { in: selectedUserIds },
-        },
-        select: {
-          id: true,
-          role: true,
-          nickname: true,
-          email: true,
-        },
-      })
-
-      const protectedIds = new Set<string>([admin.userId])
-      targets.forEach((target: AdminEditableUserRow) => {
-        if (target.role === 'admin') {
-          protectedIds.add(target.id)
-        }
-      })
-
-      const deletableIds = selectedUserIds.filter((id: string) => !protectedIds.has(id))
-      if (deletableIds.length === 0) {
-        throw new Error('未找到可删除用户（管理员账号不可批量删除）。')
-      }
-
-      await prisma.user.deleteMany({
-        where: {
-          id: { in: deletableIds },
-        },
-      })
-
-      const summary = summarizeTargets(
-        targets
-          .filter((target) => deletableIds.includes(target.id))
-          .map((target) => ({
-            id: target.id,
-            label: `${target.nickname} (${target.email})`,
-          })),
+      await prisma.$transaction(
+        (tx) =>
+          hardDeleteUsersWithoutBusinessHistory(tx, {
+            actorId: admin.userId,
+            userIds: selectedUserIds,
+            mode: 'bulk',
+            auditContext,
+          }),
+        { isolationLevel: 'Serializable', maxWait: 5_000, timeout: 30_000 },
       )
-
-      await writeAuditLog({
-        actorId: admin.userId,
-        action: 'user.bulk.delete',
-        entityType: 'User',
-        entityId: 'bulk',
-        details: {
-          count: deletableIds.length,
-          userIds: deletableIds,
-          targetLabels: summary.labels,
-        },
-        ip: auditContext.ip,
-        userAgent: auditContext.userAgent,
-      })
     }
 
     if (intent === 'updateUser') {
@@ -963,47 +965,77 @@ export async function adminDashboardAction(
         throw new Error('不能取消自己的管理员权限。')
       }
 
-      const target = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { role: true, nickname: true, email: true },
-      })
+      await prisma.$transaction(
+        async (tx) => {
+          // Every role change takes the same transaction-scoped mutex. This
+          // serializes the "last administrator" check without a schema change.
+          await lockAdminRoleChangeMutex(tx)
+          await lockUsersForUpdate(tx, [admin.userId, userId])
 
-      if (!target) {
-        throw new Error('用户不存在。')
-      }
+          const [actor, target] = await Promise.all([
+            tx.user.findUnique({
+              where: { id: admin.userId },
+              select: { role: true, isBanned: true, emailVerifiedAt: true },
+            }),
+            tx.user.findUnique({
+              where: { id: userId },
+              select: { role: true, nickname: true, email: true },
+            }),
+          ])
 
-      if (target.role === 'admin' && role === 'user') {
-        const otherAdminCount = await prisma.user.count({
-          where: {
-            role: 'admin',
-            id: { not: userId },
-          },
-        })
-        if (otherAdminCount === 0) {
-          throw new Error('至少保留一个管理员账号。')
-        }
-      }
+          if (
+            !actor ||
+            actor.role !== 'admin' ||
+            actor.isBanned ||
+            !actor.emailVerifiedAt
+          ) {
+            throw new Error('管理员权限已发生变化，请重新登录后重试。')
+          }
+          if (!target) throw new Error('用户不存在。')
+          if (userId === admin.userId && role !== 'admin') {
+            throw new Error('不能取消自己的管理员权限。')
+          }
 
-      if (target.role !== role) {
-        await prisma.user.update({
-          where: { id: userId },
-          data: { role },
-        })
+          if (target.role === 'admin' && role === 'user') {
+            const otherAdminCount = await tx.user.count({
+              where: {
+                role: 'admin',
+                id: { not: userId },
+              },
+            })
+            if (otherAdminCount === 0) {
+              throw new Error('至少保留一个管理员账号。')
+            }
+          }
 
-        await writeAuditLog({
-          actorId: admin.userId,
-          action: 'user.role.change',
-          entityType: 'User',
-          entityId: userId,
-          details: {
-            from: target.role,
-            to: role,
-            targetLabel: target ? `${target.nickname} (${target.email})` : userId,
-          },
-          ip: auditContext.ip,
-          userAgent: auditContext.userAgent,
-        })
-      }
+          if (target.role === role) return
+
+          await tx.user.update({
+            where: { id: userId },
+            data: { role },
+          })
+          await tx.auditLog.create({
+            data: {
+              actorId: admin.userId,
+              action: 'user.role.change',
+              entityType: 'User',
+              entityId: userId,
+              details: {
+                from: target.role,
+                to: role,
+                targetLabel: `${target.nickname} (${target.email})`,
+              },
+              ip: auditContext.ip,
+              userAgent: auditContext.userAgent,
+            },
+          })
+        },
+        {
+          isolationLevel: 'Serializable',
+          maxWait: 5_000,
+          timeout: 30_000,
+        },
+      )
     }
 
     let createdTestAccounts: string[] | undefined
@@ -1094,59 +1126,114 @@ export async function adminDashboardAction(
         throw new Error('请至少选择一个用户。')
       }
 
-      const match = await prisma.match.findUnique({
-        where: { id: matchId },
-        select: {
-          id: true,
-          title: true,
-          type: true,
-          _count: {
+      const { match, toRegister, createdCount } = await prisma.$transaction(
+        async (tx) => {
+          const matchIdentity = await tx.match.findUnique({
+            where: { id: matchId },
+            select: { engineVersion: true },
+          })
+          if (!matchIdentity) throw new Error('比赛不存在。')
+          if (matchIdentity.engineVersion !== 'V2') throw new Error('历史比赛已归档，不能追加报名。')
+
+          await lockMatchForEngine(tx, {
+            matchId,
+            expectedEngine: matchIdentity.engineVersion,
+            expectedQuickMatch: false,
+          })
+
+          const lockedMatch = await tx.match.findUnique({
+            where: { id: matchId },
             select: {
-              registrations: { where: { user: { isBanned: false } } },
+              id: true,
+              title: true,
+              type: true,
+              engineVersion: true,
+              status: true,
+              groupingGeneratedAt: true,
             },
-          },
+          })
+          if (!lockedMatch) throw new Error('比赛不存在。')
+          if (lockedMatch.type === 'double') {
+            throw new Error('双打比赛请先完成组队邀请并由小队成员自行报名。')
+          }
+          if (lockedMatch.type === 'team') {
+            throw new Error('团体赛请在比赛详情页通过队伍报名与审核管理。')
+          }
+          if (
+            lockedMatch.engineVersion === 'V2' &&
+            (lockedMatch.status !== 'registration' ||
+              lockedMatch.groupingGeneratedAt !== null)
+          ) {
+            throw new Error('V2 比赛分组发布后不能追加报名。')
+          }
+
+          const candidates = selectedUserIds.length > 0
+            ? await tx.user.findMany({
+                where: { id: { in: selectedUserIds }, isBanned: false },
+                select: { id: true },
+              })
+            : await tx.user.findMany({
+                where: { email: { in: emails }, isBanned: false },
+                select: { id: true },
+              })
+
+          await lockUsersForUpdate(tx, [
+            admin.userId,
+            ...candidates.map((user) => user.id),
+          ])
+          const lockedAdmin = await tx.user.findUnique({
+            where: { id: admin.userId },
+            select: { role: true, isBanned: true, emailVerifiedAt: true },
+          })
+          if (
+            !lockedAdmin ||
+            lockedAdmin.role !== 'admin' ||
+            lockedAdmin.isBanned ||
+            !lockedAdmin.emailVerifiedAt
+          ) {
+            throw new Error('管理员权限已发生变化，请重新登录后重试。')
+          }
+
+          const users = await tx.user.findMany({
+            where: {
+              id: { in: candidates.map((user) => user.id) },
+              isBanned: false,
+              ...(lockedMatch.engineVersion === 'V2'
+                ? { emailVerifiedAt: { not: null } }
+                : {}),
+              ...(selectedUserIds.length > 0 ? {} : { email: { in: emails } }),
+            },
+            select: { id: true },
+          })
+
+          if (users.length === 0) {
+            throw new Error('未找到可加入比赛的有效用户（可能不存在或已被封禁）。')
+          }
+
+          let createdCount = 0
+          if (lockedMatch.engineVersion === 'V2') {
+            for (const user of users) {
+              const result = await createV2EntryInTransaction(tx, {
+                actor: { id: admin.userId, role: 'admin' },
+                matchId,
+                kind: 'INDIVIDUAL',
+                sourceId: user.id,
+                status: 'ACTIVE',
+                adminOverride: true,
+                overrideReason: '管理员控制台批量代报名',
+              })
+              if (result.created) createdCount += 1
+            }
+          }
+
+          return { match: lockedMatch, toRegister: users, createdCount }
         },
-      })
-
-      if (!match) throw new Error('比赛不存在。')
-      if (match.type === 'double') {
-        throw new Error('双打比赛请先完成组队邀请并由小队成员自行报名。')
-      }
-      if (match.type === 'team') {
-        throw new Error('团体赛请在比赛详情页通过队伍报名与审核管理。')
-      }
-
-      const users = selectedUserIds.length > 0
-        ? await prisma.user.findMany({
-            where: {
-              id: { in: selectedUserIds },
-              isBanned: false,
-            },
-            select: { id: true },
-          })
-        : await prisma.user.findMany({
-            where: {
-              email: { in: emails },
-              isBanned: false,
-            },
-            select: { id: true },
-          })
-
-      if (users.length === 0) {
-        throw new Error('未找到可加入比赛的有效用户（可能不存在或已被封禁）。')
-      }
-
-      const toRegister = users
-
-      await prisma.registration.createMany({
-        data: toRegister.map((user: AdminRegisterUserRow) => ({
-          matchId,
-          userId: user.id,
-          status: 'registered',
-          role: 'player',
-        })),
-        skipDuplicates: true,
-      })
+        {
+          isolationLevel: 'Serializable',
+          maxWait: 5_000,
+          timeout: 30_000,
+        },
+      )
 
       await writeAuditLog({
         actorId: admin.userId,
@@ -1155,6 +1242,8 @@ export async function adminDashboardAction(
         entityId: matchId,
         details: {
           count: toRegister.length,
+          createdCount,
+          engineVersion: match.engineVersion,
           userIds: toRegister.map((u) => u.id),
           matchTitle: match.title,
           targetLabel: match.title,
@@ -1169,7 +1258,7 @@ export async function adminDashboardAction(
 
       return {
         unlocked: true,
-        success: `操作成功，已尝试将 ${toRegister.length} 个用户加入所选比赛。`,
+        success: `操作成功，已尝试将 ${toRegister.length} 个用户加入所选比赛，新加入 ${createdCount} 人。`,
         users: data.users,
         matches: data.matches,
         auditLogs: data.auditLogs,
@@ -1223,11 +1312,14 @@ export async function adminDashboardAction(
       createdTestAccounts,
     }
   } catch (error) {
-    console.error('adminDashboardAction failed', error)
+    const hardDeleteBlockedMessage = getHardDeleteUsersBlockedMessage(error)
+    if (!hardDeleteBlockedMessage) {
+      console.error('adminDashboardAction failed', error)
+    }
     const data = await fetchAdminDashboardData()
     return {
       unlocked: true,
-      error: '管理员操作失败，请重试。',
+      error: hardDeleteBlockedMessage ?? '管理员操作失败，请重试。',
       users: data.users,
       matches: data.matches,
       auditLogs: data.auditLogs,

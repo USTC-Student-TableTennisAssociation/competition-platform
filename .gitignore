@@ -12,6 +12,10 @@
 
 # testing
 /coverage
+/output/playwright/
+/.domain-test-build/
+/.v2-test-build/
+/.local-postgres/
 
 # next.js
 /.next/

@@ -21,6 +21,7 @@ import {
   type MatchPostFormState,
 } from "@/app/match-posts/actions";
 import { VENUE_OPTIONS } from "@/lib/locations";
+import styles from "./PersonalHome.module.css";
 
 type MatchPostUser = {
   id: string;
@@ -53,12 +54,14 @@ export type FreeMatchPostItem = {
 type Props = {
   posts: FreeMatchPostItem[];
   currentUserId: string | null;
+  compact?: boolean;
 };
 
 const initialState: MatchPostFormState = {};
 
 function formatDateTime(value: string) {
   return new Date(value).toLocaleString("zh-CN", {
+    timeZone: "Asia/Shanghai",
     month: "2-digit",
     day: "2-digit",
     weekday: "short",
@@ -499,27 +502,43 @@ function MatchPostCard({
   );
 }
 
-export default function FreeMatchHall({ posts, currentUserId }: Props) {
+export default function FreeMatchHall({ posts, currentUserId, compact = false }: Props) {
   const [createOpen, setCreateOpen] = useState(false);
   const [applyingPost, setApplyingPost] = useState<FreeMatchPostItem | null>(null);
 
+  function renderSummary(post: FreeMatchPostItem) {
+    return (
+      <details className={styles.postSummary} key={post.id}>
+        <summary>
+          <span className={styles.postTitle}>{post.description || `${post.creator.nickname}的约球`}</span>
+          <span>{formatDateTime(post.playAt)} · {post.location}</span>
+          <span className={styles.postFoot}>
+            <span>{post.creator.id === currentUserId ? "我发布的" : post.creator.nickname}</span>
+            <span className={styles.postDetailLabel}>{post.applications.length > 0 ? `${post.applications.length} 条申请` : post.currentUserApplicationStatus ? "已申请 · 详情" : "查看详情"}</span>
+          </span>
+        </summary>
+        <div className={styles.postExpanded}>
+          <MatchPostCard post={post} currentUserId={currentUserId} onApply={setApplyingPost} />
+        </div>
+      </details>
+    );
+  }
+
   return (
-    <section className="overflow-hidden rounded-lg border border-[#30363d] bg-[#0d1117]">
-      <div className="flex flex-col gap-3 border-b border-[#30363d] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+    <section className={compact ? styles.freeHall : "overflow-hidden rounded-lg border border-[#30363d] bg-[#0d1117]"}>
+      <div className={compact ? styles.matchHeader : "flex flex-col gap-3 border-b border-slate-400/15 px-5 py-5 sm:flex-row sm:items-center sm:justify-between"}>
         <div>
-          <h2 className="text-base font-semibold text-slate-100">自由约球</h2>
-          <p className="mt-1 text-sm text-slate-400">
-            发布临时约战，寻找合适水平的球友
-          </p>
+          <h2 className={compact ? styles.sectionTitle : "text-lg font-semibold text-slate-100"}>自由约球</h2>
+          {!compact ? <p className="mt-1 text-sm text-slate-400">发布临时约战，寻找合适水平的球友</p> : null}
         </div>
         {currentUserId ? (
           <button
             type="button"
             onClick={() => setCreateOpen(true)}
-            className="inline-flex items-center justify-center gap-2 rounded-md bg-cyan-500 px-3 py-2 text-sm font-semibold text-[#010409] hover:bg-cyan-400"
+            className={compact ? styles.allMatches : "inline-flex items-center justify-center gap-2 rounded-md bg-cyan-500 px-3 py-2 text-sm font-semibold text-[#010409] hover:bg-cyan-400"}
           >
             <Plus className="h-4 w-4" />
-            发布约球
+            {compact ? "发布" : "发布约球"}
           </button>
         ) : (
           <a
@@ -531,7 +550,14 @@ export default function FreeMatchHall({ posts, currentUserId }: Props) {
         )}
       </div>
 
-      {posts.length > 0 ? (
+      {compact ? (
+        posts.length ? (
+          <>
+            {posts.slice(0, 2).map(renderSummary)}
+            {posts.length > 2 ? <details className={styles.moreMatches}><summary>更多约球（{posts.length - 2}）</summary>{posts.slice(2).map(renderSummary)}</details> : null}
+          </>
+        ) : <p className={styles.postEmpty}>暂时没有约球邀请</p>
+      ) : posts.length > 0 ? (
         posts.map((post) => (
           <MatchPostCard
             key={post.id}

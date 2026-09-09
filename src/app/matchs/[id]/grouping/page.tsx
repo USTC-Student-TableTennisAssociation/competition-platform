@@ -1,13 +1,30 @@
-import { ArrowLeft } from "lucide-react";
-import Link from "next/link";
-import { notFound } from "next/navigation";
-import { MatchType } from "@prisma/client";
-import GroupingAdminPanel from "@/components/match/GroupingAdminPanel";
+import V2DoubleGroupingPanel from "@/components/match/v2/V2DoubleGroupingPanel";
+import V2SingleGroupingPanel from "@/components/match/v2/V2SingleGroupingPanel";
+import V2TeamGroupingPanel from "@/components/match/v2/V2TeamGroupingPanel";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { generateGroupingPayload } from "@/lib/tournament";
-import { getApprovedTeamGroupingCompetitors } from "@/lib/server/match/team-grouping";
-import type { CompetitorType } from "@/lib/match-competitor";
+import {
+getV2GroupOnlyGroupingReadModel,
+V2_DOUBLE_GROUPING_READ_PROFILE,
+V2_SINGLE_GROUPING_READ_PROFILE,
+V2_TEAM_GROUPING_READ_PROFILE,
+V2GroupOnlyGroupingReadIntegrityError,
+} from "@/modules/competitions-v2/read-model/group-only-grouping";
+import { ArrowLeft } from "lucide-react";
+import Link from "next/link";
+import { notFound, redirect } from "next/navigation";
+
+function BackToMatchLink({ matchId }: { matchId: string }) {
+  return (
+    <Link
+      href={`/matchs/${matchId}`}
+      className="inline-flex items-center gap-2 text-slate-400 hover:text-slate-200"
+    >
+      <ArrowLeft className="h-4 w-4" />
+      返回比赛详情
+    </Link>
+  );
+}
 
 export default async function MatchGroupingManagePage({
   params,
@@ -16,152 +33,183 @@ export default async function MatchGroupingManagePage({
 }) {
   const { id } = await params;
 
-  const [match, currentUser] = await Promise.all([
+  const [engineDiscriminator, currentUser] = await Promise.all([
     prisma.match.findUnique({
       where: { id },
-      include: {
-        registrations: {
-          where: {
-            user: { isBanned: false },
-          },
-          include: {
-            user: {
-              select: {
-                id: true,
-                nickname: true,
-                eloRating: true,
-                points: true,
-              },
-            },
-          },
-          orderBy: { createdAt: "asc" },
-        },
-        groupingResult: true,
+      select: {
+        id: true,
+        engineVersion: true,
+        createdBy: true,
+        type: true,
+        format: true,
       },
     }),
     getCurrentUser(),
   ]);
 
-  if (!match) notFound();
+  if (!engineDiscriminator) notFound();
+  if (
+    !currentUser ||
+    (currentUser.id !== engineDiscriminator.createdBy &&
+      currentUser.role !== "admin")
+  ) {
+    notFound();
+  }
 
-  const now = new Date();
-  const isCreator = currentUser?.id === match.createdBy;
-  const isAdmin = currentUser?.role === "admin";
-  const canManageGrouping = Boolean(currentUser && (isCreator || isAdmin));
+  if (engineDiscriminator.engineVersion === "V2") {
+    const readProfile =
+      engineDiscriminator.type === "single"
+        ? V2_SINGLE_GROUPING_READ_PROFILE
+        : engineDiscriminator.type === "double"
+          ? V2_DOUBLE_GROUPING_READ_PROFILE
+          : engineDiscriminator.type === "team"
+            ? V2_TEAM_GROUPING_READ_PROFILE
+            : null;
+    if (!readProfile) notFound();
 
-  if (!canManageGrouping) notFound();
+    let readModel;
+    try {
+      readModel = await getV2GroupOnlyGroupingReadModel(
+        prisma,
+        id,
+        readProfile,
+      );
+    } catch (error) {
+      if (error instanceof V2GroupOnlyGroupingReadIntegrityError) {
+        console.error("V2 grouping read model integrity check failed", {
+          matchId: error.matchId,
+          entityId: error.entityId,
+        });
+        notFound();
+      }
+      throw error;
+    }
 
-  const competitorType: CompetitorType =
-    match.type === MatchType.team ? "team" : "user";
-  const participants =
-    competitorType === "team"
-      ? await getApprovedTeamGroupingCompetitors(match.id)
-      : match.registrations.map((item) => item.user);
-  const groupingDeadline =
-    competitorType === "team"
-      ? (match.teamRegistrationDeadline ?? match.registrationDeadline)
-      : match.registrationDeadline;
+    if (readModel.kind === "MATCH_NOT_FOUND") notFound();
+    if (
+      readModel.kind !== "GROUP_ONLY_V2_MATCH" &&
+      readModel.kind !== "GROUP_THEN_KNOCKOUT_V2_MATCH"
+    ) {
+      notFound();
+    }
+    if (
+      currentUser.id !== readModel.match.createdBy &&
+      currentUser.role !== "admin"
+    ) {
+      notFound();
+    }
 
-  const groupingPayload = (match.groupingResult?.payload ?? null) as {
-    competitorType?: CompetitorType;
-    config?: {
-      groupCount?: number;
-      qualifiersPerGroup?: number;
-      seedMethod?: "min_diff" | "snake";
-    };
-    groups: Array<{
-      name: string;
-      averagePoints: number;
-      players: Array<{
-        id: string;
-        nickname: string;
-        points: number;
-        eloRating: number;
-      }>;
-    }>;
-    knockout?: {
-      stage: string;
-      bracketSize: number;
-      rounds: Array<{
-        name: string;
-        matches: Array<{ id: string; homeLabel: string; awayLabel: string }>;
-      }>;
-    };
-  } | null;
-
-  const defaultGroupCount = Math.max(
-    1,
-    Math.min(
-      8,
-      Math.ceil(
-        participants.length / (match.format === "group_only" ? 6 : 4),
+    const activeEntries = readModel.activeEntries;
+    const defaultGroupCount = Math.max(
+      1,
+      Math.min(
+        8,
+        Math.ceil(
+          activeEntries.length /
+            (readModel.match.format === "group_then_knockout" ? 4 : 6),
+        ),
       ),
-    ),
-  );
+    );
+    const published = readModel.published;
+    const publishedGroups = readModel.groups.map((group) => ({
+      groupKey: group.groupKey,
+      label: group.displayName,
+      tableLabels: group.tableLabels,
+      expectedFixtures: group.fixtures.map((fixture) => ({
+        fixtureId: fixture.fixtureId,
+        version: fixture.fixtureVersion,
+      })),
+      competitorNames: group.entries.map((entry) => entry.frozenDisplayName),
+    }));
+    const canEditTableLabels = Boolean(
+      readModel.match.groupingGeneratedAt !== null &&
+        readModel.match.status === "ongoing" &&
+        publishedGroups.length > 0 &&
+        publishedGroups.every((group) => group.expectedFixtures.length > 0),
+    );
 
-  const fallbackGroupingPayload =
-    !groupingPayload &&
-    now >= groupingDeadline &&
-    participants.length >= 2
-      ? (() => {
-          try {
-            return generateGroupingPayload(
-              match.format,
-              participants.map((item) => ({
-                id: item.id,
-                nickname: item.nickname,
-                points: item.points,
-                eloRating: item.eloRating,
-              })),
-              {
-                groupCount: defaultGroupCount,
-                qualifiersPerGroup:
-                  match.format === "group_then_knockout" ? 2 : undefined,
-                seedMethod: "min_diff",
-                competitorType,
-              },
-            );
-          } catch {
-            return null;
-          }
-        })()
-      : null;
+    return (
+      <div className="mx-auto max-w-5xl space-y-8">
+        <BackToMatchLink matchId={readModel.match.id} />
+        {readModel.match.type === "single" ? (
+          <V2SingleGroupingPanel
+            matchId={readModel.match.id}
+            participantCount={activeEntries.length}
+            defaultGroupCount={defaultGroupCount}
+            format={readModel.match.format}
+            defaultQualifiersPerGroup={
+              readModel.kind === "GROUP_THEN_KNOCKOUT_V2_MATCH"
+                ? (readModel.qualifiersPerGroup ?? 2)
+                : undefined
+            }
+            published={published}
+            managementState={
+              readModel.kind === "GROUP_THEN_KNOCKOUT_V2_MATCH"
+                ? readModel.managementState
+                : undefined
+            }
+            knockoutSummary={
+              readModel.kind === "GROUP_THEN_KNOCKOUT_V2_MATCH"
+                ? readModel.knockout
+                : null
+            }
+            canEditTableLabels={canEditTableLabels}
+            publishedGroups={publishedGroups}
+          />
+        ) : readModel.match.type === "double" ? (
+          <V2DoubleGroupingPanel
+            matchId={readModel.match.id}
+            participantCount={activeEntries.length}
+            defaultGroupCount={defaultGroupCount}
+            format={readModel.match.format}
+            defaultQualifiersPerGroup={
+              readModel.kind === "GROUP_THEN_KNOCKOUT_V2_MATCH"
+                ? (readModel.qualifiersPerGroup ?? 2)
+                : undefined
+            }
+            published={published}
+            managementState={
+              readModel.kind === "GROUP_THEN_KNOCKOUT_V2_MATCH"
+                ? readModel.managementState
+                : undefined
+            }
+            knockoutSummary={
+              readModel.kind === "GROUP_THEN_KNOCKOUT_V2_MATCH"
+                ? readModel.knockout
+                : null
+            }
+            canEditTableLabels={canEditTableLabels}
+            publishedGroups={publishedGroups}
+          />
+        ) : (
+          <V2TeamGroupingPanel
+            matchId={readModel.match.id}
+            participantCount={activeEntries.length}
+            defaultGroupCount={defaultGroupCount}
+            format={readModel.match.format}
+            defaultQualifiersPerGroup={
+              readModel.kind === "GROUP_THEN_KNOCKOUT_V2_MATCH"
+                ? (readModel.qualifiersPerGroup ?? 2)
+                : undefined
+            }
+            published={published}
+            managementState={
+              readModel.kind === "GROUP_THEN_KNOCKOUT_V2_MATCH"
+                ? readModel.managementState
+                : undefined
+            }
+            knockoutSummary={
+              readModel.kind === "GROUP_THEN_KNOCKOUT_V2_MATCH"
+                ? readModel.knockout
+                : null
+            }
+            canEditTableLabels={canEditTableLabels}
+            publishedGroups={publishedGroups}
+          />
+        )}
+      </div>
+    );
+  }
 
-  const initialGroupCount =
-    groupingPayload?.config?.groupCount ??
-    fallbackGroupingPayload?.config?.groupCount ??
-    defaultGroupCount;
-  const initialQualifiersPerGroup =
-    groupingPayload?.config?.qualifiersPerGroup ??
-    fallbackGroupingPayload?.config?.qualifiersPerGroup ??
-    (match.format === "group_then_knockout" ? 2 : 1);
-
-  return (
-    <div className="mx-auto max-w-5xl space-y-8">
-      <Link
-        href={`/matchs/${match.id}`}
-        className="inline-flex items-center gap-2 text-slate-400 hover:text-slate-200"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        返回比赛详情
-      </Link>
-
-      <GroupingAdminPanel
-        matchId={match.id}
-        initialPayloadJson={
-          groupingPayload
-            ? JSON.stringify(groupingPayload)
-            : fallbackGroupingPayload
-              ? JSON.stringify(fallbackGroupingPayload)
-              : undefined
-        }
-        collapsible={false}
-        matchFormat={match.format}
-        competitorType={competitorType}
-        participantCount={participants.length}
-        defaultGroupCount={initialGroupCount}
-        defaultQualifiersPerGroup={initialQualifiersPerGroup}
-      />
-    </div>
-  );
+  redirect(`/matchs/${id}`);
 }

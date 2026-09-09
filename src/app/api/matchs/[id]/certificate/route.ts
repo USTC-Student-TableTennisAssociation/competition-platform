@@ -1,20 +1,46 @@
+import { getCurrentUser } from "@/lib/auth";
+import {
+normalizeIdentityInput
+} from "@/lib/certificate";
+import { validateCsrfToken } from "@/lib/csrf";
+import { prisma } from "@/lib/prisma";
+import {
+createV2CertificateApplicationService,
+V2CertificateApplicationError,
+} from "@/modules/competitions-v2/application/certificates";
 import { NextResponse } from "next/server";
-import PDFDocument from "pdfkit";
-import { Prisma } from "@prisma/client";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
-import { validateCsrfToken } from "@/lib/csrf";
-import {
-  evaluateCertificateEligibility,
-  generateCertificateNumber,
-  hashIdentityValue,
-  normalizeIdentityInput,
-  verifyIdentityValue,
-} from "@/lib/certificate";
+import PDFDocument from "pdfkit";
 
 export const runtime = "nodejs";
+
+function v2CertificateErrorResponse(error: V2CertificateApplicationError) {
+  if (error.code === "MATCH_NOT_FOUND") {
+    return NextResponse.json({ error: error.message }, { status: 404 });
+  }
+  if (error.code === "ACTOR_NOT_ACTIVE") {
+    return NextResponse.json({ error: error.message }, { status: 401 });
+  }
+  if (
+    error.code === "INVALID_INPUT" ||
+    error.code === "NOT_ELIGIBLE" ||
+    error.code === "IDENTITY_MISMATCH"
+  ) {
+    return NextResponse.json({ error: error.message }, { status: 400 });
+  }
+  if (
+    error.code === "UNSUPPORTED_MATCH" ||
+    error.code === "CONCURRENT_WRITE_CONFLICT"
+  ) {
+    return NextResponse.json({ error: error.message }, { status: 409 });
+  }
+  if (error.code === "INTEGRITY_ERROR") {
+    console.error("v2-certificate-integrity-failed", error.details);
+    return NextResponse.json({ error: error.message }, { status: 409 });
+  }
+  return NextResponse.json({ error: error.message }, { status: 500 });
+}
 
 function buildPdfBuffer(params: {
   matchTitle: string;
@@ -118,153 +144,51 @@ export async function POST(
       return NextResponse.json({ error: "学号长度不能超过 32 个字符。" }, { status: 400 });
     }
 
-    const match = await prisma.match.findUnique({
+    const matchDiscriminator = await prisma.match.findUnique({
       where: { id },
-      include: {
-        registrations: { select: { userId: true } },
-        teamRegistrations: {
-          select: {
-            status: true,
-            captainId: true,
-            members: {
-              select: {
-                userId: true,
-              },
-            },
-          },
-        },
-        groupingResult: true,
-        results: {
-          select: {
-            winnerTeamIds: true,
-            loserTeamIds: true,
-            confirmed: true,
-            score: true,
-            createdAt: true,
-            resultVerifiedAt: true,
-          },
-        },
-      },
+      select: { id: true, engineVersion: true },
     });
-
-    if (!match) {
+    if (!matchDiscriminator) {
       return NextResponse.json({ error: "比赛不存在或已删除。" }, { status: 404 });
     }
 
-    const isRegistered =
-      match.type === "team"
-        ? match.teamRegistrations.some(
-            (team) =>
-              team.status === "approved" &&
-              (team.captainId === currentUser.id ||
-                team.members.some((member) => member.userId === currentUser.id)),
-          )
-        : match.registrations.some((item) => item.userId === currentUser.id);
-    if (!isRegistered) {
-      return NextResponse.json({ error: "你未报名本次比赛，无法导出证明。" }, { status: 403 });
-    }
+    if (matchDiscriminator.engineVersion === "V2") {
+      let issued;
+      try {
+        issued = await createV2CertificateApplicationService({ db: prisma }).issue({
+          matchId: id,
+          actorId: currentUser.id,
+          fullName: rawName,
+          studentId: rawStudentId,
+        });
+      } catch (error) {
+        if (error instanceof V2CertificateApplicationError) {
+          return v2CertificateErrorResponse(error);
+        }
+        throw error;
+      }
 
-    const eligibility = evaluateCertificateEligibility({
-      match: {
-        status: match.status,
-        type: match.type,
-        groupingResult: match.groupingResult,
-        groupingGeneratedAt: match.groupingGeneratedAt,
-        registrations: match.registrations,
-        teamRegistrations: match.teamRegistrations,
-        results: match.results,
-      },
-      currentUserId: currentUser.id,
-    });
-
-    if (!eligibility.eligible) {
-      return NextResponse.json(
-        { error: eligibility.reason ?? "暂不能导出参赛证明。" },
-        { status: 400 },
-      );
-    }
-
-    const identity = await prisma.userIdentity.findUnique({
-      where: { userId: currentUser.id },
-    });
-
-    if (!identity) {
-      await prisma.userIdentity.create({
-        data: {
-          userId: currentUser.id,
-          nameHash: hashIdentityValue(rawName),
-          studentIdHash: hashIdentityValue(rawStudentId),
+      // The durable number is committed before rendering. A font/PDF failure
+      // therefore retains the same retry behavior as the legacy branch.
+      const pdfBuffer = await buildPdfBuffer({
+        matchTitle: issued.matchTitle,
+        email: issued.email,
+        fullName: rawName,
+        studentId: rawStudentId,
+        certificateNo: issued.certificateNo,
+      });
+      const filename = `participation-certificate-${issued.certificateNo}.pdf`;
+      return new NextResponse(new Uint8Array(pdfBuffer), {
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Disposition": `attachment; filename="${filename}"`,
+          "Cache-Control": "no-store",
+          "X-Certificate-Number": issued.certificateNo,
         },
       });
-    } else {
-      const nameOk = verifyIdentityValue(rawName, identity.nameHash);
-      const studentOk = verifyIdentityValue(rawStudentId, identity.studentIdHash);
-      if (!nameOk || !studentOk) {
-        return NextResponse.json(
-          { error: "姓名或学号与已绑定信息不一致，请联系乒协干事。" },
-          { status: 400 },
-        );
-      }
     }
 
-    let certificate = await prisma.participationCertificate.findUnique({
-      where: {
-        matchId_userId: {
-          matchId: match.id,
-          userId: currentUser.id,
-        },
-      },
-    });
-
-    if (!certificate) {
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        const certificateNo = generateCertificateNumber();
-        try {
-          certificate = await prisma.participationCertificate.create({
-            data: {
-              matchId: match.id,
-              userId: currentUser.id,
-              certificateNo,
-            },
-          });
-          break;
-        } catch (error) {
-          if (
-            error instanceof Prisma.PrismaClientKnownRequestError &&
-            error.code === "P2002"
-          ) {
-            continue;
-          }
-          throw error;
-        }
-      }
-    }
-
-    if (!certificate) {
-      return NextResponse.json(
-        { error: "生成证明编号失败，请稍后重试。" },
-        { status: 500 },
-      );
-    }
-
-    const pdfBuffer = await buildPdfBuffer({
-      matchTitle: match.title,
-      email: currentUser.email,
-      fullName: rawName,
-      studentId: rawStudentId,
-      certificateNo: certificate.certificateNo,
-    });
-
-    const filename = `participation-certificate-${certificate.certificateNo}.pdf`;
-
-    return new NextResponse(new Uint8Array(pdfBuffer), {
-      headers: {
-        "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="${filename}"`,
-        "Cache-Control": "no-store",
-        "X-Certificate-Number": certificate.certificateNo,
-      },
-    });
+    return NextResponse.json({ error: "历史比赛已归档，不再提供证明签发。" }, { status: 410 });
   } catch (error) {
     console.error("certificate-export-failed", error);
     return NextResponse.json(

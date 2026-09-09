@@ -1,61 +1,146 @@
-import { Calendar, MapPin, Pencil, Users } from "lucide-react";
-import Link from "next/link";
+import ArchivedMatchDetail from "@/components/match/ArchivedMatchDetail";
+import V2DoubleMatchDetail from "@/components/match/v2/V2DoubleMatchDetail";
+import V2SingleMatchDetail from "@/components/match/v2/V2SingleMatchDetail";
+import V2TeamMatchDetail from "@/components/match/v2/V2TeamMatchDetail";
+import BackLinkButton from "@/components/navigation/BackLinkButton";
+import { getCurrentUser } from "@/lib/auth";
+import {
+getPendingMatchInvitesForUser,
+searchDoublesInviteCandidates
+} from "@/lib/doubles";
+import { prisma } from "@/lib/prisma";
+import {
+getV2CompetitionDetailReadModel,
+type V2CompetitionDetailReadModel,
+} from "@/modules/competitions-v2/read-model/competition-detail";
+import {
+V2DoubleRegistrationIntegrityError,
+} from "@/modules/competitions-v2/read-model/double-registration";
+import {
+getV2CertificateReadState,
+toV2CertificateSectionState,
+type V2CertificateSectionState,
+} from "@/modules/competitions-v2/read-model/single-certificate";
+import { V2SingleReadModelIntegrityError } from "@/modules/competitions-v2/read-model/single-match";
+import type { V2SingleViewer } from "@/modules/competitions-v2/read-model/single-match-view";
+import {
+V2TeamRegistrationIntegrityError,
+} from "@/modules/competitions-v2/read-model/team-registration";
 import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
-import { TeamRegistrationStatus } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
-import RegisterMatchButton from "@/components/match/RegisterMatchButton";
-import UnregisterMatchButton from "@/components/match/UnregisterMatchButton";
-import AdminResultsSection from "@/components/match/detail/AdminResultsSection";
-import GroupingResultSection from "@/components/match/detail/GroupingResultSection";
-import GroupsOverviewSection from "@/components/match/detail/GroupsOverviewSection";
-import MyProgressSection from "@/components/match/detail/MyProgressSection";
-import RegisteredPlayersSection from "@/components/match/detail/RegisteredPlayersSection";
-import ExportCertificateSection from "@/components/match/detail/ExportCertificateSection";
-import BackLinkButton from "@/components/navigation/BackLinkButton";
-import TeamRegistrationPanel from "@/components/match/TeamRegistrationPanel";
-import TeamMatchResultsPanel from "@/components/match/TeamMatchResultsPanel";
-import {
-  getDoublesTeamForUser,
-  getPendingMatchInvitesForUser,
-  getRegisteredDoublesTeams,
-  searchDoublesInviteCandidates,
-} from "@/lib/doubles";
-import {
-  acceptDoublesInviteAction,
-  revokeDoublesInviteAction,
-  sendDoublesInviteAction,
-} from "@/app/team-invites/actions";
-import {
-  buildAdminEligibleOptions,
-  buildAdminGroupBattleTables,
-  resolveFilledKnockoutRounds,
-} from "@/lib/match-detail";
-import {
-  buildAdminConfirmedResults,
-  buildAdminPendingResults,
-  buildInitialAdminFormContext,
-  extractPageParam,
-  paginateItems,
-} from "@/lib/match-detail-page";
-import { evaluateCertificateEligibility } from "@/lib/certificate";
-import {
-  getResultPhase,
-  resolveCompetitorType,
-} from "@/lib/match-competitor";
-import {
-  reconcileTeamGroupingPayload,
-  reconcileTeamResultCompetitorIds,
-} from "@/lib/server/match/team-grouping";
 
-const statusLabelMap = {
-  registration: "报名中",
-  ongoing: "进行中",
-  finished: "已结束",
-} as const;
+
 
 const ADMIN_MODE_COOKIE = "ustc_tta_admin_mode";
+
+function MatchDetailUnavailable() {
+  return (
+    <div className="mx-auto max-w-5xl space-y-5 sm:space-y-8">
+      <BackLinkButton fallbackHref="/matchs" />
+      <section className="surface-panel rounded-3xl p-5 sm:p-8">
+        <h1 className="text-xl font-bold text-white sm:text-2xl">
+          比赛详情暂不可用
+        </h1>
+        <p className="mt-3 text-sm leading-6 text-slate-400">
+          为避免读取或修改不一致的比赛数据，本页面已停止加载。请稍后重试或联系管理员。
+        </p>
+      </section>
+    </div>
+  );
+}
+
+type SingleV2DetailModel = Extract<
+  V2CompetitionDetailReadModel,
+  { kind: "SINGLE_V2_DETAIL" }
+>["model"];
+type DoubleV2DetailModel = Extract<
+  V2CompetitionDetailReadModel,
+  { kind: "DOUBLE_V2_DETAIL" }
+>["model"];
+type TeamV2DetailModel = Extract<
+  V2CompetitionDetailReadModel,
+  { kind: "TEAM_V2_DETAIL" }
+>["model"];
+
+async function renderV2SingleMatchDetail(
+  model: SingleV2DetailModel,
+  currentUser: Awaited<ReturnType<typeof getCurrentUser>>,
+  certificate: V2CertificateSectionState | null,
+) {
+  const cookieStore = await cookies();
+  const adminMode = cookieStore.get(ADMIN_MODE_COOKIE)?.value;
+  const viewer: V2SingleViewer = currentUser
+    ? {
+        userId: currentUser.id,
+        role:
+          currentUser.role === "admin" && adminMode !== "user"
+            ? "admin"
+            : "user",
+      }
+    : null;
+
+  return (
+    <V2SingleMatchDetail
+      model={model}
+      currentUser={viewer}
+      certificate={certificate}
+    />
+  );
+}
+
+async function renderV2DoubleMatchDetail(
+  model: DoubleV2DetailModel,
+  currentUser: Awaited<ReturnType<typeof getCurrentUser>>,
+  inviteQuery: string,
+  certificate: V2CertificateSectionState | null,
+) {
+  const canBuildTeam = currentUser && model.viewer.action === "FORM_TEAM";
+  const [inviteCandidates, pendingInvites] = canBuildTeam
+    ? await Promise.all([
+        inviteQuery
+          ? searchDoublesInviteCandidates(model.match.id, currentUser.id, inviteQuery)
+          : [],
+        getPendingMatchInvitesForUser(model.match.id, currentUser.id),
+      ])
+    : [[], []];
+
+  return (
+    <V2DoubleMatchDetail
+      model={model}
+      currentUserId={currentUser?.id ?? null}
+      isAdmin={currentUser?.role === "admin"}
+      inviteQuery={inviteQuery}
+      inviteCandidates={inviteCandidates}
+      pendingInvites={pendingInvites}
+      canManageGrouping={Boolean(
+        currentUser &&
+          (currentUser.id === model.match.createdBy ||
+            currentUser.role === "admin"),
+      )}
+      certificate={certificate}
+    />
+  );
+}
+
+async function renderV2TeamMatchDetail(
+  model: TeamV2DetailModel,
+  currentUser: Awaited<ReturnType<typeof getCurrentUser>>,
+  certificate: V2CertificateSectionState | null,
+) {
+  return (
+    <V2TeamMatchDetail
+      model={model}
+      currentUserId={currentUser?.id ?? null}
+      currentUserRole={currentUser?.role ?? null}
+      canManageGrouping={Boolean(
+        currentUser &&
+          (currentUser.id === model.match.createdBy ||
+            currentUser.role === "admin"),
+      )}
+      certificate={certificate}
+    />
+  );
+}
 
 export default async function MatchDetailPage({
   params,
@@ -63,963 +148,82 @@ export default async function MatchDetailPage({
 }: {
   params: Promise<{ id: string }>;
   searchParams?: Promise<{
+    resultsPage?: string | string[];
     playersPage?: string | string[];
     groupsPage?: string | string[];
     inviteQ?: string | string[];
   }>;
 }) {
   const { id } = await params;
-
-  const resolvedSearchParams = searchParams ? await searchParams : undefined;
-  const rawPlayersPage = extractPageParam(resolvedSearchParams?.playersPage);
-  const rawGroupsPage = extractPageParam(resolvedSearchParams?.groupsPage);
-  const rawInviteQuery = Array.isArray(resolvedSearchParams?.inviteQ)
-    ? resolvedSearchParams?.inviteQ[0]
-    : resolvedSearchParams?.inviteQ;
-  const inviteQ = (rawInviteQuery ?? "").trim();
-
-  const [match, currentUser] = await Promise.all([
-    prisma.match.findUnique({
-      where: { id },
-      include: {
-        registrations: {
-          where: {
-            user: { isBanned: false },
-          },
-          include: {
-            user: {
-              select: {
-                id: true,
-                nickname: true,
-                avatarUrl: true,
-                eloRating: true,
-                points: true,
-              },
-            },
-          },
-          orderBy: { createdAt: "asc" },
-        },
-        teamRegistrations: {
-          where: {
-            status: {
-              not: TeamRegistrationStatus.cancelled,
-            },
-            captain: { isBanned: false },
-            members: { none: { user: { isBanned: true } } },
-          },
-          include: {
-            captain: {
-              select: {
-                id: true,
-                nickname: true,
-                avatarUrl: true,
-              },
-            },
-            members: {
-              where: {
-                user: { isBanned: false },
-              },
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    nickname: true,
-                    avatarUrl: true,
-                  },
-                },
-              },
-              orderBy: { joinedAt: "asc" },
-            },
-          },
-          orderBy: { createdAt: "asc" },
-        },
-        groupingResult: true,
-        results: {
-          include: {
-            reporter: { select: { id: true, nickname: true } },
-            verifier: { select: { id: true, nickname: true } },
-            winnerMatchTeam: { select: { id: true, name: true } },
-            loserMatchTeam: { select: { id: true, name: true } },
-          },
-          orderBy: { createdAt: "desc" },
-        },
-      },
-    }),
-    getCurrentUser(),
-  ]);
-
-  if (!match) notFound();
-
-  const isDoubleMatch = match.type === "double";
-  const isTeamMatch = match.type === "team";
-
-  const cookieStore = await cookies();
-  const adminMode = cookieStore.get(ADMIN_MODE_COOKIE)?.value;
-  const adminViewEnabled = adminMode !== "user";
-
-  const [userIdentity, existingCertificate] = currentUser
-    ? await Promise.all([
-        prisma.userIdentity.findUnique({
-          where: { userId: currentUser.id },
-        }),
-        prisma.participationCertificate.findUnique({
-          where: {
-            matchId_userId: {
-              matchId: match.id,
-              userId: currentUser.id,
-            },
-          },
-        }),
-      ])
-    : [null, null];
-
-  const certificateEligibility = currentUser
-    ? evaluateCertificateEligibility({
-        match: {
-          status: match.status,
-          type: match.type,
-          groupingResult: match.groupingResult,
-          groupingGeneratedAt: match.groupingGeneratedAt,
-          registrations: match.registrations,
-          teamRegistrations: match.teamRegistrations,
-          results: match.results,
-        },
-        currentUserId: currentUser.id,
-      })
-    : null;
-
-  const now = new Date();
-  const isCreator = currentUser?.id === match.createdBy;
-  const isAdmin = currentUser?.role === "admin" && adminViewEnabled;
-  const adminViewBlocked = currentUser?.role === "admin" && !adminViewEnabled;
-  const canManageGrouping = Boolean(currentUser && isAdmin);
-  const canRegister =
-    Boolean(currentUser) &&
-    !isTeamMatch &&
-    match.status === "registration" &&
-    now < match.registrationDeadline;
-  const individualAlreadyRegistered = Boolean(
-    currentUser &&
-    match.registrations.some(
-      (r: { userId: string }) => r.userId === currentUser.id,
-    ),
-  );
-  const alreadyRegistered = !isTeamMatch && individualAlreadyRegistered;
-  const teamRegistrationStart = match.teamRegistrationStart ?? match.createdAt;
-  const teamRegistrationDeadline =
-    match.teamRegistrationDeadline ?? match.registrationDeadline;
-  const teamMinMembers = match.teamMinMembers ?? 3;
-  const teamMaxMembers = match.teamMaxMembers ?? 6;
-  const teamRegistrationOpen =
-    isTeamMatch &&
-    match.status === "registration" &&
-    now >= teamRegistrationStart &&
-    now < teamRegistrationDeadline;
-  const teamRegistrationNotStarted = isTeamMatch && now < teamRegistrationStart;
-  const teamRegistrationClosed = isTeamMatch && now >= teamRegistrationDeadline;
-
-  const [
-    myDoublesTeam,
-    pendingDoublesInvites,
-    doublesInviteCandidates,
-    registeredDoublesTeams,
-  ] = await Promise.all([
-    currentUser && isDoubleMatch
-      ? getDoublesTeamForUser(match.id, currentUser.id)
-      : Promise.resolve(null),
-    currentUser && isDoubleMatch
-      ? getPendingMatchInvitesForUser(match.id, currentUser.id)
-      : Promise.resolve([]),
-    currentUser && isDoubleMatch && inviteQ
-      ? searchDoublesInviteCandidates(match.id, currentUser.id, inviteQ)
-      : Promise.resolve([]),
-    isDoubleMatch ? getRegisteredDoublesTeams(match.id) : Promise.resolve([]),
-  ]);
-
-  const storedGroupingPayload = (match.groupingResult?.payload ?? null) as {
-    competitorType?: "user" | "team";
-    config?: {
-      groupCount?: number;
-      qualifiersPerGroup?: number;
-      seedMethod?: "min_diff" | "snake";
-    };
-    groups: Array<{
-      name: string;
-      averagePoints: number;
-      players: Array<{
-        id: string;
-        nickname: string;
-        points: number;
-        eloRating: number;
-      }>;
-    }>;
-    knockout?: {
-      stage: string;
-      bracketSize: number;
-      rounds: Array<{
-        name: string;
-        matches: Array<{ id: string; homeLabel: string; awayLabel: string }>;
-      }>;
-    };
-  } | null;
-  const groupingPayload =
-    isTeamMatch && storedGroupingPayload
-      ? reconcileTeamGroupingPayload(
-          storedGroupingPayload,
-          match.teamRegistrations
-            .filter(
-              (team) => team.status === TeamRegistrationStatus.approved,
-            )
-            .map((team) => ({ id: team.id, name: team.name })),
-        ).payload
-      : storedGroupingPayload;
-  const currentApprovedTeamIdentities = match.teamRegistrations
-    .filter((team) => team.status === TeamRegistrationStatus.approved)
-    .map((team) => ({ id: team.id, name: team.name }));
-  const competitionResults = isTeamMatch
-    ? reconcileTeamResultCompetitorIds(
-        match.results,
-        currentApprovedTeamIdentities,
-      )
-    : match.results;
-  const groupingCompetitorType = resolveCompetitorType(
-    groupingPayload?.competitorType,
-  );
-
-  const filledKnockoutRounds = groupingPayload?.knockout
-    ? resolveFilledKnockoutRounds({
-        knockoutRounds: groupingPayload.knockout.rounds,
-        groups: groupingPayload.groups,
-        qualifiersPerGroup: groupingPayload.config?.qualifiersPerGroup ?? 1,
-        results: competitionResults,
-        groupingGeneratedAt: match.groupingGeneratedAt ?? null,
-        competitorType: groupingCompetitorType,
-      })
-    : null;
-
-  const adminEligibleOptions =
-    groupingPayload && (match.type === "single" || match.type === "team")
-      ? buildAdminEligibleOptions({
-          groupingPayload,
-          filledKnockoutRounds,
-          results: competitionResults,
-          groupingGeneratedAt: match.groupingGeneratedAt ?? null,
-          competitorType: groupingCompetitorType,
-        })
-      : null;
-
-  const adminGroupBattleTables = groupingPayload
-    ? buildAdminGroupBattleTables({
-        groups: groupingPayload.groups,
-        results: competitionResults,
-        competitorType: groupingCompetitorType,
-      })
-    : [];
-
-  const participantsPagination = isDoubleMatch
-    ? paginateItems(registeredDoublesTeams, rawPlayersPage, 12)
-    : paginateItems(match.registrations, rawPlayersPage, 12);
-  const totalParticipantsPages = participantsPagination.totalPages;
-  const currentParticipantsPage = participantsPagination.currentPage;
-  const participantsStartIndex = participantsPagination.startIndex;
-  const pagedRegistrations = isDoubleMatch
-    ? []
-    : (participantsPagination.pagedItems as typeof match.registrations);
-  const pagedDoublesTeams = isDoubleMatch
-    ? (participantsPagination.pagedItems as typeof registeredDoublesTeams)
-    : [];
-  const participantsPages = participantsPagination.pages;
-  const shouldOpenParticipants = participantsPagination.shouldOpen;
-  const preservedPlayersPage = participantsPagination.preservedPage;
-
-  const currentUserId = currentUser?.id ?? null;
-  const currentUserTeamId =
-    currentUserId && isTeamMatch
-      ? (match.teamRegistrations.find(
-          (team) =>
-            team.status === TeamRegistrationStatus.approved &&
-            (team.captainId === currentUserId ||
-              team.members.some((member) => member.userId === currentUserId)),
-        )?.id ?? null)
-      : null;
-  const currentCompetitorId = isTeamMatch
-    ? currentUserTeamId
-    : currentUserId;
-  const myGroup =
-    currentCompetitorId && groupingPayload
-      ? groupingPayload.groups.find((group) =>
-          group.players.some((player) => player.id === currentCompetitorId),
-        )
-      : null;
-
-  const adminPendingResults = buildAdminPendingResults({
-    results: match.results,
-    registrations: match.registrations,
-  });
-  const adminConfirmedResults = buildAdminConfirmedResults({
-    results: match.results,
-    registrations: match.registrations,
-  });
-
-  const {
-    initialAdminPhase,
-    initialAdminGroupName,
-    initialAdminRoundName,
-    initialAdminWinnerId,
-    initialAdminLoserId,
-  } = buildInitialAdminFormContext({
-    currentUser,
-    createdBy: match.createdBy,
-    results: match.results,
-  });
-
-  const groupsPagination = paginateItems(
-    groupingPayload?.groups ?? [],
-    rawGroupsPage,
-    6,
-  );
-  const totalGroupsPages = groupsPagination.totalPages;
-  const currentGroupsPage = groupsPagination.currentPage;
-  const pagedGroups = groupsPagination.pagedItems;
-  const groupsPages = groupsPagination.pages;
-  const shouldOpenGroups = groupsPagination.shouldOpen;
-  const preservedGroupsPage = groupsPagination.preservedPage;
-
-  const buildMatchHref = (options?: {
-    playersPage?: number;
-    groupsPage?: number;
-    hash?: string;
-  }) => {
-    const params = new URLSearchParams();
-    const nextPlayersPage = options?.playersPage;
-    const nextGroupsPage = options?.groupsPage;
-
-    if (nextPlayersPage && nextPlayersPage > 0) {
-      params.set("playersPage", String(nextPlayersPage));
+  const authenticatedUser = await getCurrentUser();
+  const adminMode = (await cookies()).get(ADMIN_MODE_COOKIE)?.value;
+  const currentUser = authenticatedUser && adminMode === "user" ? { ...authenticatedUser, role: "user" as const } : authenticatedUser;
+  let competitionDetail: V2CompetitionDetailReadModel;
+  try {
+    competitionDetail = await getV2CompetitionDetailReadModel(
+      prisma,
+      id,
+      currentUser?.id ?? null,
+    );
+  } catch (error) {
+    if (
+      error instanceof V2SingleReadModelIntegrityError ||
+      error instanceof V2DoubleRegistrationIntegrityError ||
+      error instanceof V2TeamRegistrationIntegrityError
+    ) {
+      console.error("V2 competition detail integrity check failed", {
+        matchId: error.matchId,
+        entityId: error.entityId,
+        errorName: error.name,
+      });
+      return <MatchDetailUnavailable />;
     }
-    if (nextGroupsPage && nextGroupsPage > 0) {
-      params.set("groupsPage", String(nextGroupsPage));
+    throw error;
+  }
+  if (competitionDetail.kind === "MATCH_NOT_FOUND") notFound();
+  if (
+    competitionDetail.kind === "SINGLE_V2_DETAIL" ||
+    competitionDetail.kind === "DOUBLE_V2_DETAIL" ||
+    competitionDetail.kind === "TEAM_V2_DETAIL"
+  ) {
+    const certificateState = currentUser
+      ? await getV2CertificateReadState(prisma, id, currentUser.id)
+      : null;
+    if (certificateState?.kind === "MATCH_NOT_FOUND") notFound();
+    const certificate = currentUser
+      ? toV2CertificateSectionState(certificateState, currentUser.email)
+      : null;
+    if (competitionDetail.kind === "SINGLE_V2_DETAIL") {
+      return renderV2SingleMatchDetail(
+        competitionDetail.model,
+        currentUser,
+        certificate,
+      );
     }
+    if (competitionDetail.kind === "DOUBLE_V2_DETAIL") {
+      const doubleSearchParams = searchParams ? await searchParams : undefined;
+      const rawDoubleInviteQuery = Array.isArray(doubleSearchParams?.inviteQ)
+        ? doubleSearchParams.inviteQ[0]
+        : doubleSearchParams?.inviteQ;
+      const inviteQ = (rawDoubleInviteQuery ?? "").trim().slice(0, 100);
+      return renderV2DoubleMatchDetail(
+        competitionDetail.model,
+        currentUser,
+        inviteQ,
+        certificate,
+      );
+    }
+    return renderV2TeamMatchDetail(
+      competitionDetail.model,
+      currentUser,
+      certificate,
+    );
+  }
+  if (competitionDetail.kind === "UNSUPPORTED_V2_MATCH") {
+    return <MatchDetailUnavailable />;
+  }
 
-    const queryString = params.toString();
-    return `/matchs/${match.id}${queryString ? `?${queryString}` : ""}${options?.hash ?? ""}`;
-  };
-
-  const statusLabel =
-    statusLabelMap[match.status as keyof typeof statusLabelMap] ?? "状态未知";
-
-  const statusTone = {
-    registration: "bg-emerald-400/12 text-emerald-100 ring-emerald-300/16",
-    ongoing: "bg-sky-400/12 text-sky-100 ring-sky-300/16",
-    finished: "bg-slate-500/12 text-slate-300 ring-slate-300/12",
-  } as const;
-
-  const teamRegistrationItems = match.teamRegistrations.map((team) => ({
-    id: team.id,
-    name: team.name,
-    inviteCode: team.inviteCode,
-    captainId: team.captainId,
-    captainNickname: team.captain.nickname,
-    contact: team.contact,
-    remark: team.remark,
-    reviewNote: team.reviewNote,
-    status: team.status,
-    submittedAt: team.submittedAt?.toISOString() ?? null,
-    reviewedAt: team.reviewedAt?.toISOString() ?? null,
-    createdAt: team.createdAt.toISOString(),
-    members: team.members.map((member) => ({
-      userId: member.userId,
-      nickname: member.user.nickname,
-      avatarUrl: member.user.avatarUrl,
-      joinedAt: member.joinedAt.toISOString(),
-    })),
-  }));
-  const publicTeamRegistrationItems = teamRegistrationItems.filter(
-    (team) => team.status !== "cancelled",
-  );
-  const formedTeamCount = publicTeamRegistrationItems.filter(
-    (team) => team.members.length >= teamMinMembers,
-  ).length;
-  const buildingTeamCount =
-    publicTeamRegistrationItems.length - formedTeamCount;
-  const approvedTeamResultTeams = teamRegistrationItems
-    .filter((team) => team.status === TeamRegistrationStatus.approved)
-    .map((team) => ({
-      id: team.id,
-      name: team.name,
-      captainId: team.captainId,
-      captainNickname: team.captainNickname,
-      members: team.members.map((member) => ({
-        userId: member.userId,
-        nickname: member.nickname,
-      })),
-    }));
-  const teamDetailsById = Object.fromEntries(
-    approvedTeamResultTeams.map((team) => [
-      team.id,
-      {
-        captainNickname: team.captainNickname,
-        members: team.members.map((member) => member.nickname),
-      },
-    ]),
-  );
-  const teamAllowedMatches =
-    !groupingPayload
-      ? null
-      : groupingCompetitorType === "team" && adminEligibleOptions
-        ? [
-            ...adminEligibleOptions.groupMatchOptions.map((option) => ({
-              key: `group:${option.groupName}:${option.playerAId}:${option.playerBId}`,
-              phase: "group" as const,
-              teamAId: option.playerAId,
-              teamAName: option.playerANickname,
-              teamBId: option.playerBId,
-              teamBName: option.playerBNickname,
-              groupName: option.groupName,
-            })),
-            ...adminEligibleOptions.knockoutMatchOptions.map((option) => ({
-              key: `knockout:${option.matchId}`,
-              phase: "knockout" as const,
-              teamAId: option.playerAId,
-              teamAName: option.playerANickname,
-              teamBId: option.playerBId,
-              teamBName: option.playerBNickname,
-              knockoutRoundName: option.roundName,
-              knockoutMatchId: option.matchId,
-            })),
-          ]
-        : [];
-  const teamResultMemberIds = isTeamMatch
-    ? Array.from(
-        new Set(
-          competitionResults.flatMap((result) => [
-            ...result.winnerTeamIds,
-            ...result.loserTeamIds,
-          ]),
-        ),
-      )
-    : [];
-  const teamResultUsers = teamResultMemberIds.length
-    ? await prisma.user.findMany({
-        where: { id: { in: teamResultMemberIds } },
-        select: { id: true, nickname: true },
-      })
-    : [];
-  const teamResultUserNameById = new Map(
-    teamResultUsers.map((user) => [user.id, user.nickname]),
-  );
-  const teamMatchResultItems = isTeamMatch
-    ? competitionResults
-        .filter((result) => {
-          if (result.winnerMatchTeamId || result.loserMatchTeamId) return true;
-          return (
-            typeof result.score === "object" &&
-            result.score !== null &&
-            !Array.isArray(result.score) &&
-            result.score.resultType === "TEAM_MATCH"
-          );
-        })
-        .map((result) => {
-          const score =
-            typeof result.score === "object" &&
-            result.score !== null &&
-            !Array.isArray(result.score)
-              ? result.score
-              : {};
-          const winnerScore = Number(score.winnerScore);
-          const loserScore = Number(score.loserScore);
-
-          return {
-            id: result.id,
-            confirmed: result.confirmed,
-            reporterId: result.reporter.id,
-            reporterName: result.reporter.nickname,
-            verifierName: result.verifier?.nickname ?? null,
-            winnerMatchTeamId: result.winnerMatchTeamId,
-            loserMatchTeamId: result.loserMatchTeamId,
-            winnerTeamName:
-              result.winnerMatchTeam?.name ??
-              (typeof score.winnerTeamName === "string"
-                ? score.winnerTeamName
-                : "胜方队伍"),
-            loserTeamName:
-              result.loserMatchTeam?.name ??
-              (typeof score.loserTeamName === "string"
-                ? score.loserTeamName
-                : "负方队伍"),
-            winnerScore: Number.isFinite(winnerScore) ? winnerScore : null,
-            loserScore: Number.isFinite(loserScore) ? loserScore : null,
-            winnerMembers: result.winnerTeamIds.map(
-              (userId) => teamResultUserNameById.get(userId) ?? userId,
-            ),
-            loserMembers: result.loserTeamIds.map(
-              (userId) => teamResultUserNameById.get(userId) ?? userId,
-            ),
-            remark: typeof score.remark === "string" ? score.remark : "",
-            phase: getResultPhase(score),
-            groupName:
-              typeof score.groupName === "string" ? score.groupName : null,
-            knockoutRoundName:
-              typeof score.knockoutRoundName === "string"
-                ? score.knockoutRoundName
-                : null,
-            createdAt: result.createdAt.toISOString(),
-          };
-        })
-    : [];
-
-  return (
-    <div className="mx-auto max-w-5xl space-y-5 sm:space-y-8">
-      <BackLinkButton fallbackHref="/matchs" />
-
-      <div className="surface-panel relative overflow-hidden rounded-3xl p-4 sm:p-6 md:p-8">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_88%_6%,rgba(45,212,191,0.1),transparent_36%)]" />
-        <div className="relative mb-5 flex items-start justify-between gap-3 sm:mb-6 sm:gap-4">
-          <div>
-            <span
-              className={`status-pill ring-1 ${statusTone[match.status as keyof typeof statusTone]}`}
-            >
-              {statusLabel}
-            </span>
-            <h1 className="mt-3 text-2xl font-black tracking-tight text-white sm:text-4xl">
-              {match.title}
-            </h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-400 sm:text-base">
-              {match.description || "暂无描述"}
-            </p>
-            <div className="mt-4 flex flex-wrap gap-2 text-xs text-slate-300">
-              <span className="rounded-full bg-white/[0.045] px-3 py-1 ring-1 ring-white/8">
-                {match.format === "group_only"
-                  ? "分组比赛"
-                  : "前期分组后期淘汰赛"}
-              </span>
-              <span className="rounded-full bg-white/[0.045] px-3 py-1 ring-1 ring-white/8">
-                报名截止：
-                {(isTeamMatch
-                  ? teamRegistrationDeadline
-                  : match.registrationDeadline
-                ).toLocaleString("zh-CN")}
-              </span>
-            </div>
-            {(isCreator || isAdmin) &&
-              now <
-                (isTeamMatch
-                  ? teamRegistrationDeadline
-                  : match.registrationDeadline) &&
-              !adminViewBlocked && (
-                <Link
-                  href={`/matchs/${match.id}/edit`}
-                  className="btn-secondary mt-4 inline-flex items-center gap-1.5 rounded-2xl px-3 py-1.5 text-xs font-bold"
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                  修改比赛
-                </Link>
-              )}
-          </div>
-        </div>
-
-        <div className="relative grid gap-3 text-slate-200 sm:grid-cols-2 lg:grid-cols-3 sm:gap-4">
-          <div className="rounded-2xl bg-slate-950/34 p-3 ring-1 ring-white/8 flex items-center gap-3">
-            <Calendar className="h-5 w-5 text-teal-200" />
-            <div>
-              <p className="text-xs text-slate-400">时间</p>
-              <p className="text-sm sm:text-base">
-                {match.dateTime.toLocaleString("zh-CN")}
-              </p>
-            </div>
-          </div>
-          <div className="rounded-2xl bg-slate-950/34 p-3 ring-1 ring-white/8 flex items-center gap-3">
-            <MapPin className="h-5 w-5 text-teal-200" />
-            <div>
-              <p className="text-xs text-slate-400">地点</p>
-              <p className="text-sm sm:text-base">{match.location ?? "待定"}</p>
-            </div>
-          </div>
-          <div className="rounded-2xl bg-slate-950/34 p-3 ring-1 ring-white/8 flex items-center gap-3">
-            <Users className="h-5 w-5 text-teal-200" />
-            <div>
-              <p className="text-xs text-slate-400">
-                {isTeamMatch
-                  ? "团体队伍"
-                  : isDoubleMatch
-                    ? "参赛小队"
-                    : "参赛人数"}
-              </p>
-              <p className="text-sm sm:text-base">
-                {isTeamMatch
-                  ? `组建中 ${buildingTeamCount} 支 · 已成队 ${formedTeamCount} 支`
-                  : isDoubleMatch
-                    ? `${registeredDoublesTeams.length} 组`
-                    : `${match.registrations.length} 人`}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="relative mt-5 sm:mt-8">
-          {!isTeamMatch && !currentUser ? (
-            <p className="text-sm text-slate-300">请先登录后报名。</p>
-          ) : !isTeamMatch && isCreator && !alreadyRegistered ? (
-            <p className="text-sm text-slate-300">
-              你是比赛发起人，当前尚未报名，可手动点击报名加入参赛名单。
-            </p>
-          ) : null}
-
-          {!isTeamMatch &&
-            currentUser &&
-            (alreadyRegistered ? (
-              now < match.registrationDeadline ? (
-                <UnregisterMatchButton matchId={match.id} />
-              ) : null
-            ) : (
-              <RegisterMatchButton
-                matchId={match.id}
-                submitText={isDoubleMatch ? "以小队报名" : "立即报名"}
-                disabled={!canRegister || (isDoubleMatch && !myDoublesTeam)}
-                disabledText={
-                  now >= match.registrationDeadline
-                    ? "报名已截止"
-                    : isDoubleMatch && !myDoublesTeam
-                      ? "请先完成双打组队"
-                  : "当前不可报名"
-                }
-              />
-            ))}
-
-          {currentUser && isDoubleMatch && !alreadyRegistered ? (
-            <div className="mt-4 space-y-4 rounded-xl border border-slate-700 bg-slate-900/60 p-3 sm:p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3">
-                <h3 className="text-sm font-semibold text-slate-100">
-                  双打组队邀请
-                </h3>
-                <Link
-                  href="/team-invites"
-                  className="text-xs text-cyan-300 hover:text-cyan-200"
-                >
-                  查看全部邀请 →
-                </Link>
-              </div>
-
-              {myDoublesTeam ? (
-                <p className="text-sm text-emerald-200">
-                  当前小队：{myDoublesTeam.members[0]?.nickname} +{" "}
-                  {myDoublesTeam.members[1]?.nickname}
-                </p>
-              ) : (
-                <p className="text-sm text-slate-300">
-                  先邀请并接受队友后，才可进行双打报名。
-                </p>
-              )}
-
-              <form
-                action={`/matchs/${match.id}`}
-                method="get"
-                className="flex flex-col gap-2 sm:flex-row"
-              >
-                <input type="hidden" name="csrfToken" defaultValue="" />
-                <input
-                  type="text"
-                  name="inviteQ"
-                  defaultValue={inviteQ}
-                  placeholder="搜索队友昵称或邮箱"
-                  className="h-9 w-full flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 text-sm text-slate-100"
-                />
-                <button
-                  type="submit"
-                  className="h-9 rounded-lg border border-cyan-500/40 px-3 text-sm text-cyan-200 hover:bg-cyan-500/10 sm:h-auto"
-                >
-                  搜索
-                </button>
-              </form>
-
-              {inviteQ ? (
-                <div className="space-y-2">
-                  {doublesInviteCandidates.length === 0 ? (
-                    <p className="text-xs text-slate-400">未找到可邀请球员。</p>
-                  ) : (
-                    doublesInviteCandidates.map(
-                      (candidate: {
-                        id: string;
-                        nickname: string;
-                        email: string;
-                      }) => (
-                        <div
-                          key={candidate.id}
-                          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-700 bg-slate-800/40 px-3 py-2"
-                        >
-                          <div>
-                            <p className="text-sm text-slate-100">
-                              {candidate.nickname}
-                            </p>
-                            <p className="text-xs text-slate-400">
-                              {candidate.email}
-                            </p>
-                          </div>
-                          <form
-                            action={sendDoublesInviteAction.bind(
-                              null,
-                              match.id,
-                            )}
-                          >
-                            <input
-                              type="hidden"
-                              name="csrfToken"
-                              defaultValue=""
-                            />
-                            <input
-                              type="hidden"
-                              name="inviteeId"
-                              value={candidate.id}
-                            />
-                            <button
-                              type="submit"
-                              className="rounded-md border border-cyan-500/40 px-2.5 py-1.5 text-xs text-cyan-200 hover:bg-cyan-500/10"
-                            >
-                              发起邀请
-                            </button>
-                          </form>
-                        </div>
-                      ),
-                    )
-                  )}
-                </div>
-              ) : null}
-
-              {pendingDoublesInvites.length > 0 ? (
-                <div className="space-y-2">
-                  <p className="text-xs text-slate-400">当前比赛待处理邀请</p>
-                  {pendingDoublesInvites.map(
-                    (invite: {
-                      id: string;
-                      inviterNickname: string;
-                      inviteeNickname: string;
-                      inviteeId: string;
-                    }) => {
-                      const isReceived = invite.inviteeId === currentUser.id;
-                      return (
-                        <div
-                          key={invite.id}
-                          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-700 bg-slate-800/30 px-3 py-2"
-                        >
-                          <p className="text-sm text-slate-200">
-                            {invite.inviterNickname} → {invite.inviteeNickname}
-                          </p>
-                          <div className="flex items-center gap-2">
-                            {isReceived ? (
-                              <form action={acceptDoublesInviteAction}>
-                                <input
-                                  type="hidden"
-                                  name="csrfToken"
-                                  value=""
-                                />
-                                <input
-                                  type="hidden"
-                                  name="inviteId"
-                                  value={invite.id}
-                                />
-                                <button
-                                  type="submit"
-                                  className="rounded-md border border-emerald-500/40 px-2.5 py-1 text-xs text-emerald-200 hover:bg-emerald-500/10"
-                                >
-                                  接受
-                                </button>
-                              </form>
-                            ) : (
-                              <form action={revokeDoublesInviteAction}>
-                                <input
-                                  type="hidden"
-                                  name="csrfToken"
-                                  value=""
-                                />
-                                <input
-                                  type="hidden"
-                                  name="inviteId"
-                                  value={invite.id}
-                                />
-                                <button
-                                  type="submit"
-                                  className="rounded-md border border-rose-500/40 px-2.5 py-1 text-xs text-rose-200 hover:bg-rose-500/10"
-                                >
-                                  撤回
-                                </button>
-                              </form>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    },
-                  )}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-      </div>
-
-      {isTeamMatch ? (
-        <TeamRegistrationPanel
-          matchId={match.id}
-          currentUserId={currentUser?.id ?? null}
-          isAdmin={isAdmin}
-          registrationOpen={teamRegistrationOpen}
-          registrationNotStarted={teamRegistrationNotStarted}
-          registrationClosed={teamRegistrationClosed}
-          startsAt={teamRegistrationStart.toISOString()}
-          deadline={teamRegistrationDeadline.toISOString()}
-          minMembers={teamMinMembers}
-          maxMembers={teamMaxMembers}
-          teams={teamRegistrationItems}
-        />
-      ) : null}
-
-      {isTeamMatch ? (
-        <TeamMatchResultsPanel
-          matchId={match.id}
-          currentUserId={currentUser?.id ?? null}
-          isManager={Boolean(currentUser && (isCreator || isAdmin))}
-          matchFinished={match.status === "finished"}
-          teams={approvedTeamResultTeams}
-          results={teamMatchResultItems}
-          allowedMatches={teamAllowedMatches}
-        />
-      ) : null}
-
-      {Boolean(
-        currentUser &&
-        !isTeamMatch &&
-        alreadyRegistered &&
-        match.status !== "registration" &&
-        groupingPayload,
-      ) &&
-        currentUser &&
-        groupingPayload && (
-          <MyProgressSection
-            matchId={match.id}
-            matchType={match.type}
-            currentUserId={currentUser.id}
-            registrations={match.registrations}
-            results={match.results}
-            groupingPayload={groupingPayload}
-            filledKnockoutRounds={filledKnockoutRounds}
-          />
-        )}
-
-      {currentUser && certificateEligibility ? (
-        <ExportCertificateSection
-          matchId={match.id}
-          matchTitle={match.title}
-          currentUserEmail={currentUser.email}
-          identityBound={Boolean(userIdentity)}
-          eligibility={certificateEligibility}
-          existingCertificateNo={existingCertificate?.certificateNo ?? null}
-        />
-      ) : null}
-
-      {isAdmin && !isTeamMatch && (
-        <AdminResultsSection
-          matchId={match.id}
-          matchType={match.type}
-          hasGroupingPayload={Boolean(groupingPayload)}
-          registrations={match.registrations}
-          adminEligibleOptions={adminEligibleOptions}
-          adminGroupBattleTables={adminGroupBattleTables}
-          initialAdminPhase={initialAdminPhase}
-          initialAdminGroupName={initialAdminGroupName}
-          initialAdminRoundName={initialAdminRoundName}
-          initialAdminWinnerId={initialAdminWinnerId}
-          initialAdminLoserId={initialAdminLoserId}
-          adminPendingResults={adminPendingResults}
-          adminConfirmedResults={adminConfirmedResults}
-          filledKnockoutRounds={filledKnockoutRounds}
-        />
-      )}
-
-      {canManageGrouping && (
-        <div className="rounded-2xl border border-amber-400/30 bg-amber-500/5 p-4 sm:p-6">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-base font-semibold text-amber-100 sm:text-lg">
-                分组与签位管理（管理员）
-              </h2>
-              <p className="mt-1 text-xs text-amber-100/80 sm:text-sm">
-                点击进入后可编辑分组并发布结果。
-              </p>
-            </div>
-            <Link
-              href={`/matchs/${match.id}/grouping`}
-              className="rounded-lg border border-amber-300/40 px-3 py-1.5 text-xs font-medium text-amber-100 hover:bg-amber-500/10 sm:text-sm"
-            >
-              进入分组与签位管理
-            </Link>
-          </div>
-        </div>
-      )}
-
-      {(!groupingPayload ||
-        Boolean(currentCompetitorId) ||
-        Boolean(groupingPayload?.knockout)) && (
-        <GroupingResultSection
-          groupingPayload={groupingPayload}
-          alreadyRegistered={Boolean(currentCompetitorId)}
-          myGroup={myGroup ?? null}
-          filledKnockoutRounds={filledKnockoutRounds}
-          currentUserId={currentCompetitorId}
-          currentUserNickname={
-            isTeamMatch
-              ? approvedTeamResultTeams.find(
-                  (team) => team.id === currentCompetitorId,
-                )?.name
-              : currentUser?.nickname
-          }
-          competitorType={groupingCompetitorType}
-          teamDetailsById={teamDetailsById}
-        />
-      )}
-
-      {groupingPayload && (
-        <GroupsOverviewSection
-          groupingPayload={groupingPayload}
-          pagedGroups={pagedGroups}
-          groupsPages={groupsPages}
-          totalGroupsPages={totalGroupsPages}
-          currentGroupsPage={currentGroupsPage}
-          shouldOpenGroups={shouldOpenGroups}
-          competitorType={groupingCompetitorType}
-          teamDetailsById={teamDetailsById}
-          buildHref={(page) =>
-            buildMatchHref({
-              playersPage: preservedPlayersPage,
-              groupsPage: page,
-              hash: "#all-groups",
-            })
-          }
-        />
-      )}
-
-      {!isTeamMatch ? (
-        <RegisteredPlayersSection
-          matchId={match.id}
-          matchType={match.type}
-          registrations={match.registrations}
-          pagedRegistrations={pagedRegistrations}
-          doublesTeams={registeredDoublesTeams}
-          pagedDoublesTeams={pagedDoublesTeams}
-          participantsStartIndex={participantsStartIndex}
-          participantsPages={participantsPages}
-          totalParticipantsPages={totalParticipantsPages}
-          currentParticipantsPage={currentParticipantsPage}
-          shouldOpenParticipants={shouldOpenParticipants}
-          isAdmin={isAdmin}
-          canRemove={isAdmin}
-          buildHref={(page) =>
-            buildMatchHref({
-              playersPage: page,
-              groupsPage: preservedGroupsPage,
-              hash: "#registered-players",
-            })
-          }
-        />
-      ) : null}
-    </div>
-  );
+  const archiveParams = searchParams ? await searchParams : undefined;
+  const rawPage = Array.isArray(archiveParams?.resultsPage) ? archiveParams.resultsPage[0] : archiveParams?.resultsPage;
+  return <ArchivedMatchDetail matchId={id} page={Number(rawPage ?? 1)} />;
 }

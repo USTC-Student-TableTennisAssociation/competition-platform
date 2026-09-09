@@ -1,11 +1,17 @@
-import { randomUUID } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
+import {
+  acceptDoublesInviteInTransaction,
+  revokeDoublesInviteInTransaction,
+  runDoublesSourceTransaction,
+  sendDoublesInviteInTransaction,
+} from '@/lib/server/match/doubles-source'
 
 type MatchBasicRow = {
   id: string
   type: string
   status: string
   registrationDeadline: Date
+  isQuickMatch: boolean
 }
 
 type TeamMemberRow = {
@@ -47,7 +53,7 @@ function isMissingInviteTableError(error: unknown) {
 
 async function getMatchBasic(matchId: string) {
   const rows = await prisma.$queryRaw<MatchBasicRow[]>`
-    SELECT id, type, status, "registrationDeadline"
+    SELECT id, type, status, "registrationDeadline", "isQuickMatch"
     FROM "Match"
     WHERE id = ${matchId}
     LIMIT 1
@@ -62,6 +68,9 @@ export async function assertDoublesMatchOpen(matchId: string) {
   }
   if (match.type !== 'double') {
     return { ok: false as const, error: '该比赛不是双打比赛。' }
+  }
+  if (match.isQuickMatch) {
+    return { ok: false as const, error: '快速约球不支持双打组队。' }
   }
   if (match.status !== 'registration') {
     return { ok: false as const, error: '当前比赛不在报名阶段。' }
@@ -241,162 +250,21 @@ export async function getRegisteredDoublesTeams(matchId: string) {
 }
 
 export async function sendDoublesInvite(params: { matchId: string; inviterId: string; inviteeId: string }) {
-  const { matchId, inviterId, inviteeId } = params
-
-  if (inviterId === inviteeId) {
-    return { ok: false as const, error: '不能邀请自己组队。' }
-  }
-
-  const canInvite = await assertDoublesMatchOpen(matchId)
-  if (!canInvite.ok) return canInvite
-
-  const [inviter, invitee, inviterReg, inviteeReg, inviterTeam, inviteeTeam, existingPending] = await Promise.all([
-    prisma.user.findUnique({ where: { id: inviterId }, select: { id: true, isBanned: true } }),
-    prisma.user.findUnique({ where: { id: inviteeId }, select: { id: true, isBanned: true } }),
-    prisma.registration.findFirst({ where: { matchId, userId: inviterId }, select: { id: true } }),
-    prisma.registration.findFirst({ where: { matchId, userId: inviteeId }, select: { id: true } }),
-    prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT t.id
-      FROM match_doubles_team t
-      JOIN match_doubles_team_member tm ON tm.team_id = t.id
-      WHERE t.match_id = ${matchId}
-        AND tm.user_id = ${inviterId}
-      LIMIT 1
-    `,
-    prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT t.id
-      FROM match_doubles_team t
-      JOIN match_doubles_team_member tm ON tm.team_id = t.id
-      WHERE t.match_id = ${matchId}
-        AND tm.user_id = ${inviteeId}
-      LIMIT 1
-    `,
-    prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT id
-      FROM match_doubles_invite
-      WHERE match_id = ${matchId}
-        AND status = 'pending'
-        AND (
-          (inviter_id = ${inviterId} AND invitee_id = ${inviteeId})
-          OR (inviter_id = ${inviteeId} AND invitee_id = ${inviterId})
-        )
-      LIMIT 1
-    `,
-  ])
-
-  if (!inviter || inviter.isBanned) return { ok: false as const, error: '当前账号不可发起邀请。' }
-  if (!invitee || invitee.isBanned) return { ok: false as const, error: '邀请对象不可用。' }
-  if (inviterReg || inviteeReg) return { ok: false as const, error: '有成员已报名该比赛，无法发起组队邀请。' }
-  if (inviterTeam.length > 0 || inviteeTeam.length > 0) return { ok: false as const, error: '有成员已在小队中，无法重复组队。' }
-  if (existingPending.length > 0) return { ok: false as const, error: '双方已有待处理邀请。' }
-
-  await prisma.$executeRaw`
-    INSERT INTO match_doubles_invite(id, match_id, inviter_id, invitee_id, status, created_at, updated_at)
-    VALUES (${randomUUID()}, ${matchId}, ${inviterId}, ${inviteeId}, 'pending', now(), now())
-  `
-
-  return { ok: true as const }
+  return runDoublesSourceTransaction(prisma, (tx) =>
+    sendDoublesInviteInTransaction(tx, params),
+  )
 }
 
 export async function acceptDoublesInvite(params: { inviteId: string; currentUserId: string }) {
-  const { inviteId, currentUserId } = params
-
-  const inviteRows = await prisma.$queryRaw<Array<{ id: string; matchId: string; inviterId: string; inviteeId: string; status: string }>>`
-    SELECT id, match_id AS "matchId", inviter_id AS "inviterId", invitee_id AS "inviteeId", status
-    FROM match_doubles_invite
-    WHERE id = ${inviteId}
-    LIMIT 1
-  `
-
-  const invite = inviteRows[0]
-  if (!invite) return { ok: false as const, error: '邀请不存在。' }
-  if (invite.inviteeId !== currentUserId) return { ok: false as const, error: '仅被邀请者可接受。' }
-  if (invite.status !== 'pending') return { ok: false as const, error: '该邀请已失效。' }
-
-  const canAccept = await assertDoublesMatchOpen(invite.matchId)
-  if (!canAccept.ok) return canAccept
-
-  const memberA = invite.inviterId
-  const memberB = invite.inviteeId
-
-  const [members, regA, regB, teamA, teamB] = await Promise.all([
-    prisma.user.findMany({
-      where: { id: { in: [memberA, memberB] }, isBanned: false },
-      select: { id: true },
-    }),
-    prisma.registration.findFirst({ where: { matchId: invite.matchId, userId: memberA }, select: { id: true } }),
-    prisma.registration.findFirst({ where: { matchId: invite.matchId, userId: memberB }, select: { id: true } }),
-    prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT t.id
-      FROM match_doubles_team t
-      JOIN match_doubles_team_member tm ON tm.team_id = t.id
-      WHERE t.match_id = ${invite.matchId}
-        AND tm.user_id = ${memberA}
-      LIMIT 1
-    `,
-    prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT t.id
-      FROM match_doubles_team t
-      JOIN match_doubles_team_member tm ON tm.team_id = t.id
-      WHERE t.match_id = ${invite.matchId}
-        AND tm.user_id = ${memberB}
-      LIMIT 1
-    `,
-  ])
-
-  if (members.length !== 2) return { ok: false as const, error: '邀请双方中存在已封禁用户。' }
-  if (regA || regB) return { ok: false as const, error: '有成员已报名，不能再接受组队邀请。' }
-  if (teamA.length > 0 || teamB.length > 0) return { ok: false as const, error: '有成员已在其他小队中。' }
-
-  await prisma.$transaction(async (tx) => {
-    const teamId = randomUUID()
-    await tx.$executeRaw`
-      INSERT INTO match_doubles_team(id, match_id, created_by_id, created_at)
-      VALUES (${teamId}, ${invite.matchId}, ${memberA}, now())
-    `
-
-    await tx.$executeRaw`
-      INSERT INTO match_doubles_team_member(id, team_id, match_id, user_id, slot)
-      VALUES
-        (${randomUUID()}, ${teamId}, ${invite.matchId}, ${memberA}, 1),
-        (${randomUUID()}, ${teamId}, ${invite.matchId}, ${memberB}, 2)
-    `
-
-    await tx.$executeRaw`
-      UPDATE match_doubles_invite
-      SET status = 'accepted', updated_at = now()
-      WHERE id = ${invite.id}
-    `
-
-    await tx.$executeRaw`
-      UPDATE match_doubles_invite
-      SET status = 'voided', updated_at = now()
-      WHERE match_id = ${invite.matchId}
-        AND status = 'pending'
-        AND id <> ${invite.id}
-        AND (
-          inviter_id IN (${memberA}, ${memberB})
-          OR invitee_id IN (${memberA}, ${memberB})
-        )
-    `
-  })
-
-  return { ok: true as const }
+  return runDoublesSourceTransaction(prisma, (tx) =>
+    acceptDoublesInviteInTransaction(tx, params),
+  )
 }
 
 export async function revokeDoublesInvite(params: { inviteId: string; currentUserId: string }) {
-  const { inviteId, currentUserId } = params
-
-  const updated = await prisma.$executeRaw`
-    UPDATE match_doubles_invite
-    SET status = 'revoked', updated_at = now()
-    WHERE id = ${inviteId}
-      AND inviter_id = ${currentUserId}
-      AND status = 'pending'
-  `
-
-  if (updated === 0) return { ok: false as const, error: '邀请不存在或不可撤回。' }
-  return { ok: true as const }
+  return runDoublesSourceTransaction(prisma, (tx) =>
+    revokeDoublesInviteInTransaction(tx, params),
+  )
 }
 
 export async function registerDoublesTeamByUser(matchId: string, currentUserId: string) {

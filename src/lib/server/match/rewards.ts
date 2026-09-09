@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client'
+import { lockUsersForUpdate } from '../user/lock-users'
 
 const MATCH_POINTS_CAP_PER_MATCH = 5
 const MATCH_POINTS_REFERENCE_PREFIX = 'match-points:'
@@ -12,6 +13,10 @@ export async function grantRegistrationRewardPoints(
 ) {
   const { userId, matchId } = params
   const registrationReferencePrefix = `${MATCH_POINTS_REFERENCE_PREFIX}${matchId}:register:`
+
+  // Multi-user callers pre-lock their complete set. Keep this single-row lock
+  // as a defensive invariant for direct/future callers.
+  await lockUsersForUpdate(tx, [userId])
 
   const [registrationSummary, matchSummary, user] = await Promise.all([
     tx.pointsTransaction.aggregate({
@@ -71,6 +76,10 @@ export async function refundRegistrationRewardPoints(
   const { userId, matchId } = params
   const registrationReferencePrefix = `${MATCH_POINTS_REFERENCE_PREFIX}${matchId}:register:`
   const matchReferencePrefix = `${MATCH_POINTS_REFERENCE_PREFIX}${matchId}:`
+
+  // See grantRegistrationRewardPoints: callers with a set must lock the full
+  // sorted set first, while this protects standalone calls.
+  await lockUsersForUpdate(tx, [userId])
 
   const [registrationSummary, matchSummary, user] = await Promise.all([
     tx.pointsTransaction.aggregate({

@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
 import Link from "next/link";
 import { ArrowLeft, CalendarPlus } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import CreateMatchForm from "@/components/match/CreateMatchForm";
+import { getV2MatchCreationCapabilities } from "@/lib/server/match/v2-creation-flag";
 
 export default async function CreateMatchPage() {
   const currentUser = await getCurrentUser();
@@ -20,6 +22,29 @@ export default async function CreateMatchPage() {
       </div>
     );
   }
+
+  const capabilities = getV2MatchCreationCapabilities();
+  const v2SingleGroupOnlyCreationRequestKey = capabilities.single.group_only
+    ? randomUUID()
+    : null;
+  const v2SingleGroupThenKnockoutCreationRequestKey = capabilities.single
+    .group_then_knockout
+    ? randomUUID()
+    : null;
+  const v2DoubleGroupOnlyCreationRequestKey = capabilities.double.group_only
+    ? randomUUID()
+    : null;
+  const v2DoubleGroupThenKnockoutCreationRequestKey = capabilities.double
+    .group_then_knockout
+    ? randomUUID()
+    : null;
+  const v2TeamGroupOnlyCreationRequestKey = capabilities.team.group_only
+    ? randomUUID()
+    : null;
+  const v2TeamGroupThenKnockoutCreationRequestKey = capabilities.team
+    .group_then_knockout
+    ? randomUUID()
+    : null;
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -45,7 +70,26 @@ export default async function CreateMatchPage() {
           </div>
         </div>
         <div className="mt-8">
-          <CreateMatchForm />
+          <CreateMatchForm
+            v2SingleGroupOnlyCreationRequestKey={
+              v2SingleGroupOnlyCreationRequestKey
+            }
+            v2SingleGroupThenKnockoutCreationRequestKey={
+              v2SingleGroupThenKnockoutCreationRequestKey
+            }
+            v2DoubleGroupOnlyCreationRequestKey={
+              v2DoubleGroupOnlyCreationRequestKey
+            }
+            v2DoubleGroupThenKnockoutCreationRequestKey={
+              v2DoubleGroupThenKnockoutCreationRequestKey
+            }
+            v2TeamGroupOnlyCreationRequestKey={
+              v2TeamGroupOnlyCreationRequestKey
+            }
+            v2TeamGroupThenKnockoutCreationRequestKey={
+              v2TeamGroupThenKnockoutCreationRequestKey
+            }
+          />
         </div>
       </div>
     </div>

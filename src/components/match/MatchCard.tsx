@@ -9,6 +9,7 @@ interface MatchCardProps {
   registrationDeadline: string;
   location: string;
   participants: number;
+  participantUnit: "people" | "pairs" | "teams";
   status: "报名中" | "进行中" | "已结束";
 }
 
@@ -47,6 +48,7 @@ export default function MatchCard({
   registrationDeadline,
   location,
   participants,
+  participantUnit,
   status,
 }: MatchCardProps) {
   const matchTimeParts = formatMatchDateParts(matchTime);
@@ -78,6 +80,22 @@ export default function MatchCard({
     double: "双打",
     team: "团体",
   } as const;
+  const participantHeading =
+    type === "double"
+      ? "组数"
+      : participantUnit === "teams"
+        ? "队伍"
+        : participantUnit === "pairs"
+          ? "组数"
+          : "人数";
+  const participantText =
+    type === "double"
+      ? `${participantUnit === "pairs" ? participants : Math.floor(participants / 2)} 组`
+      : participantUnit === "teams"
+        ? `${participants} 队`
+        : participantUnit === "pairs"
+          ? `${participants} 组`
+          : `${participants} 人`;
 
   return (
     <Link
@@ -140,17 +158,9 @@ export default function MatchCard({
           <div className="rounded-2xl bg-white/[0.035] p-3 ring-1 ring-white/8">
             <div className="mb-2 flex items-center gap-1.5 text-slate-500">
               <Users className="h-3.5 w-3.5" />
-              <span>
-                {type === "team" ? "队伍" : type === "double" ? "组数" : "人数"}
-              </span>
+              <span>{participantHeading}</span>
             </div>
-            <p className="font-black tabular-nums text-slate-100">
-              {type === "team"
-                ? `${participants} 队`
-                : type === "double"
-                  ? `${Math.floor(participants / 2)} 组`
-                  : `${participants} 人`}
-            </p>
+            <p className="font-black tabular-nums text-slate-100">{participantText}</p>
           </div>
 
           <div className="col-span-2 flex items-center gap-2 rounded-2xl bg-white/[0.025] p-3 text-slate-300 ring-1 ring-white/8">

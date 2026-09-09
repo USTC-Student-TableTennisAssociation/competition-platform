@@ -1,10 +1,10 @@
-import Link from "next/link";
-import { MatchStatus, Prisma } from "@prisma/client";
-import { CalendarDays, Search, ShieldPlus, Sparkles } from "lucide-react";
 import MatchCard from "@/components/match/MatchCard";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { isMatchAllResultsFinished } from "@/lib/match-status";
+import { resolveMatchListRegistrationSummary } from "@/modules/competitions-v2/read-model/match-list-registration";
+import { MatchStatus,Prisma } from "@prisma/client";
+import { CalendarDays,Search,ShieldPlus,Sparkles } from "lucide-react";
+import Link from "next/link";
 
 const statusLabelMap = {
   registration: "报名中",
@@ -50,6 +50,9 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
       _count: {
         select: {
           registrations: { where: { user: { isBanned: false } } },
+          entries: {
+            where: { status: "ACTIVE" },
+          },
         },
       },
       teamRegistrations: {
@@ -80,36 +83,30 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
     .map((match) => matchesById.get(match.id))
     .filter((match): match is (typeof matches)[number] => Boolean(match));
 
-  const matchesToFinish = sortedMatches.filter(
-    (match) =>
-      match.type !== "team" &&
-      match.status !== MatchStatus.finished &&
-      isMatchAllResultsFinished({
-        format: match.format,
-        groupingGeneratedAt: match.groupingGeneratedAt,
-        groupingResult: match.groupingResult,
-        results: match.results,
-      }),
-  );
+  const resolvedMatches = sortedMatches.map((match) => {
+    const registrationSummary = resolveMatchListRegistrationSummary({
+      engineVersion: match.engineVersion,
+      isQuickMatch: match.isQuickMatch,
+      type: match.type,
+      format: match.format,
+      legacyParticipantCount:
+        match.type === "team"
+          ? match.teamRegistrations.length
+          : match._count.registrations,
+      legacyCurrentUserRegistered: false,
+      activeEntryCount: match._count.entries,
+      currentUserActiveEntryKinds: [],
+    });
 
-  if (matchesToFinish.length > 0) {
-    await prisma.$transaction(
-      matchesToFinish.map((match) =>
-        prisma.match.update({
-          where: { id: match.id },
-          data: { status: MatchStatus.finished },
-        }),
-      ),
-    );
-  }
-
-  const finishedMatchIds = new Set(matchesToFinish.map((match) => match.id));
-  const resolvedMatches = sortedMatches.map((match) => ({
-    ...match,
-    resolvedStatus: finishedMatchIds.has(match.id)
-      ? MatchStatus.finished
-      : match.status,
-  }));
+    return {
+      ...match,
+      participantCount: registrationSummary.participants,
+      participantUnit: registrationSummary.participantUnit,
+      resolvedStatus: match.engineVersion === "LEGACY"
+        ? MatchStatus.finished
+        : match.status,
+    };
+  });
   const registrationMatches = resolvedMatches.filter(
     (match) => match.resolvedStatus === MatchStatus.registration,
   );
@@ -222,11 +219,8 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
                   : match.registrationDeadline
                 ).toISOString()}
                 location={match.location ?? "待定"}
-                participants={
-                  match.type === "team"
-                    ? match.teamRegistrations.length
-                    : match._count.registrations
-                }
+                participants={match.participantCount}
+                participantUnit={match.participantUnit}
                 status={statusLabelMap[match.resolvedStatus]}
               />
             ))}
@@ -261,11 +255,8 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
                   : match.registrationDeadline
                 ).toISOString()}
                 location={match.location ?? "待定"}
-                participants={
-                  match.type === "team"
-                    ? match.teamRegistrations.length
-                    : match._count.registrations
-                }
+                participants={match.participantCount}
+                participantUnit={match.participantUnit}
                 status={statusLabelMap[match.resolvedStatus]}
               />
           ))}
