@@ -1,0 +1,316 @@
+name: Deploy Production
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy Production
+
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+
+    runs-on: ubuntu-latest
+    environment: production
+
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha }}
+
+      PROD_HOST: ${{ vars.PROD_HOST }}
+      PROD_USER: ${{ vars.PROD_USER }}
+      PROD_PORT: ${{ vars.PROD_PORT }}
+      PROD_APP_ROOT: ${{ vars.PROD_APP_ROOT }}
+
+      BUILD_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/ustctta_build?schema=public
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ustctta_build
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ustctta_build"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout exact verified commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22.22.0"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        run: npm run prisma:generate
+
+      - name: Prepare build database
+        env:
+          DATABASE_URL: ${{ env.BUILD_DATABASE_URL }}
+          DATABASE_URL_UNPOOLED: ${{ env.BUILD_DATABASE_URL }}
+        run: npx prisma migrate deploy
+
+      - name: Build production release
+        env:
+          DATABASE_URL: ${{ env.BUILD_DATABASE_URL }}
+          DATABASE_URL_UNPOOLED: ${{ env.BUILD_DATABASE_URL }}
+
+          AUTH_SECRET: build-only-auth-secret
+          ADMIN_REAUTH_SECRET: build-only-admin-secret
+
+          APP_URL: ${{ vars.NEXT_PUBLIC_APP_URL }}
+          NEXT_PUBLIC_APP_URL: ${{ vars.NEXT_PUBLIC_APP_URL }}
+          NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME: ${{ vars.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME }}
+
+          V2_COMPETITIONS_CREATION_MODE: V2
+          CERTIFICATE_FONT_PATH: assets/fonts/NotoSansSC-Regular.ttf
+        run: npm run build
+
+      - name: Package immutable release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Build machines must never ship their environment file.
+          rm -f .next/standalone/.env
+
+          rm -rf .next/standalone/public
+          rm -rf .next/standalone/.next/static
+          rm -rf .next/standalone/assets
+
+          cp -R public .next/standalone/public
+
+          mkdir -p .next/standalone/.next
+          cp -R .next/static .next/standalone/.next/static
+
+          cp -R assets .next/standalone/assets
+          cp deploy/ecosystem.config.cjs .next/standalone/ecosystem.config.cjs
+
+          printf '%s\n' "$SHA" > .next/standalone/REVISION
+
+          test -f .next/standalone/server.js
+          test -f .next/standalone/ecosystem.config.cjs
+          test -f .next/standalone/assets/fonts/NotoSansSC-Regular.ttf
+          test -s .next/standalone/REVISION
+          test ! -e .next/standalone/.env
+
+          tar \
+            -C .next/standalone \
+            -czf "release-${SHA}.tar.gz" \
+            .
+
+      - name: Archive release in GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-release-${{ github.event.workflow_run.head_sha }}
+          path: release-${{ env.SHA }}.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PROD_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Upload release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          scp \
+            -i ~/.ssh/deploy_key \
+            -P "$PROD_PORT" \
+            "release-${SHA}.tar.gz" \
+            "$PROD_USER@$PROD_HOST:/tmp/kedapp-${SHA}.tar.gz"
+
+      - name: Stage release on server
+        id: stage
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          FIRST_DEPLOY="$(
+            ssh \
+              -i ~/.ssh/deploy_key \
+              -p "$PROD_PORT" \
+              "$PROD_USER@$PROD_HOST" \
+              "if [ -L '$PROD_APP_ROOT/current' ]; then echo false; else echo true; fi"
+          )"
+
+          echo "first_deploy=$FIRST_DEPLOY" >> "$GITHUB_OUTPUT"
+
+          ssh \
+            -i ~/.ssh/deploy_key \
+            -p "$PROD_PORT" \
+            "$PROD_USER@$PROD_HOST" \
+            "bash -s -- '$SHA' '$PROD_APP_ROOT'" <<'REMOTE'
+          set -euo pipefail
+
+          SHA="$1"
+          APP_ROOT="$2"
+
+          ARCHIVE="/tmp/kedapp-${SHA}.tar.gz"
+          RELEASE="$APP_ROOT/releases/$SHA"
+          STAGING="$APP_ROOT/releases/.${SHA}.tmp"
+
+          test -f "$APP_ROOT/shared/.env"
+          test -f "$ARCHIVE"
+
+          if [ -d "$RELEASE" ]; then
+            test -f "$RELEASE/REVISION"
+            test "$(cat "$RELEASE/REVISION")" = "$SHA"
+            rm -f "$ARCHIVE"
+            exit 0
+          fi
+
+          rm -rf "$STAGING"
+          mkdir -p "$STAGING"
+
+          tar -xzf "$ARCHIVE" -C "$STAGING"
+          rm -f "$ARCHIVE"
+
+          ln -sfn "$APP_ROOT/shared/.env" "$STAGING/.env"
+
+          test -f "$STAGING/server.js"
+          test -f "$STAGING/ecosystem.config.cjs"
+          test "$(cat "$STAGING/REVISION")" = "$SHA"
+          test -L "$STAGING/.env"
+
+          mv "$STAGING" "$RELEASE"
+          REMOTE
+
+      - name: Migrate production database
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL_UNPOOLED }}
+          DATABASE_URL_UNPOOLED: ${{ secrets.PROD_DATABASE_URL_UNPOOLED }}
+        run: npx prisma migrate deploy
+
+      - name: First V2 cutover preflight
+        if: steps.stage.outputs.first_deploy == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL_UNPOOLED }}
+          DATABASE_URL_UNPOOLED: ${{ secrets.PROD_DATABASE_URL_UNPOOLED }}
+          V2_COMPETITIONS_CREATION_MODE: PAUSED
+        run: npm run preflight:v2-cutover
+
+      - name: Activate release
+        id: activate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -i ~/.ssh/deploy_key \
+            -p "$PROD_PORT" \
+            "$PROD_USER@$PROD_HOST" \
+            "bash -s -- '$SHA' '$PROD_APP_ROOT'" <<'REMOTE'
+          set -euo pipefail
+
+          SHA="$1"
+          APP_ROOT="$2"
+          RELEASE="$APP_ROOT/releases/$SHA"
+
+          test -d "$RELEASE"
+          test "$(cat "$RELEASE/REVISION")" = "$SHA"
+
+          if [ -L "$APP_ROOT/current" ]; then
+            OLD_RELEASE="$(readlink -f "$APP_ROOT/current")"
+
+            ln -sfn "$OLD_RELEASE" "$APP_ROOT/previous.new"
+            mv -Tf "$APP_ROOT/previous.new" "$APP_ROOT/previous"
+          fi
+
+          ln -sfn "$RELEASE" "$APP_ROOT/current.new"
+          mv -Tf "$APP_ROOT/current.new" "$APP_ROOT/current"
+
+          pm2 startOrReload "$APP_ROOT/current/ecosystem.config.cjs" --update-env
+          pm2 save
+          REMOTE
+
+      - name: Production smoke test
+        id: smoke
+        env:
+          SITE_URL: ${{ vars.NEXT_PUBLIC_APP_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          HEALTH_URL="${SITE_URL%/}/api/site-status"
+
+          for attempt in $(seq 1 12); do
+            if curl --fail --silent --show-error "$HEALTH_URL"; then
+              echo
+              echo "Production health check passed."
+              exit 0
+            fi
+
+            echo "Waiting for production... ($attempt/12)"
+            sleep 5
+          done
+
+          echo "Production health check failed."
+          exit 1
+
+      - name: Roll back application on failed smoke test
+        if: failure() && steps.activate.outcome == 'success'
+        shell: bash
+        run: |
+          ssh \
+            -i ~/.ssh/deploy_key \
+            -p "$PROD_PORT" \
+            "$PROD_USER@$PROD_HOST" \
+            "bash -s -- '$PROD_APP_ROOT'" <<'REMOTE'
+          set -euo pipefail
+
+          APP_ROOT="$1"
+
+          if [ -L "$APP_ROOT/previous" ]; then
+            PREVIOUS_RELEASE="$(readlink -f "$APP_ROOT/previous")"
+
+            ln -sfn "$PREVIOUS_RELEASE" "$APP_ROOT/current.rollback"
+            mv -Tf "$APP_ROOT/current.rollback" "$APP_ROOT/current"
+
+            pm2 startOrReload "$APP_ROOT/current/ecosystem.config.cjs" --update-env
+            pm2 save
+          else
+            pm2 stop kedapp || true
+          fi
+          REMOTE
