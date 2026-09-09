@@ -68,6 +68,9 @@ jobs:
         run: npm ci
 
       - name: Generate Prisma Client
+        env:
+          DATABASE_URL: ${{ env.BUILD_DATABASE_URL }}
+          DATABASE_URL_UNPOOLED: ${{ env.BUILD_DATABASE_URL }}
         run: npm run prisma:generate
 
       - name: Prepare build database
