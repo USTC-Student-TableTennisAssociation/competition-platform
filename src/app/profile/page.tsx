@@ -47,6 +47,8 @@ export default async function ProfilePage() {
     badgeRows,
     betterRankCount,
     termRegistrationCount,
+    openSupermarketPeriod,
+    supermarketWallet,
   ] = await Promise.all([
     prisma.eloHistory.findMany({
       where: { userId: currentUser.id },
@@ -86,7 +88,17 @@ export default async function ProfilePage() {
       },
     }),
     getTermRegistrationCount(prisma, currentUser.id, termStart),
+    prisma.supermarketPeriod.findFirst({
+      where: { status: "OPEN" },
+      select: { id: true, sequence: true },
+    }),
+    prisma.supermarketBalance.findFirst({
+      where: { userId: currentUser.id, period: { status: "OPEN" } },
+      select: { balance: true },
+    }),
   ]);
+
+  const supermarketBalance = supermarketWallet?.balance ?? 0;
 
   return (
     <div className="mx-auto max-w-6xl space-y-5">
@@ -110,6 +122,25 @@ export default async function ProfilePage() {
           <span className="text-slate-200">{currentUser.email}</span>
         </p>
       </section>
+
+      {openSupermarketPeriod ? (
+        <Link
+          href="/supermarket"
+          className="flex items-center justify-between rounded-lg border border-[#30363d] bg-[#0d1117] px-4 py-3 transition hover:border-orange-400/40"
+        >
+          <div>
+            <p className="text-sm text-slate-400">
+              积分超市 · 第 {openSupermarketPeriod.sequence} 期
+            </p>
+            <p className="mt-0.5 text-xs text-slate-500">
+              本期未使用的超市积分将在闭期后作废
+            </p>
+          </div>
+          <span className="text-lg font-semibold tabular-nums text-orange-200">
+            {supermarketBalance} 分
+          </span>
+        </Link>
+      ) : null}
 
       <ProfileOverview
         user={{

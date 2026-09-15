@@ -6,6 +6,7 @@ import type { ComponentType } from "react";
 import {
   CalendarRange,
   Clock3,
+  Gift,
   Home,
   Mail,
   Medal,
@@ -20,7 +21,8 @@ export type SidebarIconKey =
   | "clock"
   | "mail"
   | "plus"
-  | "settings";
+  | "settings"
+  | "gift";
 
 const iconMap = {
   home: Home,
@@ -30,6 +32,7 @@ const iconMap = {
   mail: Mail,
   plus: PlusSquare,
   settings: Settings2,
+  gift: Gift,
 } satisfies Record<SidebarIconKey, ComponentType<{ className?: string }>>;
 
 type SidebarNavLinkProps = {
