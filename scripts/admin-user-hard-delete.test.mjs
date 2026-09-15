@@ -75,6 +75,27 @@ test('certificate identity is treated as business data and blocks deletion', () 
   assert.match(deletionGuard, /target\.identity/)
 })
 
+test('supermarket participation is business history and blocks deletion', () => {
+  // A member who redeemed a prize, holds a balance, or was credited/debited by
+  // an admin must survive as the subject of those rows.
+  for (const relation of [
+    'supermarketRedemptions',
+    'supermarketBalances',
+    'supermarketLedgerEntries',
+  ]) {
+    assert.match(
+      deletionGuard,
+      new RegExp(`'${relation}'`),
+      `${relation} must be listed as business history`,
+    )
+    assert.match(
+      deletionGuard,
+      new RegExp(`${relation}: true`),
+      `${relation} must be counted by the deletion guard`,
+    )
+  }
+})
+
 test('role changes serialize the last-admin check and revalidate the actor', () => {
   const roleChange = section(
     adminActions,

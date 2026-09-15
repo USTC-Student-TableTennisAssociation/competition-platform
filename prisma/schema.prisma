@@ -151,6 +151,31 @@ enum RewardType {
   coupon
 }
 
+/// A points supermarket runs one round at a time. Prizes, stock, and balances
+/// are all scoped to a single period; closing a period freezes them as history
+/// and zeroes every member balance. Only redemption records outlive a period.
+enum SupermarketPeriodStatus {
+  OPEN
+  CLOSED
+}
+
+enum SupermarketBalanceEntryType {
+  SETTLEMENT
+  REDEMPTION
+  ADMIN_ADJUSTMENT
+}
+
+enum SupermarketPrizeStatus {
+  ACTIVE
+  WITHDRAWN
+}
+
+enum SupermarketRedemptionStatus {
+  PENDING
+  FULFILLED
+  VOIDED
+}
+
 enum MatchPostStatus {
   OPEN
   MATCHED
@@ -205,7 +230,10 @@ model User {
   verifiedResults MatchResult[]       @relation("ResultVerifier")
   eloHistory      EloHistory[]
   pointsLedger    PointsTransaction[]
-  redemptions     RewardRedemption[]
+  supermarketBalances        SupermarketBalance[]
+  supermarketRedemptions     SupermarketRedemption[]   @relation("SupermarketRedemptionOwner")
+  supermarketResolutions     SupermarketRedemption[]   @relation("SupermarketRedemptionResolver")
+  supermarketLedgerEntries   SupermarketBalanceEntry[] @relation("SupermarketLedgerActor")
   awardedBadges   UserBadge[]
   reviewsGiven    Review[]            @relation("Reviewer")
   reviewsReceived Review[]            @relation("Reviewee")
@@ -806,33 +834,130 @@ model PointsTransaction {
   @@index([referenceId])
 }
 
-model Reward {
-  id          String     @id @default(cuid())
-  title       String
-  description String?
-  pointsCost  Int
-  stock       Int?
-  type        RewardType
-  metadata    Json?
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+/// One round of the points supermarket. At most one period may be OPEN at a
+/// time. Prizes and stock belong to a single period and are frozen when it
+/// closes; the next round starts empty instead of inheriting leftovers.
+model SupermarketPeriod {
+  id        String                  @id @default(cuid())
+  /// Human-facing round number, unique so admins can reference "第 N 期".
+  sequence  Int                     @unique
+  status    SupermarketPeriodStatus @default(OPEN)
+  openedAt  DateTime                @default(now())
+  closedAt  DateTime?
 
-  redemptions RewardRedemption[]
+  prizes        SupermarketPrize[]
+  redemptions   SupermarketRedemption[]
+  balances      SupermarketBalance[]
+  settlements   SupermarketSettlement[]
+
+  @@index([status, openedAt])
+  @@map("supermarket_period")
 }
 
-model RewardRedemption {
+/// Admin-initiated conversion of every member's long-term match points into
+/// supermarket points for one period. The `points` column group is the frozen
+/// total moved by this batch; match points are zeroed in the same transaction.
+model SupermarketSettlement {
   id          String   @id @default(cuid())
-  rewardId    String
-  userId      String
-  pointsSpent Int
-  status      String   @default("created")
+  periodId    String   @map("period_id")
+  userCount   Int      @map("user_count")
+  totalPoints Int      @map("total_points")
   createdAt   DateTime @default(now())
 
-  reward Reward @relation(fields: [rewardId], references: [id])
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  period SupermarketPeriod @relation(fields: [periodId], references: [id], onDelete: Restrict)
 
-  @@index([rewardId])
+  @@index([periodId, createdAt])
+  @@map("supermarket_settlement")
+}
+
+/// Per-user supermarket wallet. Deliberately separate from `User.points`: match
+/// points are a permanent record, supermarket points expire when a period
+/// closes. Never allowed to go negative.
+model SupermarketBalance {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  periodId  String   @map("period_id")
+  balance   Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  period SupermarketPeriod   @relation(fields: [periodId], references: [id], onDelete: Restrict)
+  ledger SupermarketBalanceEntry[]
+
+  @@unique([userId, periodId])
+  @@index([periodId])
+  @@map("supermarket_balance")
+}
+
+/// Cash-book for supermarket points: every settlement credit, redemption debit,
+/// and admin adjustment is recorded with the resulting balance. `User`-level
+/// match points keep their own ledger; this one never touches them.
+model SupermarketBalanceEntry {
+  id          String                        @id @default(cuid())
+  balanceId   String                        @map("balance_id")
+  amount      Int
+  balanceAfter Int                          @map("balance_after")
+  type        SupermarketBalanceEntryType
+  reason      String
+  /// Admin actor for ADMIN_ADJUSTMENT and SETTLEMENT entries.
+  actorId     String?                       @map("actor_id")
+  createdAt   DateTime                      @default(now())
+
+  balance SupermarketBalance @relation(fields: [balanceId], references: [id], onDelete: Cascade)
+  actor   User?              @relation("SupermarketLedgerActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([balanceId, createdAt])
+  @@index([actorId])
+  @@map("supermarket_balance_entry")
+}
+
+/// A prize offered during one period. `stock` is null for unlimited supply.
+/// Admin withdrawal is tracked separately from sell-out so a paused prize keeps
+/// its real remaining stock.
+model SupermarketPrize {
+  id          String                  @id @default(cuid())
+  periodId    String                  @map("period_id")
+  name        String
+  description String?
+  pointsCost  Int                     @map("points_cost")
+  stock       Int?
+  status      SupermarketPrizeStatus  @default(ACTIVE)
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+
+  period      SupermarketPeriod       @relation(fields: [periodId], references: [id], onDelete: Restrict)
+  redemptions SupermarketRedemption[]
+
+  @@index([periodId, status])
+  @@map("supermarket_prize")
+}
+
+/// The only supermarket data that outlives its period. Prize name and cost are
+/// snapshotted at redemption time so the record stays readable after the prize
+/// is edited or the period closed.
+model SupermarketRedemption {
+  id           String                      @id @default(cuid())
+  periodId     String                      @map("period_id")
+  prizeId      String                      @map("prize_id")
+  userId       String                      @map("user_id")
+  prizeName    String                      @map("prize_name")
+  pointsSpent  Int                         @map("points_spent")
+  status       SupermarketRedemptionStatus @default(PENDING)
+  createdAt    DateTime                    @default(now())
+  /// When an admin marked the handover complete or voided the redemption.
+  resolvedAt   DateTime?                   @map("resolved_at")
+  resolvedById String?                     @map("resolved_by_id")
+
+  period     SupermarketPeriod @relation(fields: [periodId], references: [id], onDelete: Restrict)
+  prize      SupermarketPrize  @relation(fields: [prizeId], references: [id], onDelete: Restrict)
+  user       User              @relation("SupermarketRedemptionOwner", fields: [userId], references: [id], onDelete: Cascade)
+  resolvedBy User?             @relation("SupermarketRedemptionResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@index([periodId, status])
   @@index([userId, createdAt])
+  @@index([prizeId])
+  @@map("supermarket_redemption")
 }
 
 model Badge {
