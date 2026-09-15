@@ -39,6 +39,9 @@
     "src/lib/server/user/ban-user.test.ts",
     "src/lib/server/user/lock-users.ts",
     "src/lib/server/user/lock-users.test.ts",
+    "src/lib/server/supermarket/service.ts",
+    "src/lib/server/supermarket/service.test.ts",
+    "src/lib/server/supermarket/service.integration.test.ts",
     "src/modules/competitions-v2/**/*.ts"
   ]
 }

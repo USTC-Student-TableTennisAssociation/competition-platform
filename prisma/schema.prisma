@@ -842,8 +842,8 @@ model SupermarketPeriod {
   /// Human-facing round number, unique so admins can reference "第 N 期".
   sequence  Int                     @unique
   status    SupermarketPeriodStatus @default(OPEN)
-  openedAt  DateTime                @default(now())
-  closedAt  DateTime?
+  openedAt  DateTime                @default(now()) @map("opened_at")
+  closedAt  DateTime?               @map("closed_at")
 
   prizes        SupermarketPrize[]
   redemptions   SupermarketRedemption[]
@@ -862,7 +862,7 @@ model SupermarketSettlement {
   periodId    String   @map("period_id")
   userCount   Int      @map("user_count")
   totalPoints Int      @map("total_points")
-  createdAt   DateTime @default(now())
+  createdAt   DateTime @default(now()) @map("created_at")
 
   period SupermarketPeriod @relation(fields: [periodId], references: [id], onDelete: Restrict)
 
@@ -878,8 +878,8 @@ model SupermarketBalance {
   userId    String   @map("user_id")
   periodId  String   @map("period_id")
   balance   Int      @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   user   User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   period SupermarketPeriod   @relation(fields: [periodId], references: [id], onDelete: Restrict)
@@ -902,7 +902,7 @@ model SupermarketBalanceEntry {
   reason      String
   /// Admin actor for ADMIN_ADJUSTMENT and SETTLEMENT entries.
   actorId     String?                       @map("actor_id")
-  createdAt   DateTime                      @default(now())
+  createdAt   DateTime                      @default(now()) @map("created_at")
 
   balance SupermarketBalance @relation(fields: [balanceId], references: [id], onDelete: Cascade)
   actor   User?              @relation("SupermarketLedgerActor", fields: [actorId], references: [id], onDelete: SetNull)
@@ -923,8 +923,8 @@ model SupermarketPrize {
   pointsCost  Int                     @map("points_cost")
   stock       Int?
   status      SupermarketPrizeStatus  @default(ACTIVE)
-  createdAt   DateTime                @default(now())
-  updatedAt   DateTime                @updatedAt
+  createdAt   DateTime                @default(now()) @map("created_at")
+  updatedAt   DateTime                @updatedAt @map("updated_at")
 
   period      SupermarketPeriod       @relation(fields: [periodId], references: [id], onDelete: Restrict)
   redemptions SupermarketRedemption[]
@@ -944,7 +944,7 @@ model SupermarketRedemption {
   prizeName    String                      @map("prize_name")
   pointsSpent  Int                         @map("points_spent")
   status       SupermarketRedemptionStatus @default(PENDING)
-  createdAt    DateTime                    @default(now())
+  createdAt    DateTime                    @default(now()) @map("created_at")
   /// When an admin marked the handover complete or voided the redemption.
   resolvedAt   DateTime?                   @map("resolved_at")
   resolvedById String?                     @map("resolved_by_id")
