@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   BarChart3,
   CalendarRange,
+  Gift,
   LayoutDashboard,
   Menu,
   ShieldCheck,
@@ -51,6 +52,9 @@ export default function Header({
       label: "我的比赛",
       icon: UserRound,
     },
+    ...(isLoggedIn
+      ? [{ href: "/supermarket", label: "积分超市", icon: Gift }]
+      : []),
   ];
   const showAdminEntry = currentUser?.role === "admin" && adminViewEnabled;
 

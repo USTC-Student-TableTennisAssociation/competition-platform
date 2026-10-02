@@ -52,7 +52,7 @@ export function supermarketErrorMessage(error: unknown): string {
       return '已有一期积分超市处于开放状态，请先关闭后再开启新一期。'
     case 'PERIOD_NOT_OPEN':
     case 'PERIOD_CLOSED':
-      return '本期积分超市已结束，无法再兑换。'
+      return '本期积分超市已结束，无法修改奖品或兑换。'
     case 'PRIZE_NOT_FOUND':
       return '奖品不存在。'
     case 'PRIZE_NOT_AVAILABLE':

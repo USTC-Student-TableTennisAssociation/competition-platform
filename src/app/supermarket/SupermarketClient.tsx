@@ -1,13 +1,13 @@
 'use client'
 
-import { useActionState, useEffect, useMemo, useState } from 'react'
+import { startTransition, useActionState, useEffect, useMemo, useState } from 'react'
 
 import {
   INITIAL_SUPERMARKET_MEMBER_STATE,
-  supermarketMemberAction,
   type SupermarketMemberRedemption,
   type SupermarketMemberState,
-} from '@/app/supermarket/actions'
+} from '@/app/supermarket/state'
+import { supermarketMemberAction } from '@/app/supermarket/actions'
 
 const STATUS_LABEL: Record<SupermarketMemberRedemption['status'], string> = {
   PENDING: '待发放',
@@ -35,7 +35,7 @@ export default function SupermarketClient() {
   useEffect(() => {
     const formData = new FormData()
     formData.set('intent', 'bootstrap')
-    formAction(formData)
+    startTransition(() => formAction(formData))
   }, [formAction])
 
   const grouped = useMemo(() => {
@@ -57,8 +57,8 @@ export default function SupermarketClient() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold text-neutral-900">积分超市</h1>
-        <p className="mt-1 text-sm text-neutral-500">
+        <h1 className="text-2xl font-semibold text-slate-100">积分超市</h1>
+        <p className="mt-1 text-sm text-slate-400">
           用积分兑换奖品。超市按期开放，本期未使用的超市积分在闭期后作废。
         </p>
       </div>
@@ -108,7 +108,7 @@ export default function SupermarketClient() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-neutral-900">本期奖品</h2>
+        <h2 className="text-lg font-semibold text-slate-100">本期奖品</h2>
         {!open ? (
           <p className="rounded-2xl border border-neutral-200 bg-white p-6 text-sm text-neutral-500">
             积分超市当前未开放，请留意后续通知。
@@ -223,7 +223,7 @@ export default function SupermarketClient() {
           </ul>
         )}
         <p className="mt-4 text-xs text-neutral-400">
-          作废表示该笔兑换最终未履行。如遇问题请联系管理员，补偿由管理员手工处理。
+          未履行表示该笔兑换最终未发放。原期次仍开放时积分自动退回；已闭期时请联系管理员处理补偿。
         </p>
       </section>
     </div>

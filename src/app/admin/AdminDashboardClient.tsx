@@ -298,6 +298,12 @@ export default function AdminDashboardClient() {
         <p className="mt-2 text-sm leading-6 text-slate-400">
           可管理用户封禁/删除/资料编辑，批量创建测试账号，并批量加入比赛。
         </p>
+        <Link
+          href="/admin/supermarket"
+          className="btn-secondary mt-4 inline-flex rounded-xl px-4 py-2 text-sm font-semibold"
+        >
+          积分超市管理
+        </Link>
         {state.success ? (
           <p className="mt-3 text-sm text-emerald-300">{state.success}</p>
         ) : null}

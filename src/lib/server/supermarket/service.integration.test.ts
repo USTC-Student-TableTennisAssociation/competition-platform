@@ -324,7 +324,7 @@ test(
           error.code === 'REDEMPTION_ALREADY_RESOLVED',
       )
 
-      // Voiding records the fact without refunding anything.
+      // Voiding during the original open period refunds the points.
       const balanceBeforeVoid = await serializable(db, (tx) =>
         readSupermarketWallet(tx, { userId: memberB }),
       )
@@ -336,10 +336,11 @@ test(
         }),
       )
       assert.equal(voided.status, 'VOIDED')
+      assert.equal(voided.refundedPoints, 10)
       const balanceAfterVoid = await serializable(db, (tx) =>
         readSupermarketWallet(tx, { userId: memberB }),
       )
-      assert.equal(balanceAfterVoid.balance, balanceBeforeVoid.balance)
+      assert.equal(balanceAfterVoid.balance, balanceBeforeVoid.balance + 10)
 
       // --- admin adjustment -------------------------------------------------
       const adjusted = await serializable(db, (tx) =>
@@ -413,11 +414,20 @@ test(
       )
       assert.equal(pendingAcrossClose.redemption.status, 'PENDING')
 
+      const frozenPrize = await serializable(db, (tx) =>
+        createSupermarketPrize(tx, {
+          periodId: period.id,
+          name: '闭期后保留的奖品',
+          description: '历史配置',
+          pointsCost: 5,
+          stock: 2,
+        }),
+      )
       const closed = await serializable(db, (tx) => closeSupermarketPeriod(tx))
       assert.equal(closed.period.status, 'CLOSED')
 
       // Unspent points expire: 40 (A, after the 80-point redemption)
-      // + 10 (B, after two 10-point redemptions) + 25 (C, from the adjustment).
+      // + 20 (B, one fulfilled redemption and one refunded) + 25 (C).
       const closingBalances = await db.supermarketBalance.findMany({
         where: { periodId: period.id, userId: { in: [memberA, memberB, memberC] } },
         select: { balance: true },
@@ -440,8 +450,8 @@ test(
       })
       assert.equal(
         closingEntries.reduce((total, entry) => total - entry.amount, 0),
-        75,
-        'expiring 40 (A) + 10 (B) + 25 (C)',
+        85,
+        'expiring 40 (A) + 20 (B) + 25 (C)',
       )
 
       // Redemptions survived the close and can still be resolved.
@@ -498,6 +508,42 @@ test(
       // --- the next round starts empty --------------------------------------
       const secondPeriod = await serializable(db, (tx) => openSupermarketPeriod(tx))
       assert.equal(secondPeriod.sequence, 2)
+
+      // A stale admin form cannot mutate a closed period, even with a new
+      // period open. Verify every editable field and deletion independently.
+      await assert.rejects(
+        () => serializable(db, (tx) => createSupermarketPrize(tx, {
+          periodId: period.id,
+          name: '过期表单新增',
+          pointsCost: 1,
+          stock: null,
+        })),
+        (error: unknown) => error instanceof SupermarketError && error.code === 'PERIOD_CLOSED',
+      )
+      for (const change of [
+        { name: '过期表单改名' },
+        { description: '过期表单改说明' },
+        { description: null },
+        { pointsCost: 1 },
+        { stock: 100 },
+        { status: 'WITHDRAWN' as const },
+      ]) {
+        await assert.rejects(
+          () => serializable(db, (tx) => updateSupermarketPrize(tx, {
+            prizeId: frozenPrize.id,
+            ...change,
+          })),
+          (error: unknown) => error instanceof SupermarketError && error.code === 'PERIOD_CLOSED',
+        )
+      }
+      await assert.rejects(
+        () => serializable(db, (tx) => deleteSupermarketPrize(tx, frozenPrize.id)),
+        (error: unknown) => error instanceof SupermarketError && error.code === 'PERIOD_CLOSED',
+      )
+      assert.deepEqual(
+        await db.supermarketPrize.findUnique({ where: { id: frozenPrize.id } }),
+        frozenPrize,
+      )
       assert.equal(
         await db.supermarketPrize.count({ where: { periodId: secondPeriod.id } }),
         0,
@@ -625,6 +671,138 @@ test(
         db,
         leftovers.map((period) => period.id),
       )
+      await db.$disconnect()
+    }
+  },
+)
+
+test(
+  'void refunds are atomic, issued once, and stay within their original open period',
+  { skip: integrationDatabaseUrl === undefined },
+  async () => {
+    const db = new PrismaClient({ datasourceUrl: integrationDatabaseUrl })
+    const suffix = randomUUID().replaceAll('-', '')
+    const adminId = `sm-refund-admin-${suffix}`
+    const userId = `sm-refund-member-${suffix}`
+    const periodIds: string[] = []
+
+    // Competing close/void requests can legitimately abort under Serializable.
+    // Retrying an aborted transaction must preserve exactly-once refunds.
+    async function retrySerializable<T>(run: (tx: Prisma.TransactionClient) => Promise<T>) {
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          return await serializable(db, run)
+        } catch (error) {
+          if (!(error instanceof Prisma.PrismaClientKnownRequestError) ||
+            error.code !== 'P2034' || attempt >= 2) throw error
+        }
+      }
+    }
+
+    try {
+      await db.user.createMany({
+        data: [
+          { id: adminId, email: `${adminId}@example.test`, nickname: 'Refund admin', role: 'admin' },
+          { id: userId, email: `${userId}@example.test`, nickname: 'Refund member' },
+        ],
+      })
+      const period = await serializable(db, (tx) => openSupermarketPeriod(tx))
+      periodIds.push(period.id)
+      await serializable(db, (tx) => adjustSupermarketPoints(tx, {
+        userId, amount: 100, reason: '测试预置积分', actorId: adminId,
+      }))
+      const prize = await serializable(db, (tx) => createSupermarketPrize(tx, {
+        periodId: period.id, name: '退分测试奖品', pointsCost: 10, stock: 5,
+      }))
+      const redemptionIds: string[] = []
+      for (let i = 0; i < 4; i += 1) {
+        redemptionIds.push((await serializable(db, (tx) =>
+          redeemSupermarketPrize(tx, { userId, prizeId: prize.id }),
+        )).redemption.id)
+      }
+
+      // A failure after crediting the wallet rolls the credit and ledger back.
+      await assert.rejects(
+        () => serializable(db, (tx) => resolveSupermarketRedemption(tx, {
+          redemptionId: redemptionIds[0], resolution: 'VOIDED', actorId: `missing-${suffix}`,
+        })),
+        (error: unknown) => error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003',
+      )
+      assert.equal((await readSupermarketWallet(db, { userId })).balance, 60)
+      assert.equal((await db.supermarketRedemption.findUnique({
+        where: { id: redemptionIds[0] },
+      }))?.status, 'PENDING')
+      assert.equal(await db.supermarketBalanceEntry.count({
+        where: { balance: { userId }, reason: { startsWith: '兑换未履行，自动退分：' } },
+      }), 0)
+
+      // Two admins attempting the same void can credit the member only once.
+      const resolutions = await Promise.allSettled([0, 1].map(() =>
+        serializable(db, (tx) => resolveSupermarketRedemption(tx, {
+          redemptionId: redemptionIds[0], resolution: 'VOIDED', actorId: adminId,
+        })),
+      ))
+      assert.equal(resolutions.filter((result) => result.status === 'fulfilled').length, 1)
+      const successful = resolutions.find((result) => result.status === 'fulfilled')!
+      assert.equal(successful.status === 'fulfilled' && successful.value.refundedPoints, 10)
+      assert.equal((await readSupermarketWallet(db, { userId })).balance, 70)
+      const refundEntries = await db.supermarketBalanceEntry.findMany({
+        where: { balance: { userId }, reason: { startsWith: '兑换未履行，自动退分：' } },
+      })
+      assert.equal(refundEntries.length, 1)
+      assert.equal(refundEntries[0].amount, 10)
+      assert.equal(refundEntries[0].balanceAfter, 70)
+      assert.equal(refundEntries[0].actorId, adminId)
+      assert.ok(refundEntries[0].reason.includes(redemptionIds[0]))
+      await assert.rejects(
+        () => serializable(db, (tx) => resolveSupermarketRedemption(tx, {
+          redemptionId: redemptionIds[0], resolution: 'VOIDED', actorId: adminId,
+        })),
+        (error: unknown) => error instanceof SupermarketError && error.code === 'REDEMPTION_ALREADY_RESOLVED',
+      )
+      const fulfilled = await serializable(db, (tx) => resolveSupermarketRedemption(tx, {
+        redemptionId: redemptionIds[1], resolution: 'FULFILLED', actorId: adminId,
+      }))
+      assert.equal(fulfilled.refundedPoints, 0)
+      assert.equal((await readSupermarketWallet(db, { userId })).balance, 70)
+
+      // Whether voiding wins the race or closing wins, no balance can survive
+      // closure and every credited/expired point remains in the ledger.
+      await Promise.all([
+        retrySerializable((tx) => closeSupermarketPeriod(tx)),
+        retrySerializable((tx) => resolveSupermarketRedemption(tx, {
+          redemptionId: redemptionIds[3], resolution: 'VOIDED', actorId: adminId,
+        })),
+      ])
+      const closedWallet = await db.supermarketBalance.findUniqueOrThrow({
+        where: { userId_periodId: { userId, periodId: period.id } },
+      })
+      assert.equal(closedWallet.balance, 0)
+      const ledger = await db.supermarketBalanceEntry.aggregate({
+        where: { balanceId: closedWallet.id }, _sum: { amount: true },
+      })
+      assert.equal(ledger._sum.amount, 0)
+
+      const nextPeriod = await serializable(db, (tx) => openSupermarketPeriod(tx))
+      periodIds.push(nextPeriod.id)
+      await serializable(db, (tx) => adjustSupermarketPoints(tx, {
+        userId, amount: 5, reason: '新期测试预置', actorId: adminId,
+      }))
+      const historicalVoid = await serializable(db, (tx) => resolveSupermarketRedemption(tx, {
+        redemptionId: redemptionIds[2], resolution: 'VOIDED', actorId: adminId,
+      }))
+      assert.equal(historicalVoid.status, 'VOIDED')
+      assert.equal(historicalVoid.refundedPoints, 0)
+      assert.equal((await readSupermarketWallet(db, { userId })).balance, 5)
+      assert.equal((await db.supermarketBalance.findUniqueOrThrow({
+        where: { id: closedWallet.id },
+      })).balance, 0)
+      assert.equal((await db.supermarketPrize.findUniqueOrThrow({
+        where: { id: prize.id },
+      })).stock, 1, 'voiding never restores stock')
+    } finally {
+      await cleanupPeriods(db, periodIds)
+      await db.user.deleteMany({ where: { id: { in: [adminId, userId] } } })
       await db.$disconnect()
     }
   },

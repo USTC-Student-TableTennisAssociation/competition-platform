@@ -49,9 +49,39 @@ export async function findOpenPeriod(tx: SupermarketTransaction) {
   })
 }
 
-async function requireOpenPeriod(tx: SupermarketTransaction) {
+// Ordinary writes share the period lock; closing takes it exclusively before
+// touching wallets. Always acquire this lock before user, wallet, or prize locks.
+async function findLockedPeriod(
+  tx: SupermarketTransaction,
+  periodId: string,
+  exclusive = false,
+) {
+  const lock = exclusive ? Prisma.sql`FOR UPDATE` : Prisma.sql`FOR SHARE`
+  await tx.$queryRaw(Prisma.sql`
+    SELECT "id" FROM "supermarket_period"
+    WHERE "id" = ${periodId} ${lock}
+  `)
+  return tx.supermarketPeriod.findUnique({ where: { id: periodId } })
+}
+
+async function requireOpenPeriod(tx: SupermarketTransaction, exclusive = false) {
   const period = await findOpenPeriod(tx)
   if (!period) fail('NO_OPEN_PERIOD', 'There is no open supermarket period.')
+  const locked = await findLockedPeriod(tx, period.id, exclusive)
+  if (!locked || locked.status !== 'OPEN') {
+    fail('PERIOD_CLOSED', 'The supermarket period has closed.')
+  }
+  return locked
+}
+
+async function requirePrizePeriodOpen(tx: SupermarketTransaction, periodId: string) {
+  const period = await findLockedPeriod(tx, periodId)
+  if (!period) {
+    fail('PRIZE_NOT_FOUND', 'The target period does not exist.', { periodId })
+  }
+  if (period.status !== 'OPEN') {
+    fail('PERIOD_CLOSED', 'Prizes in a closed period are frozen.', { periodId })
+  }
   return period
 }
 
@@ -92,7 +122,7 @@ export async function closeSupermarketPeriod(
   tx: SupermarketTransaction,
   input: Readonly<{ clock?: () => Date }> = {},
 ) {
-  const period = await requireOpenPeriod(tx)
+  const period = await requireOpenPeriod(tx, true)
   const now = (input.clock ?? (() => new Date()))()
 
   const zeroed = await tx.supermarketBalance.aggregate({
@@ -246,13 +276,7 @@ export async function createSupermarketPrize(
     )
   }
 
-  const period = await tx.supermarketPeriod.findUnique({
-    where: { id: input.periodId },
-    select: { id: true, status: true },
-  })
-  if (!period) fail('PRIZE_NOT_FOUND', 'The target period does not exist.', {
-    periodId: input.periodId,
-  })
+  const period = await requirePrizePeriodOpen(tx, input.periodId)
 
   return tx.supermarketPrize.create({
     data: {
@@ -285,6 +309,7 @@ export async function updateSupermarketPrize(
   if (!prize) fail('PRIZE_NOT_FOUND', 'The prize does not exist.', {
     prizeId: input.prizeId,
   })
+  await requirePrizePeriodOpen(tx, prize.periodId)
 
   const data: Prisma.SupermarketPrizeUpdateInput = {}
   if (input.name !== undefined) {
@@ -329,9 +354,10 @@ export async function deleteSupermarketPrize(
 ) {
   const prize = await tx.supermarketPrize.findUnique({
     where: { id: prizeId },
-    select: { id: true, _count: { select: { redemptions: true } } },
+    select: { id: true, periodId: true, _count: { select: { redemptions: true } } },
   })
   if (!prize) fail('PRIZE_NOT_FOUND', 'The prize does not exist.', { prizeId })
+  await requirePrizePeriodOpen(tx, prize.periodId)
 
   if (prize._count.redemptions > 0) {
     fail(
@@ -474,9 +500,9 @@ export type ResolveRedemptionInput = Readonly<{
 /**
  * Marks a pending redemption as handed over or as never fulfilled.
  *
- * Voiding records a fact only. It does not refund points, restore stock, or
- * compensate the member in any way; compensation is an operational decision
- * handled through the admin adjustment tool.
+ * Voiding refunds points only while the redemption's own period is open.
+ * Stock is always handled manually. Once the period closes, compensation is
+ * an operational decision handled through the admin adjustment tool.
  *
  * Resolution stays available after the period closes so admins can finish
  * outstanding handovers.
@@ -489,7 +515,14 @@ export async function resolveSupermarketRedemption(
 
   const redemption = await tx.supermarketRedemption.findUnique({
     where: { id: input.redemptionId },
-    select: { id: true, status: true },
+    select: {
+      id: true,
+      status: true,
+      periodId: true,
+      userId: true,
+      prizeName: true,
+      pointsSpent: true,
+    },
   })
   if (!redemption) {
     fail('REDEMPTION_NOT_FOUND', 'The redemption does not exist.', {
@@ -504,7 +537,46 @@ export async function resolveSupermarketRedemption(
     )
   }
 
-  return tx.supermarketRedemption.update({
+  let refundedPoints = 0
+  if (input.resolution === 'VOIDED') {
+    const period = await findLockedPeriod(tx, redemption.periodId)
+    if (period?.status === 'OPEN') {
+      await lockUsersForUpdate(tx, [redemption.userId])
+      const wallet = await tx.supermarketBalance.findUnique({
+        where: {
+          userId_periodId: {
+            userId: redemption.userId,
+            periodId: redemption.periodId,
+          },
+        },
+        select: { id: true },
+      })
+      if (!wallet) {
+        fail('SETTLEMENT_STATE_CONFLICT', 'The redemption wallet is missing.', {
+          redemptionId: redemption.id,
+        })
+      }
+      const refunded = await tx.supermarketBalance.update({
+        where: { id: wallet.id },
+        data: { balance: { increment: redemption.pointsSpent } },
+        select: { balance: true },
+      })
+      await tx.supermarketBalanceEntry.create({
+        data: {
+          balanceId: wallet.id,
+          amount: redemption.pointsSpent,
+          balanceAfter: refunded.balance,
+          type: 'ADMIN_ADJUSTMENT',
+          reason: `兑换未履行，自动退分：${redemption.prizeName}（${redemption.id}）`,
+          actorId: input.actorId,
+          createdAt: now,
+        },
+      })
+      refundedPoints = redemption.pointsSpent
+    }
+  }
+
+  const resolved = await tx.supermarketRedemption.update({
     where: { id: redemption.id },
     data: {
       status: input.resolution,
@@ -512,6 +584,7 @@ export async function resolveSupermarketRedemption(
       resolvedById: input.actorId,
     },
   })
+  return { ...resolved, refundedPoints }
 }
 
 export type AdjustPointsInput = Readonly<{

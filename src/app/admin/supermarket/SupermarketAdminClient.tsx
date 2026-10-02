@@ -1,14 +1,15 @@
 'use client'
 
-import { useActionState, useEffect, useMemo, useState } from 'react'
+import { startTransition, useActionState, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 
 import {
   INITIAL_SUPERMARKET_ADMIN_STATE,
-  supermarketAdminAction,
   type SupermarketAdminState,
   type SupermarketPrizeView,
   type SupermarketRedemptionView,
-} from '@/app/admin/supermarket/actions'
+} from '@/app/admin/supermarket/state'
+import { supermarketAdminAction } from '@/app/admin/supermarket/actions'
 
 type TabKey = 'period' | 'prizes' | 'redemptions' | 'adjustments'
 
@@ -126,7 +127,7 @@ function SubmitButton({
 }
 
 const inputClass =
-  'w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-neutral-400'
+  'w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 outline-none transition focus:border-neutral-400'
 
 export default function SupermarketAdminClient() {
   const [state, formAction, pending] = useActionState<SupermarketAdminState, FormData>(
@@ -138,7 +139,7 @@ export default function SupermarketAdminClient() {
   useEffect(() => {
     const formData = new FormData()
     formData.set('intent', 'bootstrap')
-    formAction(formData)
+    startTransition(() => formAction(formData))
   }, [formAction])
 
   const [editingPrizeId, setEditingPrizeId] = useState<string | null>(null)
@@ -159,7 +160,13 @@ export default function SupermarketAdminClient() {
       <div className="space-y-4">
         <Banner error={state.error} />
         <div className="rounded-2xl border border-neutral-200 bg-white p-8 text-center text-sm text-neutral-500">
-          正在校验管理员权限…
+          {state.error ? (
+            <Link href="/admin" className="font-medium text-neutral-900 underline">
+              返回控制台完成二次验证
+            </Link>
+          ) : (
+            '正在校验管理员权限…'
+          )}
         </div>
       </div>
     )
@@ -168,8 +175,8 @@ export default function SupermarketAdminClient() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold text-neutral-900">积分超市管理</h1>
-        <p className="mt-1 text-sm text-neutral-500">
+        <h1 className="text-2xl font-semibold text-slate-100">积分超市管理</h1>
+        <p className="mt-1 text-sm text-slate-400">
           超市按期开放。结算会把所有人的比赛积分转入本期超市积分并将比赛积分清零（ELO 不受影响），
           关闭后未使用积分作废，兑换记录长期保留。
         </p>
@@ -460,7 +467,7 @@ export default function SupermarketAdminClient() {
                                 onClick={(event) => {
                                   if (
                                     !window.confirm(
-                                      '作废只记录「这笔兑换没有履行」，不会退还积分或恢复库存。确定作废？',
+                                      '作废表示这笔兑换未履行。原期次仍开放时自动退回积分；已闭期时补偿请手工处理。库存不会自动恢复。确定作废？',
                                     )
                                   ) {
                                     event.preventDefault()

@@ -20,7 +20,7 @@ export default async function SupermarketAdminPage() {
     <div className="mx-auto max-w-7xl space-y-6">
       <Link
         href="/admin"
-        className="inline-flex items-center gap-1 text-sm text-neutral-500 transition hover:text-neutral-900"
+        className="inline-flex items-center gap-1 text-sm text-slate-400 transition hover:text-slate-100"
       >
         <ArrowLeft className="h-4 w-4" />
         返回控制台

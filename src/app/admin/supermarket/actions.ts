@@ -18,72 +18,11 @@ import {
   updateSupermarketPrize,
 } from '@/lib/server/supermarket/service'
 
-export type SupermarketPrizeView = {
-  id: string
-  name: string
-  description: string | null
-  pointsCost: number
-  stock: number | null
-  status: 'ACTIVE' | 'WITHDRAWN'
-  redemptionCount: number
-}
-
-export type SupermarketRedemptionView = {
-  id: string
-  periodSequence: number
-  userId: string
-  memberNickname: string
-  memberEmail: string
-  prizeName: string
-  pointsSpent: number
-  status: 'PENDING' | 'FULFILLED' | 'VOIDED'
-  createdAt: string
-  resolvedAt: string | null
-}
-
-export type SupermarketPeriodView = {
-  id: string
-  sequence: number
-  status: 'OPEN' | 'CLOSED'
-  openedAt: string
-  closedAt: string | null
-}
-
-export type SupermarketAdjustmentView = {
-  id: string
-  memberNickname: string
-  memberEmail: string
-  amount: number
-  balanceAfter: number
-  reason: string
-  createdAt: string
-}
-
-export type SupermarketAdminState = {
-  unlocked: boolean
-  error?: string
-  success?: string
-  openPeriod: SupermarketPeriodView | null
-  lastClosedPeriod: SupermarketPeriodView | null
-  prizes: SupermarketPrizeView[]
-  redemptions: SupermarketRedemptionView[]
-  adjustments: SupermarketAdjustmentView[]
-  pendingCount: number
-  totalBalanceInPeriod: number
-  memberCountInPeriod: number
-}
-
-export const INITIAL_SUPERMARKET_ADMIN_STATE: SupermarketAdminState = {
-  unlocked: false,
-  openPeriod: null,
-  lastClosedPeriod: null,
-  prizes: [],
-  redemptions: [],
-  adjustments: [],
-  pendingCount: 0,
-  totalBalanceInPeriod: 0,
-  memberCountInPeriod: 0,
-}
+import {
+  INITIAL_SUPERMARKET_ADMIN_STATE,
+  type SupermarketAdminState,
+  type SupermarketPeriodView,
+} from './state'
 
 const MAX_PAGE_REDEMPTIONS = 200
 const MAX_PAGE_ADJUSTMENTS = 100
@@ -252,7 +191,10 @@ export async function supermarketAdminAction(
     }
     const reauthed = await isAdminReauthed(admin.userId)
     if (!reauthed) {
-      return { ...INITIAL_SUPERMARKET_ADMIN_STATE }
+      return {
+        ...INITIAL_SUPERMARKET_ADMIN_STATE,
+        error: '请先在控制台完成管理员二次验证。',
+      }
     }
     const data = await fetchSupermarketAdminData()
     return { unlocked: true, ...data }
@@ -484,12 +426,19 @@ export async function supermarketAdminAction(
             prizeName: redemption.prizeName,
             pointsSpent: redemption.pointsSpent,
             userId: redemption.userId,
+            refundedPoints: redemption.refundedPoints,
           },
           ...auditContext,
         })
         revalidatePath('/admin/supermarket')
         revalidatePath('/supermarket')
-        return finish(resolution === 'FULFILLED' ? '已标记为已发放。' : '已标记为已作废。')
+        return finish(
+          resolution === 'FULFILLED'
+            ? '已标记为已发放。'
+            : redemption.refundedPoints > 0
+              ? `已标记为已作废，退回 ${redemption.refundedPoints} 分。库存如需恢复，请手工调整。`
+              : '已标记为已作废。原期次已关闭，积分不自动退回；如需补偿，请手工处理。',
+        )
       }
 
       case 'adjustPoints': {
