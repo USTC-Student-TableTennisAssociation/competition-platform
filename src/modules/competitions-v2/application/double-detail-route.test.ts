@@ -29,7 +29,7 @@ test("DOUBLE detail exposes registration and shared relational group result acti
   assert.match(source, /sendDoublesInviteAction/);
   assert.match(source, /接受/);
   assert.match(source, /报名/);
-  assert.match(source, /已报名小队/);
+  assert.match(source, /model\.activeEntries\.map/);
   assert.match(source, /V2CompetitionPhases/);
   assert.match(source, /grouping=\{model\.grouping\}/);
   assert.match(source, /competitionType="double"/);

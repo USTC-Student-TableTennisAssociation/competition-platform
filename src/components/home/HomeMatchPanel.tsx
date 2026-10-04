@@ -20,18 +20,19 @@ function dateLabel(date: Date | string) {
 }
 
 function ParticipatingMatch({ match, featured = false }: { match: HomeUserMatchItem; featured?: boolean }) {
+  const href = `/matchs/${match.id}${match.status === "ongoing" ? "#personal" : ""}`;
   return (
     <article className={`${styles.matchCard} ${styles.ownMatch}`} data-featured={featured}>
       <div className={styles.matchMeta}>
         <span className={styles.matchStatus}>{match.status === "ongoing" ? "你正在参加" : "你已报名"}</span>
         <span className={styles.pinned}><Pin size={14} aria-hidden="true" />置顶</span>
       </div>
-      <h3><Link href={`/matchs/${match.id}`}>{match.title}</Link></h3>
+      <h3><Link href={href}>{match.title}</Link></h3>
       <p className={styles.matchSchedule}>{match.status === "registration" ? `${dateLabel(match.dateTime)} 开赛` : match.phase}</p>
       <div className={styles.matchCardBottom}>
         <p>{match.pendingCount > 0 ? `${match.pendingCount} 场成绩待确认` : match.status === "ongoing" ? `${match.confirmedCount} 场已完成` : "等待开赛"}</p>
-        <Link className={featured ? styles.primary : styles.textAction} href={`/matchs/${match.id}`}>
-          {match.pendingCount > 0 ? "查看比分" : "进入比赛"}<ArrowRight size={17} aria-hidden="true" />
+        <Link className={featured ? styles.primary : styles.textAction} href={href}>
+          {match.pendingCount > 0 ? "查看待确认比分" : "进入比赛"}<ArrowRight size={17} aria-hidden="true" />
         </Link>
       </div>
     </article>
