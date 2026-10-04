@@ -694,7 +694,9 @@ test(
           return await serializable(db, run)
         } catch (error) {
           if (!(error instanceof Prisma.PrismaClientKnownRequestError) ||
-            error.code !== 'P2034' || attempt >= 2) throw error
+            !(error.code === 'P2034' ||
+              (error.code === 'P2010' && error.meta?.code === '40001')) ||
+            attempt >= 2) throw error
         }
       }
     }
