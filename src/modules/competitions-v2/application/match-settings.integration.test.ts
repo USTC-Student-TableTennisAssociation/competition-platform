@@ -68,7 +68,7 @@ test(
         expectedUpdatedAt: before.updatedAt,
         title: "Updated settings title",
         description: null,
-        location: "东区乒乓球馆",
+        location: "西区乒乓球馆、东区乒乓球馆",
         dateTime: new Date("2026-10-03T11:00:00.000Z"),
         registrationDeadline: new Date("2026-10-02T11:00:00.000Z"),
       };

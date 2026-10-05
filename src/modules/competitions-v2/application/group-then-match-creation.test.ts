@@ -330,9 +330,12 @@ test("the shared group-then adapter accepts every exact type and rejects overpos
   ];
 
   for (const scenario of scenarios) {
-    assert.equal((await scenario.handler(form(scenario.type))).createdMatchId, `${scenario.type}-created`);
+    assert.equal((await scenario.handler(form(scenario.type, {
+      location: "东区乒乓球馆、西区乒乓球馆",
+    }))).createdMatchId, `${scenario.type}-created`);
     assert.equal(scenario.commands.length, 1);
     assert.equal(scenario.commands[0].format, "group_then_knockout");
+    assert.equal(scenario.commands[0].location, "西区乒乓球馆、东区乒乓球馆");
 
     for (const protectedField of [
       "engineVersion",

@@ -165,7 +165,7 @@ export default function MatchCard({
 
           <div className="col-span-2 flex items-center gap-2 rounded-2xl bg-white/[0.025] p-3 text-slate-300 ring-1 ring-white/8">
             <MapPin className="h-4 w-4 shrink-0 text-slate-500" />
-            <p className="truncate" title={location}>
+            <p className="min-w-0 break-words" title={location}>
               {location}
             </p>
           </div>

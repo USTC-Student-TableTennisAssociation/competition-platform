@@ -100,6 +100,13 @@ test("the dedicated V2 form submits only editable settings, schedule, CSRF, and 
   const fields = [...formSource.matchAll(/name=["']([^"']+)["']/g)].map(
     (match) => match[1],
   );
+  const venueSource = readFileSync(
+    resolve(process.cwd(), "src/components/match/MatchVenueSelect.tsx"),
+    "utf8",
+  );
+  fields.push(...[...venueSource.matchAll(/name=["']([^"']+)["']/g)].map(
+    (match) => match[1],
+  ));
 
   assert.deepEqual(fields, [
     "csrfToken",

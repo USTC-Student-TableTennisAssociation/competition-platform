@@ -157,6 +157,18 @@ test("the dark creation adapter builds only the normalized V2 SINGLE command", a
   ]);
 });
 
+test("multiple venues are canonicalized before creation and durable-request lookup", async () => {
+  const commands: CreateV2SingleMatchCommand[] = [];
+  const handlers = handlerWith({ commands });
+  const selected = creationForm({ location: " 东区乒乓球馆 、 西区乒乓球馆 " });
+  assert.equal((await handlers.create(selected)).error, undefined);
+  assert.equal((await handlers.resolveExisting(creationForm({
+    location: "西区乒乓球馆、东区乒乓球馆",
+  }))).error, undefined);
+  assert.equal(commands[0].location, "西区乒乓球馆、东区乒乓球馆");
+  assert.deepEqual(commands[0], commands[1]);
+});
+
 test("the disabled-flag boundary resolves only an existing durable request", async () => {
   const commands: CreateV2SingleMatchCommand[] = [];
   const calls: string[] = [];
@@ -253,6 +265,10 @@ test("text bounds, venue membership, protected fields, and non-empty team placeh
     { title: "x".repeat(201) },
     { description: "x".repeat(5_001) },
     { location: "不存在的场馆" },
+    { location: "" },
+    { location: "西区乒乓球馆、" },
+    { location: "西区乒乓球馆、西区乒乓球馆" },
+    { location: "西区乒乓球馆、不存在的场馆" },
     { engine: "V2" },
     { engineVersion: "V2" },
     { status: "registration" },

@@ -3,7 +3,8 @@
 import { useActionState, useEffect, useRef } from "react";
 
 import { updateV2SingleMatchSettingsAction } from "@/app/matchs/v2-actions";
-import { VENUE_OPTIONS } from "@/lib/locations";
+import MatchVenueSelect from "@/components/match/MatchVenueSelect";
+import usePreserveMatchFormValues from "@/components/match/usePreserveMatchFormValues";
 import type { V2SingleMatchSettingsState } from "@/modules/competitions-v2/adapters/single-match-settings";
 import { getV2CompetitionLocalDateTimeParts } from "@/modules/competitions-v2/competition-time";
 
@@ -24,6 +25,7 @@ export default function V2SingleMatchSettingsForm({
   expectedUpdatedAt: initialUpdatedAt,
   initial,
 }: Props) {
+  const formRef = usePreserveMatchFormValues();
   const action = updateV2SingleMatchSettingsAction.bind(null, matchId);
   const [state, formAction, pending] = useActionState<
     V2SingleMatchSettingsState,
@@ -53,7 +55,7 @@ export default function V2SingleMatchSettingsForm({
   }, [initial.dateTimeIso, initial.registrationDeadlineIso]);
 
   return (
-    <form action={formAction} className="space-y-6">
+    <form ref={formRef} action={formAction} className="space-y-6">
       <input type="hidden" name="csrfToken" defaultValue="" />
       <input
         ref={expectedUpdatedAtRef}
@@ -147,27 +149,7 @@ export default function V2SingleMatchSettingsForm({
         />
       </div>
 
-      <div>
-        <label
-          htmlFor="v2-settings-location"
-          className="mb-1 block text-sm text-slate-300"
-        >
-          地点 *
-        </label>
-        <select
-          id="v2-settings-location"
-          name="location"
-          required
-          defaultValue={initial.location}
-          className="w-full rounded-lg border border-slate-600 bg-slate-800 px-4 py-2 text-slate-100"
-        >
-          {VENUE_OPTIONS.map((venue) => (
-            <option key={venue} value={venue}>
-              {venue}
-            </option>
-          ))}
-        </select>
-      </div>
+      <MatchVenueSelect id="v2-settings-location" initialLocation={initial.location} />
 
       <div className="rounded-lg border border-slate-700 bg-slate-950/35 p-3 text-xs leading-5 text-slate-400">
         比赛类型、赛制、引擎和报名规则不会被此表单修改。

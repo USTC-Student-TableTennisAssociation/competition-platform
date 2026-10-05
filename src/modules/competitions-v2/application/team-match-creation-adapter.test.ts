@@ -85,7 +85,7 @@ function handlers(input: Readonly<{
 
 test("strict TEAM adapter builds one normalized Beijing-time command", async () => {
   const commands: CreateV2TeamMatchCommand[] = [];
-  assert.deepEqual(await handlers({ commands }).create(form()), {
+  assert.deepEqual(await handlers({ commands }).create(form({ location: "东区乒乓球馆、西区乒乓球馆" })), {
     success: "比赛创建成功。",
     createdMatchId: "team-match",
   });
@@ -95,7 +95,7 @@ test("strict TEAM adapter builds one normalized Beijing-time command", async () 
       requestKey: FIELDS.creationRequestKey,
       title: "秋季团体赛",
       description: "团体自动报名。",
-      location: "西区乒乓球馆",
+      location: "西区乒乓球馆、东区乒乓球馆",
       dateTime: new Date("2026-10-01T11:00:00.000Z"),
       registrationDeadline: new Date("2026-09-30T09:00:00.000Z"),
       type: "team",

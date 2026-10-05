@@ -1,6 +1,6 @@
 import V2SingleMatchSettingsForm from "@/components/match/v2/V2SingleMatchSettingsForm";
 import { getCurrentUser } from "@/lib/auth";
-import { isVenueOption } from "@/lib/locations";
+import { normalizeMatchLocation } from "@/lib/locations";
 import { prisma } from "@/lib/prisma";
 import { V2_TEAM_MATCH_MEMBER_LIMITS } from "@/modules/competitions-v2/application/team-matches";
 import { ArrowLeft } from "lucide-react";
@@ -104,7 +104,7 @@ export default async function EditMatchPage({
       match._count.matchGroups > 0 ||
       match._count.qualificationSnapshots > 0 ||
       !match.location ||
-      !isVenueOption(match.location)
+      normalizeMatchLocation(match.location) === null
     ) {
       redirect(`/matchs/${id}`);
     }

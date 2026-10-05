@@ -84,7 +84,7 @@ function handlers(input: Readonly<{
 
 test("strict DOUBLE adapter builds one normalized Beijing-time command", async () => {
   const commands: CreateV2DoubleMatchCommand[] = [];
-  const result = await handlers({ commands }).create(form());
+  const result = await handlers({ commands }).create(form({ location: "东区乒乓球馆、西区乒乓球馆" }));
   assert.deepEqual(result, {
     success: "比赛创建成功。",
     createdMatchId: "double-match",
@@ -95,7 +95,7 @@ test("strict DOUBLE adapter builds one normalized Beijing-time command", async (
       requestKey: FIELDS.creationRequestKey,
       title: "秋季双打赛",
       description: "双人组队报名。",
-      location: "西区乒乓球馆",
+      location: "西区乒乓球馆、东区乒乓球馆",
       dateTime: new Date("2026-10-01T11:00:00.000Z"),
       registrationDeadline: new Date("2026-09-30T09:00:00.000Z"),
       type: "double",
