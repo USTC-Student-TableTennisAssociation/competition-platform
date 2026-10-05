@@ -33,8 +33,9 @@ const PUBLISH_ISSUE_MESSAGES: Readonly<
 > = {
   INVALID_STRUCTURE: "分组预览结构异常，请重新生成预览。",
   GROUP_TOO_SMALL: "每个小组至少需要 2 个 参赛方，请先调整分组。",
-  QUALIFIER_CONFIG_INVALID: "每组晋级数必须适配所有小组，且总晋级数必须是 2 的幂。",
-  ENTRY_SET_MISMATCH: "预览中的 参赛方 与报名快照不一致，请重新生成预览。",
+  QUALIFIER_CONFIG_INVALID:
+    "每组晋级数必须适配所有小组，且总晋级数必须是 2 的幂。",
+  ENTRY_SET_MISMATCH: "预览名单与当前报名不一致，请重新生成预览。",
   TOO_MANY_FIXTURES: "当前分组会产生过多对局，请增加小组数量后重新预览。",
   PAYLOAD_TOO_LARGE: "分组预览数据过大，无法安全发布。",
 };
@@ -64,7 +65,10 @@ type Props = Readonly<{
     | "READY_TO_FINALIZE"
     | "KNOCKOUT_PUBLISHED";
   finalizeAction?: V2GroupOnlyGroupingAction;
-  knockoutSummary?: Readonly<{ fixtureCount: number; roundCount: number }> | null;
+  knockoutSummary?: Readonly<{
+    fixtureCount: number;
+    roundCount: number;
+  }> | null;
   canEditTableLabels?: boolean;
   publishedGroups?: readonly Readonly<{
     groupKey: string;
@@ -93,7 +97,7 @@ function FinalizeGroupStageForm({
     >
       <input type="hidden" name="csrfToken" defaultValue="" />
       <p className="text-sm text-amber-100">
-        所有小组赛果均已确认。生成淘汰签表会在同一事务中冻结最终排名并发布完整签表。
+        所有小组成绩均已确认。发布后，小组排名和淘汰赛程将正式确定。
       </p>
       <button
         type="submit"
@@ -132,7 +136,9 @@ function StateMessage({
 }: Readonly<{ state: V2GroupOnlyGroupingActionState }>) {
   return (
     <>
-      {state.error ? <p className="text-sm text-rose-300">{state.error}</p> : null}
+      {state.error ? (
+        <p className="text-sm text-rose-300">{state.error}</p>
+      ) : null}
       {state.success ? (
         <p className="text-sm text-emerald-300">{state.success}</p>
       ) : null}
@@ -200,9 +206,15 @@ function PublishedGroupTableLabelsForm({
       <p className="text-xs text-slate-400">
         每行一个标签，保存后应用于本组全部对局；留空可清除。
       </p>
-      {duplicate ? <p className="text-sm text-rose-300">标签不能重复。</p> : null}
-      {tooMany ? <p className="text-sm text-rose-300">每组最多 32 个标签。</p> : null}
-      {tooLong ? <p className="text-sm text-rose-300">每个标签最多 64 个字符。</p> : null}
+      {duplicate ? (
+        <p className="text-sm text-rose-300">标签不能重复。</p>
+      ) : null}
+      {tooMany ? (
+        <p className="text-sm text-rose-300">每组最多 32 个标签。</p>
+      ) : null}
+      {tooLong ? (
+        <p className="text-sm text-rose-300">每个标签最多 64 个字符。</p>
+      ) : null}
       <button
         type="submit"
         disabled={pending || invalid}
@@ -299,16 +311,17 @@ export default function V2GroupOnlyGroupingPanel({
   const totalQualifiers = qualifiersPerGroup * groupCount;
   const previewParameterError =
     safeParticipantCount < 2
-      ? "至少需要 2 个有效报名 参赛方 才能分组。"
+      ? "至少需要 2 个有效报名才能分组。"
       : groupCount * 2 > safeParticipantCount
-        ? "每个小组至少需要 2 个 参赛方，请减少组数。"
+        ? "每个小组至少需要 2 个参赛方，请减少组数。"
         : format === "group_then_knockout" &&
-            (qualifiersPerGroup > Math.floor(safeParticipantCount / groupCount) ||
+            (qualifiersPerGroup >
+              Math.floor(safeParticipantCount / groupCount) ||
               totalQualifiers < 2 ||
               !Number.isSafeInteger(totalQualifiers) ||
               !Number.isInteger(Math.log2(totalQualifiers)))
           ? "每组晋级数不能超过最小组人数，且总晋级数必须是 2 的幂。"
-        : null;
+          : null;
   const locallyPublished = published || Boolean(publishState.success);
   const canPublish = Boolean(
     payload &&
@@ -318,10 +331,7 @@ export default function V2GroupOnlyGroupingPanel({
       !publishPending,
   );
 
-  const moveEntry = (
-    entryId: string,
-    sourceGroupIndex: number,
-  ) => {
+  const moveEntry = (entryId: string, sourceGroupIndex: number) => {
     if (!payload || !sourcePreviewJson) return;
     const rawTarget = moveTargets[entryId];
     if (rawTarget === undefined || rawTarget === "") return;
@@ -333,7 +343,7 @@ export default function V2GroupOnlyGroupingPanel({
       targetGroupIndex,
     );
     if (!next) {
-      setLocalError("未能移动该 参赛方，请重新生成预览后再试。");
+      setLocalError("未能移动该参赛方，请重新生成预览后再试。");
       return;
     }
     setEditable({ sourcePreviewJson, payload: next });
@@ -346,7 +356,7 @@ export default function V2GroupOnlyGroupingPanel({
       <section className="space-y-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4">
         <h3 className="font-semibold text-emerald-100">小组赛分组已发布</h3>
         <p className="text-sm text-slate-300">
-          分组发布后即冻结 参赛方、完整阵容与对局关系，本页面不允许重新排列。
+          分组已发布，签位和对阵不能重新排列。需要换人时，请联系平台管理员在比赛详情的赛事管理中操作。
         </p>
         {!published ? <StateMessage state={publishState} /> : null}
         {format === "group_then_knockout" &&
@@ -367,7 +377,7 @@ export default function V2GroupOnlyGroupingPanel({
             {knockoutSummary
               ? `：共 ${knockoutSummary.roundCount} 轮、${knockoutSummary.fixtureCount} 场。`
               : "。"}
-            分组与晋级快照均已冻结，不可重复编辑或发布。
+            小组排名和晋级名单已确定，淘汰赛程已发布。
           </p>
         ) : null}
         {publishedGroups.length > 0 &&
@@ -416,7 +426,7 @@ export default function V2GroupOnlyGroupingPanel({
           </div>
         ) : (
           <p className="text-sm text-amber-200">
-            暂时无法读取已发布小组的完整对局快照，请刷新页面后重试。
+            暂时无法读取完整赛程，请刷新页面后重试。
           </p>
         )}
       </section>
@@ -426,9 +436,7 @@ export default function V2GroupOnlyGroupingPanel({
   return (
     <section className="space-y-5 rounded-xl border border-slate-700 bg-slate-900/70 p-4">
       <div>
-        <h3 className="font-semibold text-cyan-100">
-          V2 {matchLabel}小组赛分组
-        </h3>
+        <h3 className="font-semibold text-cyan-100">{matchLabel}小组赛分组</h3>
         {format === "group_then_knockout" ? (
           <p className="mt-1 text-sm text-amber-200">
             当前状态：尚未发布小组分组。
@@ -436,7 +444,7 @@ export default function V2GroupOnlyGroupingPanel({
         ) : null}
         <p className="mt-1 text-sm text-slate-300">
           {format === "group_then_knockout"
-            ? "先发布小组内单循环；全部小组赛果确认后，再原子确认排名并生成淘汰签表。"
+            ? "先发布小组循环赛；全部成绩确认后，再确定排名并发布淘汰赛程。"
             : "当前赛制为小组内单循环。"}
           {updateTableLabelsAction ? "桌号/场地标签可在发布后维护。" : ""}
         </p>
@@ -458,7 +466,9 @@ export default function V2GroupOnlyGroupingPanel({
               value={groupCount}
               onChange={(event) => {
                 const next = Number(event.target.value);
-                setGroupCount(Number.isSafeInteger(next) && next > 0 ? next : 1);
+                setGroupCount(
+                  Number.isSafeInteger(next) && next > 0 ? next : 1,
+                );
               }}
               className="w-full rounded-md border border-slate-600 bg-slate-900 px-2 py-1.5 text-slate-100"
             />
@@ -490,7 +500,9 @@ export default function V2GroupOnlyGroupingPanel({
               name="seedMethod"
               value={seedMethod}
               onChange={(event) =>
-                setSeedMethod(event.target.value as V2GroupOnlyGroupingSeedMethod)
+                setSeedMethod(
+                  event.target.value as V2GroupOnlyGroupingSeedMethod,
+                )
               }
               className="w-full rounded-md border border-slate-600 bg-slate-900 px-2 py-1.5 text-slate-100"
             >
@@ -509,7 +521,8 @@ export default function V2GroupOnlyGroupingPanel({
             {previewPending ? "生成中..." : "生成分组预览"}
           </button>
           <p className="text-xs text-slate-400">
-            当前报名{entryLabel}：{safeParticipantCount} {countUnit}。每组至少 2 {countUnit}。
+            当前报名{entryLabel}：{safeParticipantCount} {countUnit}。每组至少 2{" "}
+            {countUnit}。
           </p>
         </div>
         {previewParameterError ? (
@@ -547,9 +560,12 @@ export default function V2GroupOnlyGroupingPanel({
                 className="rounded-lg border border-slate-700 bg-slate-950/25 p-3"
               >
                 <div className="mb-2 flex items-center justify-between gap-3">
-                  <span className="font-medium text-cyan-100">{group.name}</span>
+                  <span className="font-medium text-cyan-100">
+                    {group.name}
+                  </span>
                   <span className="text-xs text-slate-400">
-                    {group.players.length} {countUnit} · 预览均值 {group.averagePoints}
+                    {group.players.length} {countUnit} · 预览均值{" "}
+                    {group.averagePoints}
                   </span>
                 </div>
                 {group.players.length > 0 ? (
@@ -560,7 +576,9 @@ export default function V2GroupOnlyGroupingPanel({
                         className="rounded-md border border-slate-700 bg-slate-900/75 p-2"
                       >
                         <div className="flex flex-wrap justify-between gap-2 text-sm">
-                          <span className="text-slate-100">{player.nickname}</span>
+                          <span className="text-slate-100">
+                            {player.nickname}
+                          </span>
                           <span className="text-slate-400">
                             积分 {player.points} · ELO {player.eloRating}
                           </span>
@@ -614,7 +632,7 @@ export default function V2GroupOnlyGroupingPanel({
             <input type="hidden" name="csrfToken" defaultValue="" />
             <input type="hidden" name="previewJson" value={publishJson ?? ""} />
             <p className="text-sm text-slate-200">
-            发布会原子地冻结本次 参赛方 版本快照，并创建小组循环对局；发布后不能重排。
+              发布后将生成小组循环赛程，分组和对阵不能重新排列。
             </p>
             {settingsDifferFromPreview ? (
               <p className="text-sm text-amber-200">
@@ -626,7 +644,9 @@ export default function V2GroupOnlyGroupingPanel({
                 {PUBLISH_ISSUE_MESSAGES[issue]}
               </p>
             ))}
-            {localError ? <p className="text-sm text-rose-300">{localError}</p> : null}
+            {localError ? (
+              <p className="text-sm text-rose-300">{localError}</p>
+            ) : null}
             <button
               type="submit"
               disabled={!canPublish}

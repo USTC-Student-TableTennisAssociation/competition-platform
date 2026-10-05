@@ -40,11 +40,13 @@ export default function V2GroupOnlyFixtureResultPanel({
   stage = "GROUP",
   matchId,
   fixture,
+  pendingHint,
 }: Readonly<{
   competitionType: "single" | "double" | "team";
   stage?: "GROUP" | "KNOCKOUT";
   matchId: string;
   fixture: Fixture;
+  pendingHint?: string | null;
 }>) {
   const SubmissionForm =
     competitionType === "single"
@@ -83,122 +85,119 @@ export default function V2GroupOnlyFixtureResultPanel({
 
   return (
     <>
-      {fixture.startedAt ? <p className="mt-3 text-xs text-sky-200">本场已开始，成员名单已保留。</p> : fixture.canSubmitResult ? <StartFixtureForm matchId={matchId} fixtureId={fixture.fixtureId} version={fixture.fixtureVersion} stage={stage} /> : null}
-      {stage === "GROUP" && fixture.canVoidUnplayed ? (
-        <div className="mt-3">
-          <UnplayedVoidForm
-            matchId={matchId}
-            fixtureId={fixture.fixtureId}
-            expectedFixtureVersion={fixture.fixtureVersion}
-          />
-        </div>
-      ) : null}
-
-      {fixture.canConfirmForfeit ? (
-        <ForfeitForm
-          matchId={matchId}
-          fixtureId={fixture.fixtureId}
-          expectedFixtureVersion={fixture.fixtureVersion}
-          winnerEntries={fixture.forfeitWinnerEntries}
-          stage={stage}
-        />
-      ) : null}
-
       {fixture.authoritativeResult ? (
-        <div className="mt-3 rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-3 text-sm text-slate-200">
-          <p className="font-medium text-emerald-200">已生效赛果</p>
-          <p>
-            {fixture.authoritativeResult.winnerFrozenDisplayName} 胜{" "}
-            {fixture.authoritativeResult.loserFrozenDisplayName} ·{" "}
-            {fixture.authoritativeResult.scoreLabel}
-          </p>
+        <div className="mt-3 border-t border-white/8 pt-3 text-xs leading-5 text-slate-400">
+          <p className="text-emerald-300">已确认</p>
           {fixture.authoritativeResult.reason ? (
             <p className="mt-1 text-xs text-slate-400">
               原因：{fixture.authoritativeResult.reason}
             </p>
           ) : null}
-          {fixture.canSubmitCorrection &&
-          competitionType === "team" &&
-          fixture.authoritativeResult.aggregateScore ? (
-            <V2TeamResultCorrectionForm
-              matchId={matchId}
-              fixtureId={fixture.fixtureId}
-              expectedFixtureVersion={fixture.fixtureVersion}
-              resultRevisionId={fixture.authoritativeResult.revisionId}
-              currentWinnerName={
-                fixture.authoritativeResult.winnerFrozenDisplayName
-              }
-              currentLoserName={
-                fixture.authoritativeResult.loserFrozenDisplayName
-              }
-              initialScore={fixture.authoritativeResult.aggregateScore}
-              stage={stage}
-            />
-          ) : fixture.canSubmitCorrection &&
-            fixture.authoritativeResult.score ? (
-            <CorrectionForm
-              matchId={matchId}
-              fixtureId={fixture.fixtureId}
-              expectedFixtureVersion={fixture.fixtureVersion}
-              resultRevisionId={fixture.authoritativeResult.revisionId}
-              currentWinnerName={
-                fixture.authoritativeResult.winnerFrozenDisplayName
-              }
-              currentLoserName={
-                fixture.authoritativeResult.loserFrozenDisplayName
-              }
-              initialScore={{
-                bestOf: fixture.authoritativeResult.score.bestOf,
-                loserScore: fixture.authoritativeResult.score.loserScore,
-              }}
-              stage={stage}
-            />
-          ) : null}
-          {fixture.canCorrectForfeit ? (
-            <ForfeitCorrectionForm
-              matchId={matchId}
-              fixtureId={fixture.fixtureId}
-              expectedFixtureVersion={fixture.fixtureVersion}
-              resultRevisionId={fixture.authoritativeResult.revisionId}
-              currentWinnerName={
-                fixture.authoritativeResult.winnerFrozenDisplayName
-              }
-              currentLoserName={
-                fixture.authoritativeResult.loserFrozenDisplayName
-              }
-              stage={stage}
-            />
-          ) : null}
-          {stage === "GROUP" && fixture.canVoidConfirmed ? (
-            <div className="mt-2">
-              <RevisionForm
-                matchId={matchId}
-                fixtureId={fixture.fixtureId}
-                expectedFixtureVersion={fixture.fixtureVersion}
-                resultRevisionId={fixture.authoritativeResult.revisionId}
-                kind="void"
-              />
-            </div>
+          {fixture.canSubmitCorrection ||
+          fixture.canCorrectForfeit ||
+          (stage === "GROUP" && fixture.canVoidConfirmed) ? (
+            <details className="mt-3">
+              <summary className="w-fit cursor-pointer py-1 text-xs text-slate-400 hover:text-slate-200">
+                {stage === "GROUP" && fixture.canVoidConfirmed
+                  ? "更正或作废成绩"
+                  : "申请更正比分"}
+              </summary>
+              {fixture.canSubmitCorrection &&
+              competitionType === "team" &&
+              fixture.authoritativeResult.aggregateScore ? (
+                <V2TeamResultCorrectionForm
+                  matchId={matchId}
+                  fixtureId={fixture.fixtureId}
+                  expectedFixtureVersion={fixture.fixtureVersion}
+                  resultRevisionId={fixture.authoritativeResult.revisionId}
+                  currentWinnerName={
+                    fixture.authoritativeResult.winnerFrozenDisplayName
+                  }
+                  currentLoserName={
+                    fixture.authoritativeResult.loserFrozenDisplayName
+                  }
+                  initialScore={fixture.authoritativeResult.aggregateScore}
+                  stage={stage}
+                />
+              ) : fixture.canSubmitCorrection &&
+                fixture.authoritativeResult.score ? (
+                <CorrectionForm
+                  matchId={matchId}
+                  fixtureId={fixture.fixtureId}
+                  expectedFixtureVersion={fixture.fixtureVersion}
+                  resultRevisionId={fixture.authoritativeResult.revisionId}
+                  currentWinnerName={
+                    fixture.authoritativeResult.winnerFrozenDisplayName
+                  }
+                  currentLoserName={
+                    fixture.authoritativeResult.loserFrozenDisplayName
+                  }
+                  initialScore={{
+                    bestOf: fixture.authoritativeResult.score.bestOf,
+                    loserScore: fixture.authoritativeResult.score.loserScore,
+                  }}
+                  stage={stage}
+                />
+              ) : null}
+              {fixture.canCorrectForfeit ? (
+                <ForfeitCorrectionForm
+                  matchId={matchId}
+                  fixtureId={fixture.fixtureId}
+                  expectedFixtureVersion={fixture.fixtureVersion}
+                  resultRevisionId={fixture.authoritativeResult.revisionId}
+                  currentWinnerName={
+                    fixture.authoritativeResult.winnerFrozenDisplayName
+                  }
+                  currentLoserName={
+                    fixture.authoritativeResult.loserFrozenDisplayName
+                  }
+                  stage={stage}
+                />
+              ) : null}
+              {stage === "GROUP" && fixture.canVoidConfirmed ? (
+                <div className="mt-2">
+                  <RevisionForm
+                    matchId={matchId}
+                    fixtureId={fixture.fixtureId}
+                    expectedFixtureVersion={fixture.fixtureVersion}
+                    resultRevisionId={fixture.authoritativeResult.revisionId}
+                    kind="void"
+                  />
+                </div>
+              ) : null}
+            </details>
           ) : null}
         </div>
       ) : null}
 
       {fixture.pendingResult ? (
-        <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/5 p-3 text-sm text-slate-200">
+        <div className="border-t border-white/8 pt-4 text-sm leading-6 text-slate-200">
           <p className="font-medium text-amber-200">
             {fixture.authoritativeResult
               ? "更正待确认（原赛果仍生效）"
               : "赛果待确认"}
           </p>
-          <p>
-            {fixture.pendingResult.winnerFrozenDisplayName} 胜{" "}
-            {fixture.pendingResult.loserFrozenDisplayName} ·{" "}
-            {fixture.pendingResult.scoreLabel}
-          </p>
+          {fixture.authoritativeResult ? (
+            <p>
+              {fixture.pendingResult.winnerFrozenDisplayName} 胜{" "}
+              {fixture.pendingResult.loserFrozenDisplayName} ·{" "}
+              {fixture.pendingResult.scoreLabel}
+            </p>
+          ) : null}
           <p className="mt-1 text-xs text-slate-400">
             登记人：{fixture.pendingResult.reporterName}
           </p>
-          <div className="mt-2 flex flex-wrap gap-2">
+          {pendingHint ? (
+            <p className="mt-2 text-xs leading-6 text-slate-200">
+              {pendingHint}
+            </p>
+          ) : null}
+          {fixture.canConfirmPending && !fixture.canRejectPending ? (
+            <p className="mt-2 text-xs leading-5 text-slate-400">
+              比分有误时，请联系比赛管理员处理。
+            </p>
+          ) : null}
+          <div className="mt-4 flex flex-wrap gap-2">
             {fixture.canConfirmPending ? (
               <RevisionForm
                 matchId={matchId}
@@ -224,15 +223,57 @@ export default function V2GroupOnlyFixtureResultPanel({
       ) : null}
 
       {fixture.canSubmitResult ? (
-        <SubmissionForm
-          matchId={matchId}
-          fixtureId={fixture.fixtureId}
-          expectedFixtureVersion={fixture.fixtureVersion}
-          bestOf={fixture.bestOf ?? 5}
-          sideA={fixture.sideA}
-          sideB={fixture.sideB}
-          stage={stage}
-        />
+        <div>
+          <SubmissionForm
+            matchId={matchId}
+            fixtureId={fixture.fixtureId}
+            expectedFixtureVersion={fixture.fixtureVersion}
+            bestOf={fixture.bestOf ?? 5}
+            sideA={fixture.sideA}
+            sideB={fixture.sideB}
+            stage={stage}
+          />
+          {!fixture.startedAt ? (
+            <details className="mt-4 border-b border-white/8 pb-3 text-xs text-slate-400">
+              <summary className="w-fit cursor-pointer py-1 hover:text-slate-200">
+                赛前记录 · 标记开始比赛（可选）
+              </summary>
+              <StartFixtureForm
+                matchId={matchId}
+                fixtureId={fixture.fixtureId}
+                version={fixture.fixtureVersion}
+                stage={stage}
+              />
+            </details>
+          ) : null}
+        </div>
+      ) : null}
+      {fixture.canConfirmForfeit ||
+      (stage === "GROUP" && fixture.canVoidUnplayed) ? (
+        <details className="mt-3 border-t border-white/8 pt-3">
+          <summary className="w-fit cursor-pointer py-1 text-xs text-slate-400 hover:text-slate-200">
+            弃权与对局管理
+          </summary>
+          {stage === "GROUP" && fixture.canVoidUnplayed ? (
+            <div className="mt-3">
+              <UnplayedVoidForm
+                matchId={matchId}
+                fixtureId={fixture.fixtureId}
+                expectedFixtureVersion={fixture.fixtureVersion}
+              />
+            </div>
+          ) : null}
+
+          {fixture.canConfirmForfeit ? (
+            <ForfeitForm
+              matchId={matchId}
+              fixtureId={fixture.fixtureId}
+              expectedFixtureVersion={fixture.fixtureVersion}
+              winnerEntries={fixture.forfeitWinnerEntries}
+              stage={stage}
+            />
+          ) : null}
+        </details>
       ) : null}
     </>
   );

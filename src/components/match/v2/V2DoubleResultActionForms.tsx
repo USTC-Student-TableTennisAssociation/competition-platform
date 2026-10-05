@@ -42,7 +42,7 @@ export function V2DoubleResultSubmissionForm(
           ? submitV2DoubleKnockoutResultAction
           : submitV2DoubleResultAction
       }
-      confirmationHint="提交后需由另一方任一非登记搭档或管理员确认。"
+      confirmationHint="提交后需由本场其他参赛选手或管理员确认，确认后计入正式成绩。"
     />
   );
 }

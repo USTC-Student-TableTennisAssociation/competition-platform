@@ -27,16 +27,22 @@ test("match detail dispatches TEAM V2 through its authoritative reader before Le
   assert.match(render, /<V2TeamMatchDetail/);
   assert.match(render, /model=\{model\}/);
   assert.doesNotMatch(render, /getV2TeamRegistrationReadState/);
-  assert.doesNotMatch(render, /\.registration\.|registeredAt|teamRegistrations/);
+  assert.doesNotMatch(
+    render,
+    /\.registration\.|registeredAt|teamRegistrations/,
+  );
 });
 
 test("TEAM detail reuses source UI and exposes only the shared V2 group result panel", () => {
   const source = read("src/components/match/v2/V2TeamMatchDetail.tsx");
   assert.match(source, /<TeamRegistrationPanel/);
-  assert.match(source, /allowCancellation=\{!grouping\.published\}/);
-  assert.match(source, /captainCancellationOpen=\{!grouping\.published\}/);
+  assert.match(source, /allowCancellation:\s*!grouping\.published/);
+  assert.match(source, /captainCancellationOpen:\s*!grouping\.published/);
   assert.match(source, /const \{ match, grouping \} = model/);
-  assert.match(source, /\/grouping/);
+  assert.match(
+    read("src/components/match/v2/V2CompetitionPhases.tsx"),
+    /\/grouping/,
+  );
   assert.match(source, /V2CompetitionPhases/);
   assert.match(source, /grouping=\{grouping\}/);
   assert.match(source, /competitionType="team"/);
@@ -52,7 +58,10 @@ test("TEAM read and grouping action slices never touch Legacy registration ident
     "src/modules/competitions-v2/application/team-matches.ts",
   ]) {
     const source = read(path);
-    assert.doesNotMatch(source, /\.registration\.(?:create|update|delete|find|count)/);
+    assert.doesNotMatch(
+      source,
+      /\.registration\.(?:create|update|delete|find|count)/,
+    );
     assert.doesNotMatch(source, /registeredAt/);
   }
 });

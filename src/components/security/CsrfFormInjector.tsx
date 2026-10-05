@@ -3,8 +3,19 @@
 import { useEffect } from "react";
 import { CSRF_FORM_FIELD } from "@/lib/csrf-constants";
 
+function isGetForm(form: HTMLFormElement) {
+  if (form.getAttribute("method")?.toLowerCase() === "get") return true;
+  // React action forms mounted on the client may initially report the browser's
+  // default GET method. Their CSRF field/action still identifies a POST writer.
+  return (
+    form.method.toLowerCase() === "get" &&
+    !form.querySelector(`input[name="${CSRF_FORM_FIELD}"]`) &&
+    !form.getAttribute("action")?.startsWith("javascript:")
+  );
+}
+
 function ensureTokenField(form: HTMLFormElement, token: string) {
-  if (!token) return;
+  if (!token || isGetForm(form)) return;
   let input = form.querySelector(
     `input[name="${CSRF_FORM_FIELD}"]`,
   ) as HTMLInputElement | null;
@@ -49,6 +60,7 @@ export default function CsrfFormInjector() {
     const handleSubmit = (event: Event) => {
       const form = event.target;
       if (!(form instanceof HTMLFormElement)) return;
+      if (isGetForm(form)) return;
 
       if (form.dataset[resubmitFlag] === "1") {
         delete form.dataset[resubmitFlag];

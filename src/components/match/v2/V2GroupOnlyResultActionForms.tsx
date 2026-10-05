@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import FixtureScoreboard from "./FixtureScoreboard";
 
 export type V2GroupOnlyResultActionState = Readonly<{
   error?: string;
@@ -15,12 +16,22 @@ export type V2GroupOnlyResultServerAction = (
 
 const INITIAL_STATE: V2GroupOnlyResultActionState = {};
 
-function ActionStateMessage({ state }: { state: V2GroupOnlyResultActionState }) {
+function ActionStateMessage({
+  state,
+}: {
+  state: V2GroupOnlyResultActionState;
+}) {
   return (
     <>
-      {state.error ? <p className="text-xs text-rose-300">{state.error}</p> : null}
+      {state.error ? (
+        <p role="alert" className="text-xs text-rose-300">
+          {state.error}
+        </p>
+      ) : null}
       {state.success ? (
-        <p className="text-xs text-emerald-300">{state.success}</p>
+        <p role="status" className="text-xs text-emerald-300">
+          {state.success}
+        </p>
       ) : null}
     </>
   );
@@ -47,15 +58,46 @@ export function V2GroupOnlyResultSubmissionForm({
 }) {
   const action = serverAction.bind(null, matchId);
   const [state, formAction, pending] = useActionState(action, INITIAL_STATE);
-  const [winnerEntryId, setWinnerEntryId] = useState(sideA.entryId);
   const winsNeeded = (bestOf + 1) / 2;
-  const [loserScore, setLoserScore] = useState(winsNeeded - 1);
+  const [scoreA, setScoreA] = useState("");
+  const [scoreB, setScoreB] = useState("");
+  const filled = scoreA !== "" && scoreB !== "";
+  const aWon = Number(scoreA) > Number(scoreB);
+  const ready =
+    filled &&
+    Math.max(Number(scoreA), Number(scoreB)) === winsNeeded &&
+    Number(scoreA) !== Number(scoreB);
+  const winnerEntryId = ready ? (aWon ? sideA.entryId : sideB.entryId) : "";
+  const loserScore = ready ? Math.min(Number(scoreA), Number(scoreB)) : "";
+
+  function scoreControl(
+    name: string,
+    value: string,
+    update: (value: string) => void,
+  ) {
+    return (
+      <select
+        aria-label={`${name}的局分`}
+        value={value}
+        required
+        disabled={pending}
+        onChange={(event) => update(event.target.value)}
+        className="h-20 w-full max-w-28 cursor-pointer rounded-xl border border-slate-600 bg-[#111a27] px-3 text-center text-4xl font-semibold tabular-nums text-white focus:border-orange-300 focus:outline-2 focus:outline-offset-2 focus:outline-orange-300 disabled:opacity-60"
+      >
+        <option value="" disabled>
+          —
+        </option>
+        {Array.from({ length: winsNeeded + 1 }, (_, score) => (
+          <option key={score} value={score}>
+            {score}
+          </option>
+        ))}
+      </select>
+    );
+  }
 
   return (
-    <form
-      action={formAction}
-      className="mt-3 space-y-3 rounded-lg border border-cyan-500/25 bg-slate-950/35 p-3"
-    >
+    <form action={formAction} className="mt-4">
       <input type="hidden" name="csrfToken" defaultValue="" />
       <input type="hidden" name="fixtureId" value={fixtureId} />
       <input
@@ -65,50 +107,40 @@ export function V2GroupOnlyResultSubmissionForm({
       />
       <input type="hidden" name="winnerEntryId" value={winnerEntryId} />
       <input type="hidden" name="winnerScore" value={winsNeeded} />
+      <input type="hidden" name="loserScore" value={loserScore} />
 
-      <div className="grid gap-2 sm:grid-cols-3">
-        <label className="space-y-1 text-xs text-slate-300">
-          <span>胜方</span>
-          <select
-            value={winnerEntryId}
-            onChange={(event) => setWinnerEntryId(event.target.value)}
-            className="h-9 w-full rounded-lg border border-slate-600 bg-slate-900 px-2 text-sm text-slate-100"
-          >
-            <option value={sideA.entryId}>{sideA.frozenDisplayName}</option>
-            <option value={sideB.entryId}>{sideB.frozenDisplayName}</option>
-          </select>
-        </label>
-
-        <div className="space-y-1 text-xs text-slate-300">
-          <span>本场局制</span>
-          <input type="hidden" name="bestOf" value={bestOf} />
-          <p className="flex h-9 items-center text-sm text-slate-100">{bestOf} 局 {winsNeeded} 胜</p>
-        </div>
-
-        <label className="space-y-1 text-xs text-slate-300">
-          <span>负方局分</span>
-          <select
-            name="loserScore"
-            value={loserScore}
-            onChange={(event) => setLoserScore(Number(event.target.value))}
-            className="h-9 w-full rounded-lg border border-slate-600 bg-slate-900 px-2 text-sm text-slate-100"
-          >
-            {Array.from({ length: winsNeeded }, (_, score) => (
-              <option key={`${bestOf}-${score}`} value={score}>
-                {score}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-
+      <input type="hidden" name="bestOf" value={bestOf} />
       <p className="text-xs text-slate-400">
-        将提交 {winsNeeded}:{loserScore}，{confirmationHint}
+        {bestOf} 局 {winsNeeded} 胜 · 填写双方赢得的局数
+      </p>
+      <FixtureScoreboard
+        sideAName={sideA.frozenDisplayName}
+        sideBName={sideB.frozenDisplayName}
+        scoreA={scoreControl(sideA.frozenDisplayName, scoreA, setScoreA)}
+        scoreB={scoreControl(sideB.frozenDisplayName, scoreB, setScoreB)}
+        sideACaption={ready ? (aWon ? "胜方" : "负方") : "局分"}
+        sideBCaption={ready ? (aWon ? "负方" : "胜方") : "局分"}
+      />
+      <div aria-live="polite" className="min-h-6 text-center text-xs leading-5">
+        {filled && !ready ? (
+          <p role="alert" className="text-rose-300">
+            本场须有一方赢得 {winsNeeded} 局，双方不能同分。
+          </p>
+        ) : (
+          <p className="text-slate-400">
+            {ready
+              ? "请核对上方双方和比分，确认无误后提交。"
+              : "请选择双方局分。"}
+          </p>
+        )}
+      </div>
+      <p className="mt-4 text-xs leading-5 text-slate-400">
+        {confirmationHint}
       </p>
       <button
         type="submit"
-        disabled={pending}
-        className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-500 disabled:opacity-60"
+        disabled={pending || !ready}
+        className="btn-primary mt-3 min-h-12 w-full rounded-xl px-4 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40"
       >
         {pending ? "提交中..." : "提交赛果"}
       </button>
@@ -220,7 +252,9 @@ export function V2GroupOnlyResultCorrectionForm({
         <label className="space-y-1 text-xs text-slate-300">
           <span>本场局制</span>
           <input type="hidden" name="bestOf" value={bestOf} />
-          <p className="flex h-9 items-center text-sm text-slate-100">{bestOf} 局 {winsNeeded} 胜</p>
+          <p className="flex h-9 items-center text-sm text-slate-100">
+            {bestOf} 局 {winsNeeded} 胜
+          </p>
         </label>
         <label className="space-y-1 text-xs text-slate-300">
           <span>更正后负方局分</span>
@@ -292,7 +326,7 @@ export function V2GroupOnlyRevisionActionForm({
   const [state, formAction, pending] = useActionState(action, INITIAL_STATE);
   const copy = REVISION_ACTION_COPY[kind];
   return (
-    <form action={formAction} className="space-y-1">
+    <form action={formAction} className="min-w-32 flex-1 space-y-1">
       <input type="hidden" name="csrfToken" defaultValue="" />
       <input type="hidden" name="fixtureId" value={fixtureId} />
       <input
@@ -304,7 +338,7 @@ export function V2GroupOnlyRevisionActionForm({
       <button
         type="submit"
         disabled={pending}
-        className={`rounded-md border px-3 py-1 text-xs disabled:opacity-60 ${copy.className}`}
+        className={`min-h-11 w-full rounded-lg border px-4 py-2.5 text-sm font-medium disabled:opacity-60 ${kind === "confirm" ? "btn-primary border-orange-400" : copy.className}`}
       >
         {pending ? copy.pending : copy.idle}
       </button>

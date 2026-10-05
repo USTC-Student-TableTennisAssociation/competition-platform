@@ -44,12 +44,14 @@ export default async function Sidebar() {
   const memberNavItems: NavItem[] = currentUser
     ? [
         { href: "/quick-match", label: "快速比赛", icon: "clock" },
+        { href: "/supermarket", label: "积分超市", icon: "gift" },
         { href: "/team-invites", label: "组队信息", icon: "mail" },
       ]
     : [];
   const adminNavItems: NavItem[] = adminViewEnabled
     ? [
         { href: "/matchs/create", label: "发布比赛", icon: "plus" },
+        { href: "/admin/supermarket", label: "积分超市管理", icon: "gift" },
         { href: "/admin", label: "管理员控制台", icon: "settings" },
       ]
     : [];

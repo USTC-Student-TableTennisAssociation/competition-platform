@@ -1,83 +1,15 @@
-import { Calendar, MapPin, Pencil, Users } from "lucide-react";
 import Link from "next/link";
-
 import BackLinkButton from "@/components/navigation/BackLinkButton";
+import MatchDetailHeader from "@/components/match/detail/MatchDetailHeader";
 import ExportCertificateSection from "@/components/match/detail/ExportCertificateSection";
 import type { CertificateEligibility } from "@/lib/certificate";
-import V2CompetitionPhases from "@/components/match/v2/V2CompetitionPhases";
-import { V2SingleRegistrationForm } from "@/components/match/v2/V2SingleActionForms";
-import type { V2SingleMatchModel, V2SingleParticipantView, V2SingleViewer } from "@/modules/competitions-v2/read-model/single-match-view";
+import V2CompetitionPhases from "./V2CompetitionPhases";
+import { V2SingleRegistrationForm } from "./V2SingleActionForms";
+import type {
+  V2SingleMatchModel,
+  V2SingleViewer,
+} from "@/modules/competitions-v2/read-model/single-match-view";
 import { buildV2SingleMatchViewModel } from "@/modules/competitions-v2/read-model/single-match-view";
-import { formatV2CompetitionDateTime } from "@/modules/competitions-v2/competition-time";
-
-const STATUS_LABEL = {
-  registration: "报名中",
-  ongoing: "进行中",
-  finished: "已结束",
-} as const;
-
-const ENTRY_STATUS_LABEL = {
-  DRAFT: "未报名",
-  ACTIVE: "参赛中",
-  WITHDRAWN: "已退赛",
-  DISQUALIFIED: "已取消资格",
-  ARCHIVED: "已归档",
-} as const;
-
-function ParticipantIdentity({
-  participant,
-  compact = false,
-}: {
-  participant: V2SingleParticipantView;
-  compact?: boolean;
-}) {
-  const identity = (
-    <div>
-      <p className="font-medium text-slate-100">
-        {participant.frozenDisplayName}
-      </p>
-      <p className="text-xs text-slate-400">参赛选手</p>
-    </div>
-  );
-
-  return (
-    <div className={compact ? "space-y-1" : "space-y-2"}>
-      {participant.userId ? (
-        <Link href={`/profile/${participant.userId}`} className="hover:text-cyan-300">
-          {identity}
-        </Link>
-      ) : (
-        identity
-      )}
-      <div className="flex flex-wrap gap-1.5 text-[11px]">
-        <span className="rounded-full border border-slate-700 px-2 py-0.5 text-slate-300">
-          {ENTRY_STATUS_LABEL[participant.entryStatus]}
-        </span>
-        {participant.currentProfile ? (
-          <span
-            className={`rounded-full border px-2 py-0.5 ${
-              participant.currentProfile.isCurrentlyBanned
-                ? "border-rose-500/40 text-rose-300"
-                : "border-emerald-500/35 text-emerald-300"
-            }`}
-          >
-            当前账号：
-            {participant.currentProfile.isCurrentlyBanned ? "已封禁" : "正常"}
-          </span>
-        ) : (
-          <span className="rounded-full border border-amber-500/35 px-2 py-0.5 text-amber-300">
-            当前账号状态未知
-          </span>
-        )}
-      </div>
-      {participant.currentProfile && !compact ? (
-        <p className="text-xs text-slate-400">
-          当前资料名：{participant.currentProfile.nickname} · 积分 {participant.currentProfile.currentPoints} · ELO {participant.currentProfile.currentEloRating}
-        </p>
-      ) : null}
-    </div>
-  );
-}
 
 export default function V2SingleMatchDetail({
   model,
@@ -97,138 +29,164 @@ export default function V2SingleMatchDetail({
 }) {
   const view = buildV2SingleMatchViewModel(model, currentUser, now);
   const match = model.match;
+  const isRegistered = Boolean(
+    currentUser &&
+      view.activeEntries.some((entry) => entry.userId === currentUser.userId),
+  );
 
-  return (
-    <div className="mx-auto max-w-5xl space-y-5 sm:space-y-8">
-      <BackLinkButton fallbackHref="/matchs" />
-
-      <section className="surface-panel relative overflow-hidden rounded-3xl p-4 sm:p-6 md:p-8">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_88%_6%,rgba(45,212,191,0.1),transparent_36%)]" />
-        <div className="relative">
-          <span className="status-pill ring-1 ring-cyan-400/30">
-            {STATUS_LABEL[match.status]}
-          </span>
-          <h1 className="mt-3 text-2xl font-black tracking-tight text-white sm:text-4xl">
-            {match.title}
-          </h1>
-          <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-400 sm:text-base">
-            {match.description || "暂无描述"}
-          </p>
-          <div className="mt-4 flex flex-wrap gap-2 text-xs text-slate-300">
-            <span className="rounded-full bg-white/[0.045] px-3 py-1 ring-1 ring-white/8">
-              单打
-              {match.format === "group_then_knockout" ? "小组 + 淘汰赛" : "纯小组赛"}
-            </span>
-            <span className="rounded-full bg-white/[0.045] px-3 py-1 ring-1 ring-white/8">
-              报名截止：{formatV2CompetitionDateTime(match.registrationDeadline)}（北京时间）
-            </span>
-          </div>
-          {view.canEditSettings ? (
+  const registration = (
+    <section className="rounded-xl border border-white/10 bg-[#101620] p-5 sm:p-6">
+      <h2 className="text-lg font-semibold text-white">
+        {isRegistered ? "你已报名" : "单打报名"}
+      </h2>
+      <div className="mt-4">
+        {isRegistered ? (
+          <div className="space-y-4">
+            <p className="text-sm leading-6 text-slate-300">
+              报名成功。等待主办方发布分组，签位公布后可在这里查看自己的对手并录入比分。
+            </p>
             <Link
-              href={`/matchs/${match.id}/edit`}
-              className="btn-secondary mt-4 inline-flex items-center gap-1.5 rounded-2xl px-3 py-1.5 text-xs font-bold"
+              href={`/matchs/${match.id}#schedule`}
+              className="btn-primary flex min-h-12 items-center justify-center rounded-xl px-4 py-3 text-sm font-semibold"
             >
-              <Pencil className="h-3.5 w-3.5" />
-              修改比赛基本信息
+              查看签位发布状态
             </Link>
-          ) : null}
-        </div>
-
-        <div className="relative mt-5 grid gap-3 text-slate-200 sm:grid-cols-2 lg:grid-cols-3">
-          <div className="flex items-center gap-3 rounded-2xl bg-slate-950/34 p-3 ring-1 ring-white/8">
-            <Calendar className="h-5 w-5 text-teal-200" />
-            <div><p className="text-xs text-slate-400">时间</p><p>{formatV2CompetitionDateTime(match.dateTime)}（北京时间）</p></div>
+            {view.registration.action === "CANCEL" ? (
+              <details className="text-xs text-slate-400">
+                <summary className="w-fit cursor-pointer py-2">
+                  退出报名
+                </summary>
+                <div className="mt-2">
+                  <V2SingleRegistrationForm matchId={match.id} mode="cancel" />
+                </div>
+              </details>
+            ) : null}
           </div>
-          <div className="flex items-center gap-3 rounded-2xl bg-slate-950/34 p-3 ring-1 ring-white/8">
-            <MapPin className="h-5 w-5 text-teal-200" />
-            <div><p className="text-xs text-slate-400">地点</p><p>{match.location ?? "待定"}</p></div>
-          </div>
-          <div className="flex items-center gap-3 rounded-2xl bg-slate-950/34 p-3 ring-1 ring-white/8">
-            <Users className="h-5 w-5 text-teal-200" />
-            <div><p className="text-xs text-slate-400">参赛人数</p><p>{view.registration.activeEntryCount} 人</p></div>
-          </div>
-        </div>
-
-        <div className="relative mt-5 space-y-2">
-          {view.registration.action === "REGISTER" ? (
-            <V2SingleRegistrationForm matchId={match.id} mode="register" />
-          ) : view.registration.action === "CANCEL" ? (
-            <V2SingleRegistrationForm matchId={match.id} mode="cancel" />
-          ) : (
-            <p className="text-sm text-slate-300">{view.registration.message}</p>
-          )}
-          <p className="text-xs text-slate-400">
-            报名和已确认成绩会自动更新积分。
-          </p>
-        </div>
-      </section>
-
-      {!view.supported ? (
-        <section className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-amber-200 sm:p-6">
-          暂时无法加载本场比赛操作，请联系管理员。
-        </section>
+        ) : view.registration.action === "REGISTER" ? (
+          <V2SingleRegistrationForm matchId={match.id} mode="register" />
+        ) : view.registration.action === "CANCEL" ? (
+          <V2SingleRegistrationForm matchId={match.id} mode="cancel" />
+        ) : (
+          <p className="text-sm text-slate-300">{view.registration.message}</p>
+        )}
+      </div>
+      {!currentUser ? (
+        <Link
+          href="/auth"
+          className="mt-4 inline-block text-sm text-orange-200 hover:text-orange-100"
+        >
+          登录后报名 →
+        </Link>
       ) : null}
-
-
-      {view.isManager && view.supported && match.status !== "finished" ? (
-        <section className="rounded-2xl border border-amber-400/30 bg-amber-500/5 p-4 sm:p-6">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-base font-semibold text-amber-100 sm:text-lg">
-                分组管理
-              </h2>
-              <p className="mt-1 text-xs text-amber-100/80 sm:text-sm">
-                预览分组和赛程，确认后发布。
-              </p>
+      <p className="mt-4 text-xs text-slate-400">
+        报名和已确认成绩会自动更新积分。
+      </p>
+    </section>
+  );
+  const roster = (
+    <section>
+      <h2 className="text-lg font-semibold text-white">参赛选手</h2>
+      <p className="mt-1 text-sm text-slate-400">点击选手查看个人资料。</p>
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {view.activeEntries.length === 0 ? (
+          <p className="text-sm text-slate-400">暂无有效报名。</p>
+        ) : (
+          view.activeEntries.map((entry, index) => (
+            <div
+              key={entry.entryId}
+              className="flex min-w-0 items-start gap-3 rounded-xl border border-white/10 bg-[#101620] p-4"
+            >
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/5 text-xs tabular-nums text-slate-400">
+                {index + 1}
+              </span>
+              <div className="min-w-0">
+                {entry.userId ? (
+                  <Link
+                    href={`/profile/${entry.userId}`}
+                    className="break-words text-sm font-medium text-slate-100 hover:text-orange-200"
+                  >
+                    {entry.frozenDisplayName}
+                  </Link>
+                ) : (
+                  <p className="break-words text-sm font-medium text-slate-100">
+                    {entry.frozenDisplayName}
+                  </p>
+                )}
+                {entry.currentProfile ? (
+                  <>
+                    <p className="mt-1 text-xs text-slate-400">
+                      积分 {entry.currentProfile.currentPoints} · ELO{" "}
+                      {entry.currentProfile.currentEloRating}
+                    </p>
+                    {entry.currentProfile.nickname !==
+                    entry.frozenDisplayName ? (
+                      <p className="mt-1 break-words text-xs text-slate-500">
+                        现用名：{entry.currentProfile.nickname}
+                      </p>
+                    ) : null}
+                    {entry.currentProfile.isCurrentlyBanned ? (
+                      <p className="mt-1 text-xs text-rose-300">
+                        当前账号已封禁
+                      </p>
+                    ) : null}
+                  </>
+                ) : (
+                  <p className="mt-1 text-xs text-slate-400">
+                    当前账号状态未知
+                  </p>
+                )}
+              </div>
             </div>
-            <Link
-              href={`/matchs/${match.id}/grouping`}
-              className="rounded-lg border border-amber-300/40 px-3 py-1.5 text-xs font-medium text-amber-100 hover:bg-amber-500/10 sm:text-sm"
-            >
-              进入分组管理
-            </Link>
-          </div>
-        </section>
-      ) : null}
-
+          ))
+        )}
+      </div>
+    </section>
+  );
+  const editLink = view.canEditSettings ? (
+    <Link
+      href={`/matchs/${match.id}/edit`}
+      className="btn-secondary rounded-lg px-4 py-2.5 text-sm font-medium"
+    >
+      修改比赛信息
+    </Link>
+  ) : null;
+  return (
+    <div className="mx-auto max-w-6xl space-y-6 pb-6">
+      <BackLinkButton fallbackHref="/matchs" />
+      <MatchDetailHeader
+        match={match}
+        typeLabel="单打"
+        participantLabel={`${view.registration.activeEntryCount} 人报名`}
+      />
       {view.supported ? (
         <V2CompetitionPhases
           grouping={model.grouping}
           competitionType="single"
           currentUserId={currentUser?.userId ?? null}
           isManager={view.isManager}
+          registrationContent={
+            !model.grouping.published ? registration : undefined
+          }
+          rosterContent={roster}
+          managementContent={editLink}
+          certificateContent={
+            certificate ? (
+              <ExportCertificateSection
+                matchId={match.id}
+                matchTitle={match.title}
+                currentUserEmail={certificate.currentUserEmail}
+                identityBound={certificate.identityBound}
+                eligibility={certificate.eligibility}
+                existingCertificateNo={certificate.existingCertificateNo}
+              />
+            ) : undefined
+          }
         />
-      ) : null}
-
-      <details className="rounded-2xl border border-slate-700 bg-slate-900/80 p-4 sm:p-6">
-        <summary className="cursor-pointer text-lg font-bold text-white">已报名选手（{view.activeEntries.length}）</summary>
-        <p className="mt-1 text-xs text-slate-400">
-          可点击选手查看个人资料。
+      ) : (
+        <p className="rounded-xl bg-amber-400/5 p-5 text-sm text-amber-200">
+          暂时无法加载比赛操作，请联系管理员。
         </p>
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
-          {view.activeEntries.length === 0 ? (
-            <p className="text-sm text-slate-400">当前没有有效报名。</p>
-          ) : (
-            view.activeEntries.map((entry, index) => (
-              <div key={entry.entryId} className="flex gap-3 rounded-lg border border-slate-700 p-3">
-                <span className="w-6 font-mono text-slate-400">{index + 1}</span>
-                <ParticipantIdentity participant={entry} />
-              </div>
-            ))
-          )}
-        </div>
-      </details>
-
-      {certificate ? (
-        <ExportCertificateSection
-          matchId={match.id}
-          matchTitle={match.title}
-          currentUserEmail={certificate.currentUserEmail}
-          identityBound={certificate.identityBound}
-          eligibility={certificate.eligibility}
-          existingCertificateNo={certificate.existingCertificateNo}
-        />
-      ) : null}
+      )}
     </div>
   );
 }

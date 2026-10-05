@@ -27,15 +27,26 @@ import {
   type V2GroupOnlyRevisionActionKind,
 } from "@/components/match/v2/V2GroupOnlyResultActionForms";
 import { V2_MAX_TEAM_SCORE_PER_FIXTURE } from "@/modules/competitions-v2/domain/group-standings";
+import FixtureScoreboard from "./FixtureScoreboard";
 
 const INITIAL_STATE: V2GroupOnlyResultActionState = {};
 
-function ActionStateMessage({ state }: { state: V2GroupOnlyResultActionState }) {
+function ActionStateMessage({
+  state,
+}: {
+  state: V2GroupOnlyResultActionState;
+}) {
   return (
     <>
-      {state.error ? <p className="text-xs text-rose-300">{state.error}</p> : null}
+      {state.error ? (
+        <p role="alert" className="text-xs text-rose-300">
+          {state.error}
+        </p>
+      ) : null}
       {state.success ? (
-        <p className="text-xs text-emerald-300">{state.success}</p>
+        <p role="status" className="text-xs text-emerald-300">
+          {state.success}
+        </p>
       ) : null}
     </>
   );
@@ -63,13 +74,50 @@ export function V2TeamResultSubmissionForm({
       : submitV2TeamResultAction
   ).bind(null, matchId);
   const [state, formAction, pending] = useActionState(action, INITIAL_STATE);
-  const [winnerEntryId, setWinnerEntryId] = useState(sideA.entryId);
+  const [scoreA, setScoreA] = useState("");
+  const [scoreB, setScoreB] = useState("");
+  const filled = scoreA !== "" && scoreB !== "";
+  const aWon = Number(scoreA) > Number(scoreB);
+  const validScore =
+    filled &&
+    [scoreA, scoreB].every(
+      (score) =>
+        Number.isSafeInteger(Number(score)) &&
+        Number(score) >= 0 &&
+        Number(score) <= V2_MAX_TEAM_SCORE_PER_FIXTURE,
+    ) &&
+    Number(scoreA) !== Number(scoreB);
+  const winnerEntryId = validScore
+    ? aWon
+      ? sideA.entryId
+      : sideB.entryId
+    : "";
+
+  function scoreControl(
+    name: string,
+    value: string,
+    update: (value: string) => void,
+  ) {
+    return (
+      <input
+        type="number"
+        aria-label={`${name}的团体总分`}
+        min={0}
+        max={V2_MAX_TEAM_SCORE_PER_FIXTURE}
+        step={1}
+        inputMode="numeric"
+        value={value}
+        onChange={(event) => update(event.target.value)}
+        placeholder="—"
+        required
+        disabled={pending}
+        className="h-20 w-full max-w-28 rounded-xl border border-slate-600 bg-[#111a27] px-2 text-center text-4xl font-semibold tabular-nums text-white focus:border-orange-300 focus:outline-2 focus:outline-offset-2 focus:outline-orange-300 disabled:opacity-60"
+      />
+    );
+  }
 
   return (
-    <form
-      action={formAction}
-      className="mt-3 space-y-3 rounded-lg border border-cyan-500/25 bg-slate-950/35 p-3"
-    >
+    <form action={formAction} className="mt-4">
       <input type="hidden" name="csrfToken" defaultValue="" />
       <input type="hidden" name="fixtureId" value={fixtureId} />
       <input
@@ -78,53 +126,45 @@ export function V2TeamResultSubmissionForm({
         value={expectedFixtureVersion}
       />
       <input type="hidden" name="winnerEntryId" value={winnerEntryId} />
-
-      <div className="grid gap-2 sm:grid-cols-3">
-        <label className="space-y-1 text-xs text-slate-300">
-          <span>胜方（冻结队名）</span>
-          <select
-            value={winnerEntryId}
-            onChange={(event) => setWinnerEntryId(event.target.value)}
-            className="h-9 w-full rounded-lg border border-slate-600 bg-slate-900 px-2 text-sm text-slate-100"
-          >
-            <option value={sideA.entryId}>{sideA.frozenDisplayName}</option>
-            <option value={sideB.entryId}>{sideB.frozenDisplayName}</option>
-          </select>
-        </label>
-        <label className="space-y-1 text-xs text-slate-300">
-          <span>胜方团体总分</span>
-          <input
-            type="number"
-            name="winnerScore"
-            min={1}
-            max={V2_MAX_TEAM_SCORE_PER_FIXTURE}
-            step={1}
-            defaultValue={3}
-            required
-            className="h-9 w-full rounded-lg border border-slate-600 bg-slate-900 px-2 text-sm text-slate-100"
-          />
-        </label>
-        <label className="space-y-1 text-xs text-slate-300">
-          <span>负方团体总分</span>
-          <input
-            type="number"
-            name="loserScore"
-            min={0}
-            max={V2_MAX_TEAM_SCORE_PER_FIXTURE}
-            step={1}
-            defaultValue={1}
-            required
-            className="h-9 w-full rounded-lg border border-slate-600 bg-slate-900 px-2 text-sm text-slate-100"
-          />
-        </label>
+      <input
+        type="hidden"
+        name="winnerScore"
+        value={validScore ? Math.max(Number(scoreA), Number(scoreB)) : ""}
+      />
+      <input
+        type="hidden"
+        name="loserScore"
+        value={validScore ? Math.min(Number(scoreA), Number(scoreB)) : ""}
+      />
+      <p className="text-xs text-slate-400">团体赛 · 填写双方队伍总比分</p>
+      <FixtureScoreboard
+        sideAName={sideA.frozenDisplayName}
+        sideBName={sideB.frozenDisplayName}
+        scoreA={scoreControl(sideA.frozenDisplayName, scoreA, setScoreA)}
+        scoreB={scoreControl(sideB.frozenDisplayName, scoreB, setScoreB)}
+        sideACaption={validScore ? (aWon ? "胜方" : "负方") : "总分"}
+        sideBCaption={validScore ? (aWon ? "负方" : "胜方") : "总分"}
+      />
+      <div aria-live="polite" className="min-h-6 text-center text-xs leading-5">
+        {filled && !validScore ? (
+          <p role="alert" className="text-rose-300">
+            请输入双方的整数总分，双方不能同分。
+          </p>
+        ) : (
+          <p className="text-slate-400">
+            {validScore
+              ? "请核对上方双方和比分，确认无误后提交。"
+              : "请填写双方总比分。"}
+          </p>
+        )}
       </div>
-      <p className="text-xs text-slate-400">
-        记录一个队对队总比分；只有参赛队长、比赛创建者或管理员可提交。
+      <p className="mt-4 text-xs leading-5 text-slate-400">
+        提交后需由对方队长或管理员确认，确认后计入正式成绩。
       </p>
       <button
         type="submit"
-        disabled={pending}
-        className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-500 disabled:opacity-60"
+        disabled={pending || !validScore}
+        className="btn-primary mt-3 min-h-12 w-full rounded-xl px-4 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40"
       >
         {pending ? "提交中..." : "提交团体赛果"}
       </button>
@@ -287,12 +327,12 @@ export function V2TeamRevisionActionForm({
   );
 }
 
-export function V2TeamForfeitForm(
-  { stage = "GROUP", ...props }: Omit<
-    ComponentProps<typeof V2GroupOnlyForfeitForm>,
-    "serverAction"
-  > & { stage?: "GROUP" | "KNOCKOUT" },
-) {
+export function V2TeamForfeitForm({
+  stage = "GROUP",
+  ...props
+}: Omit<ComponentProps<typeof V2GroupOnlyForfeitForm>, "serverAction"> & {
+  stage?: "GROUP" | "KNOCKOUT";
+}) {
   return (
     <V2GroupOnlyForfeitForm
       {...props}
@@ -305,12 +345,13 @@ export function V2TeamForfeitForm(
   );
 }
 
-export function V2TeamForfeitCorrectionForm(
-  { stage = "GROUP", ...props }: Omit<
-    ComponentProps<typeof V2GroupOnlyForfeitCorrectionForm>,
-    "serverAction"
-  > & { stage?: "GROUP" | "KNOCKOUT" },
-) {
+export function V2TeamForfeitCorrectionForm({
+  stage = "GROUP",
+  ...props
+}: Omit<
+  ComponentProps<typeof V2GroupOnlyForfeitCorrectionForm>,
+  "serverAction"
+> & { stage?: "GROUP" | "KNOCKOUT" }) {
   return (
     <V2GroupOnlyForfeitCorrectionForm
       {...props}
