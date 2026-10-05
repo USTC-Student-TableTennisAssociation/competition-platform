@@ -2,7 +2,8 @@
 
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { type MatchFormState, createMatchAction } from "@/app/matchs/actions";
-import { VENUE_OPTIONS } from "@/lib/locations";
+import MatchVenueSelect from "@/components/match/MatchVenueSelect";
+import usePreserveMatchFormValues from "@/components/match/usePreserveMatchFormValues";
 
 const initialState: MatchFormState = {};
 
@@ -21,6 +22,7 @@ export default function CreateMatchForm({
   v2TeamGroupOnlyCreationRequestKey: string | null;
   v2TeamGroupThenKnockoutCreationRequestKey: string | null;
 }>) {
+  const formRef = usePreserveMatchFormValues();
   const [state, formAction, pending] = useActionState(
     createMatchAction,
     initialState,
@@ -141,7 +143,7 @@ export default function CreateMatchForm({
   const submitsV2CreationRequestKey = v2CreationRequestKey !== null;
 
   return (
-    <form action={formAction} className="space-y-8">
+    <form ref={formRef} action={formAction} className="space-y-8">
       {v2CreationRequestKey ? (
         <input
           type="hidden"
@@ -185,26 +187,7 @@ export default function CreateMatchForm({
               className="input-dark w-full rounded-2xl px-4 py-2 text-slate-100 placeholder:text-slate-600"
             />
           </div>
-          <div>
-            <label
-              htmlFor="location"
-              className="mb-1 block text-sm text-slate-300"
-            >
-              地点 *
-            </label>
-            <select
-              id="location"
-              name="location"
-              required
-              className="input-dark w-full rounded-2xl px-4 py-2 text-slate-100 placeholder:text-slate-600"
-            >
-              {VENUE_OPTIONS.map((venue) => (
-                <option key={venue} value={venue}>
-                  {venue}
-                </option>
-              ))}
-            </select>
-          </div>
+          <MatchVenueSelect id="location" />
         </div>
       </section>
 

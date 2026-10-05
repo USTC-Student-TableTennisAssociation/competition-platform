@@ -1,6 +1,6 @@
 import type { PrismaClient, UserRole } from "@prisma/client";
 
-import { isVenueOption } from "../../../lib/locations";
+import { normalizeMatchLocation } from "../../../lib/locations";
 import { V2_COMPETITION_TIMEZONE_OFFSET_MINUTES } from "../competition-time";
 import {
   V2_GROUP_ONLY_MATCH_TEXT_LIMITS,
@@ -344,9 +344,9 @@ function parseCreationCommand<
   }
   const title = normalizedRequiredText(formData, "title");
   const description = normalizedDescription(formData);
-  const location = normalizedRequiredText(formData, "location");
-  if (!isVenueOption(location)) {
-    fail("INVALID_FORM_FIELD", "location is not an available venue.", "location");
+  const location = normalizeMatchLocation(normalizedRequiredText(formData, "location"));
+  if (location === null) {
+    fail("INVALID_FORM_FIELD", "location must contain distinct available venues.", "location");
   }
   // Validate the shared Legacy compatibility field, while V2 uses CST.
   parseV2GroupOnlyTimezoneOffset(formData);

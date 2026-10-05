@@ -137,6 +137,15 @@ test("the settings adapter forwards normalized settings, schedule, and server ac
   ]]);
 });
 
+test("settings accept multiple venues in canonical order", async () => {
+  const commands: UpdateV2MatchSettingsCommand[] = [];
+  const handler = handlerWith({ commands });
+  assert.equal((await handler("match-1", settingsForm({
+    location: " 东区乒乓球馆 、 西区乒乓球馆 ",
+  }))).error, undefined);
+  assert.equal(commands[0].location, "西区乒乓球馆、东区乒乓球馆");
+});
+
 test("blank description becomes null and an identical save has a stable response", async () => {
   const commands: UpdateV2MatchSettingsCommand[] = [];
   const handler = handlerWith({
@@ -222,6 +231,10 @@ test("authentication and canonical field validation happen before the service", 
     settingsForm({ expectedUpdatedAt: "2026-09-04T08:00:00Z" }),
     settingsForm({ expectedUpdatedAt: "not-a-date" }),
     settingsForm({ location: "不存在的场馆" }),
+    settingsForm({ location: "" }),
+    settingsForm({ location: "西区乒乓球馆、" }),
+    settingsForm({ location: "西区乒乓球馆、西区乒乓球馆" }),
+    settingsForm({ location: "西区乒乓球馆、不存在的场馆" }),
     settingsForm({ title: "x".repeat(201) }),
     settingsForm({ description: "x".repeat(5_001) }),
     settingsForm({ date: "2026-02-30" }),

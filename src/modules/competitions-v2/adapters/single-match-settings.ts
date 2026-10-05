@@ -1,6 +1,6 @@
 import type { PrismaClient, UserRole } from "@prisma/client";
 
-import { isVenueOption } from "../../../lib/locations";
+import { normalizeMatchLocation } from "../../../lib/locations";
 import {
   createV2MatchSettingsApplicationService,
   type V2MatchSettingsApplicationService,
@@ -164,9 +164,9 @@ export function createV2MatchSettingsHandler(
 
       const title = normalizedRequiredText(formData, "title");
       const description = normalizedDescription(formData);
-      const location = normalizedRequiredText(formData, "location");
-      if (!isVenueOption(location)) {
-        fail("location is not an available venue.", "location");
+      const location = normalizeMatchLocation(normalizedRequiredText(formData, "location"));
+      if (location === null) {
+        fail("location must contain distinct available venues.", "location");
       }
       const dateTime = parseV2LocalDateTime(
         `${readSingleTextField(formData, "date")}T${readSingleTextField(formData, "time")}`,
