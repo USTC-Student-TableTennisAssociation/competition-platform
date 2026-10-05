@@ -114,11 +114,14 @@ jobs:
 
           cp -R assets .next/standalone/assets
           cp deploy/ecosystem.config.cjs .next/standalone/ecosystem.config.cjs
+          cp deploy/activate-release.sh deploy/verify-pm2-release.mjs .next/standalone/
 
           printf '%s\n' "$SHA" > .next/standalone/REVISION
 
           test -f .next/standalone/server.js
           test -f .next/standalone/ecosystem.config.cjs
+          test -f .next/standalone/activate-release.sh
+          test -f .next/standalone/verify-pm2-release.mjs
           test -f .next/standalone/assets/fonts/NotoSansSC-Regular.ttf
           test -s .next/standalone/REVISION
           test ! -e .next/standalone/.env
@@ -251,21 +254,7 @@ jobs:
           APP_ROOT="$2"
           RELEASE="$APP_ROOT/releases/$SHA"
 
-          test -d "$RELEASE"
-          test "$(cat "$RELEASE/REVISION")" = "$SHA"
-
-          if [ -L "$APP_ROOT/current" ]; then
-            OLD_RELEASE="$(readlink -f "$APP_ROOT/current")"
-
-            ln -sfn "$OLD_RELEASE" "$APP_ROOT/previous.new"
-            mv -Tf "$APP_ROOT/previous.new" "$APP_ROOT/previous"
-          fi
-
-          ln -sfn "$RELEASE" "$APP_ROOT/current.new"
-          mv -Tf "$APP_ROOT/current.new" "$APP_ROOT/current"
-
-          pm2 startOrReload "$APP_ROOT/current/ecosystem.config.cjs" --update-env
-          pm2 save
+          bash "$RELEASE/activate-release.sh" "$SHA" "$APP_ROOT"
           REMOTE
 
       - name: Production smoke test
@@ -276,12 +265,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          HEALTH_URL="${SITE_URL%/}/api/site-status"
+          HEALTH_URL="${SITE_URL%/}/api/health"
 
           for attempt in $(seq 1 12); do
-            if curl --fail --silent --show-error "$HEALTH_URL"; then
-              echo
-              echo "Production health check passed."
+            if curl --fail --silent --show-error "$HEALTH_URL" > /tmp/kedapp-health.json &&
+              node -e '
+                const result = require("/tmp/kedapp-health.json");
+                if (result.status !== "ok" || result.revision !== process.env.SHA) process.exit(1);
+              '; then
+              echo "Production health check passed for $SHA."
               exit 0
             fi
 
@@ -293,26 +285,24 @@ jobs:
           exit 1
 
       - name: Roll back application on failed smoke test
-        if: failure() && steps.activate.outcome == 'success'
+        if: failure() && (steps.activate.outcome == 'success' || steps.activate.outcome == 'failure')
         shell: bash
         run: |
           ssh \
             -i ~/.ssh/deploy_key \
             -p "$PROD_PORT" \
             "$PROD_USER@$PROD_HOST" \
-            "bash -s -- '$PROD_APP_ROOT'" <<'REMOTE'
+            "bash -s -- '$PROD_APP_ROOT' '$SHA'" <<'REMOTE'
           set -euo pipefail
 
           APP_ROOT="$1"
+          FAILED_SHA="$2"
 
           if [ -L "$APP_ROOT/previous" ]; then
             PREVIOUS_RELEASE="$(readlink -f "$APP_ROOT/previous")"
 
-            ln -sfn "$PREVIOUS_RELEASE" "$APP_ROOT/current.rollback"
-            mv -Tf "$APP_ROOT/current.rollback" "$APP_ROOT/current"
-
-            pm2 startOrReload "$APP_ROOT/current/ecosystem.config.cjs" --update-env
-            pm2 save
+            PREVIOUS_SHA="$(cat "$PREVIOUS_RELEASE/REVISION")"
+            bash "$APP_ROOT/releases/$FAILED_SHA/activate-release.sh" "$PREVIOUS_SHA" "$APP_ROOT"
           else
             pm2 stop kedapp || true
           fi
