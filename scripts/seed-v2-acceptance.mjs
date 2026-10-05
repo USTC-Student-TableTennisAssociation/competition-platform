@@ -50,8 +50,6 @@ const DAY_MS = 24 * HOUR_MS;
 const SEED_TIME = new Date();
 const VERIFIED_AT = new Date(SEED_TIME.getTime() - DAY_MS);
 const GROUPING_DEADLINE = new Date(SEED_TIME.getTime() - HOUR_MS);
-const GROUPING_TIME = SEED_TIME;
-const RESULT_TIME = SEED_TIME;
 const REGISTRATION_START = new Date(SEED_TIME.getTime() - 7 * DAY_MS);
 const REGISTRATION_DEADLINE = new Date(SEED_TIME.getTime() + 180 * DAY_MS);
 const MATCH_TIME = new Date(SEED_TIME.getTime() + 195 * DAY_MS);
@@ -382,7 +380,7 @@ async function publishGrouping(db, match, spec, entries) {
   });
   const profile = GROUPING_PROFILES[`${spec.type}:${spec.format}`];
   const service = createV2GroupOnlyGroupingApplicationService(
-    { db, clock: () => GROUPING_TIME },
+    { db },
     profile,
   );
   await service.publish({
@@ -426,7 +424,6 @@ async function seedPendingSingleResult(db, matchId) {
   }
   const service = createV2ResultApplicationService({
     db,
-    clock: () => RESULT_TIME,
   });
   await service.submitRevision({
     actor: { actorId: reporter.sourceUserId, role: "user" },

@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
+import { formatV2CompetitionDateTime } from "@/modules/competitions-v2/competition-time";
 import {
   Download,
   LogOut,
@@ -65,15 +66,13 @@ type Props = {
   teams: TeamRegistrationItem[];
   allowCancellation?: boolean;
   captainCancellationOpen?: boolean;
+  displayMode?: "all" | "registration" | "roster" | "management";
 };
 
 const initialState: MatchFormState = {};
 const TEAMS_PER_PAGE = 8;
 
-const statusMeta: Record<
-  TeamStatus,
-  { label: string; className: string }
-> = {
+const statusMeta: Record<TeamStatus, { label: string; className: string }> = {
   draft: {
     label: "组建中",
     className: "bg-slate-400/10 text-slate-200 ring-slate-300/16",
@@ -103,7 +102,7 @@ const statusMeta: Record<
 function formatDateTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString("zh-CN");
+  return formatV2CompetitionDateTime(date);
 }
 
 function isEditableStatus(status: TeamStatus) {
@@ -131,7 +130,8 @@ function paginateTeams(teams: TeamRegistrationItem[], page: number) {
 }
 
 function ActionMessage({ state }: { state: MatchFormState }) {
-  if (state.error) return <p className="text-sm text-rose-300">{state.error}</p>;
+  if (state.error)
+    return <p className="text-sm text-rose-300">{state.error}</p>;
   if (state.success) {
     return <p className="text-sm text-emerald-300">{state.success}</p>;
   }
@@ -219,13 +219,13 @@ function JoinTeamForm({
           required
           maxLength={20}
           placeholder="输入队长分享的邀请码"
-          className="input-dark w-full rounded-2xl px-3 py-2 uppercase text-slate-100 placeholder:text-slate-600"
+          className="input-dark min-h-12 w-full rounded-xl px-3 py-2 uppercase text-slate-100 placeholder:text-slate-600"
         />
       </label>
       <button
         type="submit"
         disabled={disabled || pending}
-        className="btn-secondary inline-flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-2 text-sm font-bold disabled:opacity-60"
+        className="btn-primary inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-60"
       >
         <UserPlus className="h-4 w-4" />
         {pending ? "加入中..." : "加入队伍"}
@@ -407,9 +407,7 @@ function TeamStatusPill({
 }) {
   const meta = getDisplayStatus(team, minMembers);
   return (
-    <span className={`status-pill ring-1 ${meta.className}`}>
-      {meta.label}
-    </span>
+    <span className={`status-pill ring-1 ${meta.className}`}>{meta.label}</span>
   );
 }
 
@@ -448,7 +446,7 @@ function JoinByInviteButton({
       <button
         type="submit"
         disabled={disabled || pending}
-        className="btn-secondary inline-flex w-full items-center justify-center gap-2 rounded-2xl px-3 py-2 text-xs font-bold disabled:opacity-60 sm:w-auto"
+        className="btn-secondary inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-bold disabled:opacity-60 sm:w-auto"
       >
         <UserPlus className="h-3.5 w-3.5" />
         {pending ? "加入中..." : "加入队伍"}
@@ -522,6 +520,7 @@ function PublicTeamCard({
   canJoin,
   registrationOpen,
   variant,
+  compact = false,
 }: {
   team: TeamRegistrationItem;
   matchId: string;
@@ -530,16 +529,61 @@ function PublicTeamCard({
   canJoin: boolean;
   registrationOpen: boolean;
   variant: "building" | "formed";
+  compact?: boolean;
 }) {
   const missingMembers = getMissingMembers(team, minMembers);
   const isFull = team.members.length >= maxMembers;
 
+  if (compact)
+    return (
+      <article className="rounded-xl bg-white/[0.025] p-4 ring-1 ring-white/8">
+        <div className="flex flex-wrap items-center gap-2">
+          <h4 className="min-w-0 break-words text-base font-semibold text-slate-100">
+            {team.name}
+          </h4>
+          <TeamStatusPill team={team} minMembers={minMembers} />
+        </div>
+        <p className="mt-2 text-xs leading-5 text-slate-400">
+          队长：{team.captainNickname} · {team.members.length}/{maxMembers} 人
+          {missingMembers > 0
+            ? ` · 还差 ${missingMembers} 人成队`
+            : isFull
+              ? " · 已满员"
+              : " · 可补员"}
+        </p>
+        {canJoin && !isFull ? (
+          <div className="mt-3">
+            <JoinByInviteButton
+              matchId={matchId}
+              inviteCode={team.inviteCode}
+              disabled={!registrationOpen}
+            />
+          </div>
+        ) : null}
+        <details className="mt-2 text-xs text-slate-400">
+          <summary className="min-h-11 cursor-pointer py-3">
+            队员与联系信息
+          </summary>
+          <div className="space-y-3 pb-2">
+            <MemberChips team={team} />
+            <p>联系方式：{team.contact ?? "未填写"}</p>
+            {team.remark ? (
+              <p className="break-words">备注：{team.remark}</p>
+            ) : null}
+            <p>
+              邀请码：<span className="font-mono">{team.inviteCode}</span>
+            </p>
+          </div>
+        </details>
+      </article>
+    );
+
   return (
-    <article className="rounded-3xl bg-white/[0.025] p-4 ring-1 ring-white/8">
+    <article className="rounded-xl bg-white/[0.025] p-4 ring-1 ring-white/8">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h4 className="truncate text-base font-black text-slate-100">
+            <h4 className="truncate text-base font-semibold text-slate-100">
               {team.name}
             </h4>
             <TeamStatusPill team={team} minMembers={minMembers} />
@@ -611,6 +655,7 @@ export default function TeamRegistrationPanel({
   teams,
   allowCancellation = true,
   captainCancellationOpen = registrationOpen,
+  displayMode = "all",
 }: Props) {
   const [buildingPage, setBuildingPage] = useState(1);
   const [formedPage, setFormedPage] = useState(1);
@@ -625,13 +670,28 @@ export default function TeamRegistrationPanel({
   const myTeam = currentUserId
     ? publicTeams.find(
         (team) =>
-          (team.members.some((member) => member.userId === currentUserId) ||
-            team.captainId === currentUserId),
+          team.members.some((member) => member.userId === currentUserId) ||
+          team.captainId === currentUserId,
       )
     : null;
+  const myTeamId = myTeam?.id ?? null;
+  const previousTeamId = useRef(myTeamId);
+  const myTeamCard = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (myTeamId && !previousTeamId.current) {
+      myTeamCard.current?.scrollIntoView({
+        block: "start",
+        behavior: "instant",
+      });
+      myTeamCard.current?.focus({ preventScroll: true });
+    }
+    previousTeamId.current = myTeamId;
+  }, [myTeamId]);
   const buildingPagination = paginateTeams(buildingTeams, buildingPage);
   const formedPagination = paginateTeams(formedTeams, formedPage);
-  const canJoinPublicTeam = Boolean(currentUserId && !myTeam && registrationOpen);
+  const canJoinPublicTeam = Boolean(
+    currentUserId && !myTeam && registrationOpen,
+  );
   const disabledReason = registrationNotStarted
     ? "团体报名尚未开始"
     : registrationClosed
@@ -639,212 +699,283 @@ export default function TeamRegistrationPanel({
       : "当前不可报名";
 
   return (
-    <section className="surface-card rounded-3xl p-4 sm:p-6">
-      <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
-        <div>
-          <p className="eyebrow">Team Registration</p>
-          <h2 className="mt-1 text-xl font-black text-white sm:text-2xl">
-            团体赛报名
-          </h2>
-          <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-300">
-            <span className="rounded-full bg-white/[0.045] px-3 py-1 ring-1 ring-white/8">
-              {minMembers}-{maxMembers} 人/队
-            </span>
-            <span className="rounded-full bg-white/[0.045] px-3 py-1 ring-1 ring-white/8">
-              开始：{formatDateTime(startsAt)}
-            </span>
-            <span className="rounded-full bg-white/[0.045] px-3 py-1 ring-1 ring-white/8">
-              截止：{formatDateTime(deadline)}
-            </span>
+    <section className="space-y-5">
+      {displayMode !== "management" ? (
+        <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
+          <div>
+            <h2 className="mt-1 text-xl font-semibold text-white sm:text-2xl">
+              {displayMode === "roster" ? "参赛队伍" : "团体报名与组队"}
+            </h2>
+            {displayMode !== "roster" ? (
+              displayMode === "registration" ? (
+                <p className="mt-2 text-sm text-slate-400">
+                  {minMembers}–{maxMembers} 人/队 · 达到 {minMembers} 人自动报名
+                  {registrationNotStarted
+                    ? ` · ${formatDateTime(startsAt)} 开始报名`
+                    : ""}
+                </p>
+              ) : (
+                <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-300">
+                  <span className="rounded-full bg-white/[0.045] px-3 py-1 ring-1 ring-white/8">
+                    {minMembers}-{maxMembers} 人/队
+                  </span>
+                  <span className="rounded-full bg-white/[0.045] px-3 py-1 ring-1 ring-white/8">
+                    报名开始：{formatDateTime(startsAt)}
+                  </span>
+                  <span className="rounded-full bg-white/[0.045] px-3 py-1 ring-1 ring-white/8">
+                    报名截止：{formatDateTime(deadline)}
+                  </span>
+                </div>
+              )
+            ) : null}
           </div>
+          {displayMode !== "registration" ? (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-xl bg-slate-950/36 px-4 py-3 ring-1 ring-white/8">
+                <p className="text-xs text-slate-400">正在组建</p>
+                <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-100">
+                  {buildingTeams.length} 支
+                </p>
+              </div>
+              <div className="rounded-xl bg-slate-950/36 px-4 py-3 ring-1 ring-white/8">
+                <p className="text-xs text-slate-400">已成队</p>
+                <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-100">
+                  {formedTeams.length} 支
+                </p>
+              </div>
+            </div>
+          ) : null}
         </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="rounded-3xl bg-slate-950/36 px-4 py-3 ring-1 ring-white/8">
-            <p className="text-xs text-slate-400">正在组建</p>
-            <p className="mt-1 text-2xl font-black tabular-nums text-slate-100">
-              {buildingTeams.length} 支
-            </p>
-          </div>
-          <div className="rounded-3xl bg-slate-950/36 px-4 py-3 ring-1 ring-white/8">
-            <p className="text-xs text-slate-400">已成队</p>
-            <p className="mt-1 text-2xl font-black tabular-nums text-slate-100">
-              {formedTeams.length} 支
-            </p>
-          </div>
-        </div>
-      </div>
+      ) : null}
 
-      <div className="mt-5 space-y-5">
-        <div className="rounded-3xl bg-slate-950/24 p-4 ring-1 ring-white/8 sm:p-5">
-          <h3 className="text-base font-bold text-white">我的团体赛报名</h3>
-          {!currentUserId ? (
-            <p className="mt-3 text-sm text-slate-400">请先登录后报名。</p>
-          ) : myTeam ? (
-            <div className="mt-4 space-y-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h4 className="text-lg font-black text-slate-100">
-                      {myTeam.name}
-                    </h4>
-                    <TeamStatusPill team={myTeam} minMembers={minMembers} />
+      {displayMode !== "management" ? (
+        <div className="mt-5 space-y-5">
+          {displayMode !== "roster" ? (
+            <div
+              ref={myTeamCard}
+              tabIndex={-1}
+              aria-label={myTeam ? "我的队伍报名状态" : "加入已有队伍"}
+              className="scroll-mt-20 rounded-xl border border-white/10 bg-[#101620] p-4 focus-visible:outline-2 focus-visible:outline-orange-300 sm:p-5"
+            >
+              <h3 className="text-base font-semibold text-white">
+                {myTeam ? "我的队伍" : "加入已有队伍"}
+              </h3>
+              {!currentUserId ? (
+                <p className="mt-3 text-sm text-slate-400">请先登录后报名。</p>
+              ) : myTeam ? (
+                <div className="mt-4 space-y-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h4 className="text-lg font-semibold text-slate-100">
+                          {myTeam.name}
+                        </h4>
+                        <TeamStatusPill team={myTeam} minMembers={minMembers} />
+                      </div>
+                      <p className="mt-1 text-sm text-slate-400">
+                        队长：{myTeam.captainNickname} · {myTeam.members.length}
+                        /{maxMembers} 人
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-white/[0.035] px-3 py-2 ring-1 ring-white/8">
+                      <p className="text-[11px] text-slate-500">邀请码</p>
+                      <p className="font-mono text-sm font-semibold tracking-wide text-teal-100">
+                        {myTeam.inviteCode}
+                      </p>
+                    </div>
                   </div>
-                  <p className="mt-1 text-sm text-slate-400">
-                    队长：{myTeam.captainNickname} · {myTeam.members.length}/
-                    {maxMembers} 人
+
+                  <p
+                    className={`rounded-2xl px-3 py-2 text-sm ring-1 ${
+                      myTeam.members.length >= minMembers
+                        ? "bg-emerald-400/8 text-emerald-100 ring-emerald-300/12"
+                        : "bg-slate-400/8 text-slate-300 ring-slate-300/12"
+                    }`}
+                  >
+                    {myTeam.members.length >= minMembers
+                      ? "已成队，系统已自动报名。"
+                      : `还差 ${getMissingMembers(myTeam, minMembers)} 人成队。`}
                   </p>
-                </div>
-                <div className="rounded-2xl bg-white/[0.035] px-3 py-2 ring-1 ring-white/8">
-                  <p className="text-[11px] text-slate-500">邀请码</p>
-                  <p className="font-mono text-sm font-black tracking-wide text-teal-100">
-                    {myTeam.inviteCode}
-                  </p>
-                </div>
-              </div>
 
-              <p
-                className={`rounded-2xl px-3 py-2 text-sm ring-1 ${
-                  myTeam.members.length >= minMembers
-                    ? "bg-emerald-400/8 text-emerald-100 ring-emerald-300/12"
-                    : "bg-slate-400/8 text-slate-300 ring-slate-300/12"
-                }`}
-              >
-                {myTeam.members.length >= minMembers
-                  ? "已成队，系统已自动报名。"
-                  : `还差 ${getMissingMembers(myTeam, minMembers)} 人成队。`}
-              </p>
+                  {displayMode === "registration" &&
+                  myTeam.members.length >= minMembers ? (
+                    <p className="text-xs leading-6 text-slate-400">
+                      等待分组公布后，可在“我的对局”查看本队赛程。队长负责录入和确认总比分。
+                    </p>
+                  ) : null}
 
-              <div className="grid gap-2 text-sm text-slate-300 md:grid-cols-2">
-                <p className="rounded-2xl bg-white/[0.025] px-3 py-2 ring-1 ring-white/8">
-                  联系方式：{myTeam.contact ?? "未填写"}
-                </p>
-                <p className="rounded-2xl bg-white/[0.025] px-3 py-2 ring-1 ring-white/8">
-                  备注：{myTeam.remark || "无"}
-                </p>
-              </div>
+                  <details>
+                    <summary className="min-h-11 cursor-pointer py-3 text-sm text-slate-300">
+                      队员与联系信息
+                    </summary>
+                    <div className="mb-3 grid gap-2 text-sm text-slate-300 md:grid-cols-2">
+                      <p className="rounded-2xl bg-white/[0.025] px-3 py-2 ring-1 ring-white/8">
+                        联系方式：{myTeam.contact ?? "未填写"}
+                      </p>
+                      <p className="rounded-2xl bg-white/[0.025] px-3 py-2 ring-1 ring-white/8">
+                        备注：{myTeam.remark || "无"}
+                      </p>
+                    </div>
 
-              <TeamMembersList
-                team={myTeam}
-                canRemove={
-                  Boolean(currentUserId) &&
-                  currentUserId === myTeam.captainId &&
+                    <TeamMembersList
+                      team={myTeam}
+                      canRemove={
+                        Boolean(currentUserId) &&
+                        currentUserId === myTeam.captainId &&
+                        registrationOpen &&
+                        isEditableStatus(myTeam.status)
+                      }
+                    />
+                  </details>
+
+                  {currentUserId === myTeam.captainId &&
                   registrationOpen &&
-                  isEditableStatus(myTeam.status)
-                }
-              />
+                  isEditableStatus(myTeam.status) ? (
+                    <details>
+                      <summary className="w-fit cursor-pointer py-2 text-sm text-slate-300">
+                        修改队伍信息
+                      </summary>
+                      <UpdateTeamForm team={myTeam} />
+                    </details>
+                  ) : null}
 
-              {currentUserId === myTeam.captainId &&
-              registrationOpen &&
-              isEditableStatus(myTeam.status) ? (
-                <UpdateTeamForm team={myTeam} />
-              ) : null}
-
-              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-                {currentUserId === myTeam.captainId &&
-                captainCancellationOpen &&
-                allowCancellation &&
-                myTeam.status !== "cancelled" ? (
-                  <CancelTeamButton teamId={myTeam.id} label="解散队伍" />
-                ) : null}
-                {currentUserId !== myTeam.captainId &&
-                registrationOpen &&
-                isEditableStatus(myTeam.status) ? (
-                  <LeaveTeamButton teamId={myTeam.id} />
-                ) : null}
-              </div>
+                  {(currentUserId === myTeam.captainId &&
+                    captainCancellationOpen &&
+                    allowCancellation &&
+                    myTeam.status !== "cancelled") ||
+                  (currentUserId !== myTeam.captainId &&
+                    registrationOpen &&
+                    isEditableStatus(myTeam.status)) ? (
+                    <details className="border-t border-white/8 pt-1">
+                      <summary className="min-h-11 cursor-pointer py-3 text-xs text-slate-400">
+                        调整我的报名
+                      </summary>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                      {currentUserId === myTeam.captainId &&
+                      captainCancellationOpen &&
+                      allowCancellation ? (
+                          <CancelTeamButton
+                            teamId={myTeam.id}
+                            label="解散队伍"
+                          />
+                        ) : null}
+                        {currentUserId !== myTeam.captainId &&
+                        registrationOpen &&
+                        isEditableStatus(myTeam.status) ? (
+                          <LeaveTeamButton teamId={myTeam.id} />
+                        ) : null}
+                      </div>
+                    </details>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="mt-4 space-y-3">
+                  <JoinTeamForm
+                    matchId={matchId}
+                    disabled={!registrationOpen}
+                  />
+                  <details className="border-t border-white/8 pt-1">
+                    <summary className="min-h-11 cursor-pointer py-3 text-sm text-slate-300">
+                      创建一支新队伍
+                    </summary>
+                    <CreateTeamForm
+                      matchId={matchId}
+                      disabled={!registrationOpen}
+                    />
+                  </details>
+                  {!registrationOpen ? (
+                    <p className="xl:col-span-2 text-sm text-slate-400">
+                      {disabledReason}
+                    </p>
+                  ) : null}
+                </div>
+              )}
             </div>
-          ) : (
-            <div className="mt-4 grid gap-5 xl:grid-cols-2">
-              <CreateTeamForm
-                matchId={matchId}
-                disabled={!registrationOpen}
-              />
-              <JoinTeamForm matchId={matchId} disabled={!registrationOpen} />
-              {!registrationOpen ? (
-                <p className="xl:col-span-2 text-sm text-slate-400">
-                  {disabledReason}
-                </p>
-              ) : null}
+          ) : null}
+
+          <div className="rounded-xl border border-white/10 bg-[#101620] p-4 sm:p-5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-base font-bold text-white">正在组建的队伍</h3>
+              <span className="text-xs text-slate-400">
+                {buildingTeams.length} 支队伍 · 第{" "}
+                {buildingPagination.currentPage}/{buildingPagination.totalPages}{" "}
+                页
+              </span>
             </div>
-          )}
-        </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              {buildingTeams.length === 0 ? (
+                <p className="text-sm text-slate-400">暂无正在组建的队伍。</p>
+              ) : (
+                buildingPagination.pagedTeams.map((team) => (
+                  <PublicTeamCard
+                    key={team.id}
+                    team={team}
+                    matchId={matchId}
+                    minMembers={minMembers}
+                    maxMembers={maxMembers}
+                    canJoin={displayMode !== "roster" && canJoinPublicTeam}
+                    registrationOpen={registrationOpen}
+                    variant="building"
+                    compact={displayMode === "registration"}
+                  />
+                ))
+              )}
+            </div>
+            <PaginationControls
+              currentPage={buildingPagination.currentPage}
+              totalPages={buildingPagination.totalPages}
+              onPageChange={setBuildingPage}
+            />
+          </div>
 
-        <div className="rounded-3xl bg-slate-950/24 p-4 ring-1 ring-white/8 sm:p-5">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-base font-bold text-white">正在组建的队伍</h3>
-            <span className="text-xs text-slate-400">
-              {buildingTeams.length} 支队伍 · 第{" "}
-              {buildingPagination.currentPage}/{buildingPagination.totalPages} 页
-            </span>
+          <div className="rounded-xl border border-white/10 bg-[#101620] p-4 sm:p-5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-base font-bold text-white">
+                已完成组队的队伍
+              </h3>
+              <span className="text-xs text-slate-400">
+                {formedTeams.length} 支队伍 · 第 {formedPagination.currentPage}/
+                {formedPagination.totalPages} 页
+              </span>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              {formedTeams.length === 0 ? (
+                <p className="text-sm text-slate-400">暂无已成队队伍。</p>
+              ) : (
+                formedPagination.pagedTeams.map((team) => (
+                  <PublicTeamCard
+                    key={team.id}
+                    team={team}
+                    matchId={matchId}
+                    minMembers={minMembers}
+                    maxMembers={maxMembers}
+                    canJoin={displayMode !== "roster" && canJoinPublicTeam}
+                    registrationOpen={registrationOpen}
+                    variant="formed"
+                    compact={displayMode === "registration"}
+                  />
+                ))
+              )}
+            </div>
+            <PaginationControls
+              currentPage={formedPagination.currentPage}
+              totalPages={formedPagination.totalPages}
+              onPageChange={setFormedPage}
+            />
           </div>
-          <div className="mt-4 space-y-3">
-            {buildingTeams.length === 0 ? (
-              <p className="text-sm text-slate-400">暂无正在组建的队伍。</p>
-            ) : (
-              buildingPagination.pagedTeams.map((team) => (
-                <PublicTeamCard
-                  key={team.id}
-                  team={team}
-                  matchId={matchId}
-                  minMembers={minMembers}
-                  maxMembers={maxMembers}
-                  canJoin={canJoinPublicTeam}
-                  registrationOpen={registrationOpen}
-                  variant="building"
-                />
-              ))
-            )}
-          </div>
-          <PaginationControls
-            currentPage={buildingPagination.currentPage}
-            totalPages={buildingPagination.totalPages}
-            onPageChange={setBuildingPage}
-          />
         </div>
+      ) : null}
 
-        <div className="rounded-3xl bg-slate-950/24 p-4 ring-1 ring-white/8 sm:p-5">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-base font-bold text-white">已完成组队的队伍</h3>
-            <span className="text-xs text-slate-400">
-              {formedTeams.length} 支队伍 · 第 {formedPagination.currentPage}/
-              {formedPagination.totalPages} 页
-            </span>
-          </div>
-          <div className="mt-4 space-y-3">
-            {formedTeams.length === 0 ? (
-              <p className="text-sm text-slate-400">暂无已成队队伍。</p>
-            ) : (
-              formedPagination.pagedTeams.map((team) => (
-                <PublicTeamCard
-                  key={team.id}
-                  team={team}
-                  matchId={matchId}
-                  minMembers={minMembers}
-                  maxMembers={maxMembers}
-                  canJoin={canJoinPublicTeam}
-                  registrationOpen={registrationOpen}
-                  variant="formed"
-                />
-              ))
-            )}
-          </div>
-          <PaginationControls
-            currentPage={formedPagination.currentPage}
-            totalPages={formedPagination.totalPages}
-            onPageChange={setFormedPage}
-          />
-        </div>
-      </div>
-
-      {isAdmin ? (
-        <div className="mt-5 rounded-3xl border border-amber-400/24 bg-amber-400/5 p-4 sm:p-5">
+      {isAdmin && (displayMode === "all" || displayMode === "management") ? (
+        <div className="mt-5 rounded-xl border border-white/10 bg-[#101620] p-4 sm:p-5">
           <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
             <div>
-              <h3 className="text-base font-bold text-amber-100">
+              <h3 className="text-base font-semibold text-slate-100">
                 团体报名管理
               </h3>
-              <p className="mt-1 text-xs text-amber-100/70">
-                共 {adminVisibleTeams.length} 支队伍；人数达标后自动报名，无需管理员审核。
+              <p className="mt-1 text-xs text-slate-400">
+                共 {adminVisibleTeams.length}{" "}
+                支队伍；人数达标后自动报名，无需管理员审核。
               </p>
             </div>
             <a
@@ -861,14 +992,20 @@ export default function TeamRegistrationPanel({
               <p className="text-sm text-slate-400">暂无队伍。</p>
             ) : (
               adminVisibleTeams.map((team) => (
-                <div
+                <details
                   key={team.id}
-                  className="rounded-3xl bg-slate-950/36 p-4 ring-1 ring-white/8"
+                  className="rounded-xl bg-slate-950/36 p-4 ring-1 ring-white/8"
                 >
-                  <div className="flex flex-wrap items-start justify-between gap-3">
+                  <summary className="cursor-pointer break-words text-sm font-medium text-slate-200">
+                    {team.name}
+                    <span className="ml-3 font-normal text-slate-400">
+                      {team.members.length} 人 · 队长 {team.captainNickname}
+                    </span>
+                  </summary>
+                  <div className="mt-4 flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h4 className="text-base font-black text-slate-100">
+                        <h4 className="text-base font-semibold text-slate-100">
                           {team.name}
                         </h4>
                         <TeamStatusPill team={team} minMembers={minMembers} />
@@ -886,7 +1023,7 @@ export default function TeamRegistrationPanel({
                     </div>
                     <div className="rounded-2xl bg-white/[0.035] px-3 py-2 ring-1 ring-white/8">
                       <p className="text-[11px] text-slate-500">邀请码</p>
-                      <p className="font-mono text-sm font-black tracking-wide text-teal-100">
+                      <p className="font-mono text-sm font-semibold tracking-wide text-teal-100">
                         {team.inviteCode}
                       </p>
                     </div>
@@ -900,11 +1037,20 @@ export default function TeamRegistrationPanel({
                       <CancelTeamButton teamId={team.id} label="删除队伍" />
                     </div>
                   ) : null}
-                </div>
+                </details>
               ))
             )}
           </div>
         </div>
+      ) : null}
+      {isAdmin && displayMode === "roster" ? (
+        <a
+          href={`/api/matchs/${matchId}/team-registrations.csv`}
+          className="btn-secondary inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm"
+        >
+          <Download className="h-4 w-4" />
+          导出队伍名单
+        </a>
       ) : null}
     </section>
   );
