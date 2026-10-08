@@ -184,6 +184,8 @@ test("the production boundary exposes async V2-only actions with trusted composi
 
   assert.match(source, /^['"]use server['"]/);
   assert.deepEqual(exportedFunctions, [
+    "previewV2MatchClosureAction",
+    "finishV2MatchAction",
     FINALIZE_ACTION_EXPORT,
     DISQUALIFY_ACTION_EXPORT,
     KNOCKOUT_LABEL_ACTION_EXPORT,

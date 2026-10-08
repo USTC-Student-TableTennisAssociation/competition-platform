@@ -28,3 +28,8 @@
 
 - [Git 工作流](collaboration/01-git-workflow.md)
 - [PR 与 Review](collaboration/02-pr-and-review.md)
+
+## 验收记录
+
+- [比赛成员体验](qa/match-member-experience.md)
+- [管理员结束比赛](qa/admin-match-closure.md)

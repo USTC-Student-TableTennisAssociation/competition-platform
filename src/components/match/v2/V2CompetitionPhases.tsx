@@ -7,6 +7,7 @@ import RosterManagementForm from "./RosterManagementForm";
 import V2PersonalFixtures from "./V2PersonalFixtures";
 import V2EntryDisqualificationForm from "./V2EntryDisqualificationForm";
 import V2Schedule from "./V2Schedule";
+import V2MatchClosureForm from "./V2MatchClosureForm";
 import { bracketRoundLabel } from "@/modules/competitions-v2/read-model/bracket-layout";
 import {
   buildV2GroupOnlyResultFixtureView,
@@ -30,6 +31,7 @@ export default function V2CompetitionPhases({
   currentUserId,
   isManager,
   canReplaceRoster = false,
+  canFinishMatch = false,
   registrationContent,
   rosterContent,
   certificateContent,
@@ -40,6 +42,7 @@ export default function V2CompetitionPhases({
   currentUserId: string | null;
   isManager: boolean;
   canReplaceRoster?: boolean;
+  canFinishMatch?: boolean;
   registrationContent?: ReactNode;
   rosterContent?: ReactNode;
   certificateContent?: ReactNode;
@@ -226,6 +229,9 @@ export default function V2CompetitionPhases({
               {grouping.published ? "分组与晋级管理" : "预览与发布分组"}
             </Link>
           </div>
+          {canFinishMatch && grouping.published && grouping.match.status === "ongoing" && grouping.match.format === "group_only" ? (
+            <V2MatchClosureForm matchId={grouping.match.id} />
+          ) : null}
           {managementContent}
           {canReplaceRoster &&
           competitionType !== "single" &&

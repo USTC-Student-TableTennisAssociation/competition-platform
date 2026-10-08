@@ -164,6 +164,7 @@ export default function V2SingleMatchDetail({
           competitionType="single"
           currentUserId={currentUser?.userId ?? null}
           isManager={view.isManager}
+          canFinishMatch={currentUser?.role === "admin"}
           registrationContent={
             !model.grouping.published ? registration : undefined
           }

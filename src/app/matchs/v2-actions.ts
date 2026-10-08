@@ -1,6 +1,7 @@
 'use server'
 
 import { createRosterManagementHandler, type RosterManagementState } from '@/modules/competitions-v2/adapters/roster-management'
+import { createV2MatchClosureActionHandlers, type V2MatchClosureActionState } from '@/modules/competitions-v2/adapters/match-closure-actions'
 import { revalidatePath } from 'next/cache'
 
 import { getCurrentUser } from '@/lib/auth'
@@ -76,6 +77,20 @@ const handlers = createV2SingleActionHandlers({
 })
 
 const actions = createV2SingleServerActionBindings(handlers)
+const matchClosureActions = createV2MatchClosureActionHandlers({
+  db: prisma, validateCsrfToken, getCurrentUser,
+  revalidatePaths(paths) { for (const path of paths) revalidatePath(path) },
+  logError: safeLogV2SingleActionError,
+})
+
+export async function previewV2MatchClosureAction(matchId: string, _previousState: V2MatchClosureActionState, formData: FormData): Promise<V2MatchClosureActionState> {
+  return matchClosureActions.preview(matchId, formData)
+}
+
+export async function finishV2MatchAction(matchId: string, _previousState: V2MatchClosureActionState, formData: FormData): Promise<V2MatchClosureActionState> {
+  return matchClosureActions.finish(matchId, formData)
+}
+
 const doubleActions = createV2DoubleActionHandlers({
   db: prisma,
   validateCsrfToken,
