@@ -15,7 +15,7 @@
     "test:legacy-submissions": "node --test scripts/legacy-result-submission-locks.test.mjs",
     "test:admin-safety": "node --test scripts/admin-user-hard-delete.test.mjs",
     "test:lifecycle-safety": "node --test scripts/lifecycle-safety-membrane.test.mjs",
-    "test:release-safety": "node --test scripts/v2-cutover-preflight.test.mjs",
+    "test:release-safety": "node --test scripts/v2-cutover-preflight.test.mjs scripts/production-release.test.mjs",
     "test:local-db-safety": "node --test scripts/local-postgres-safety.test.mjs",
     "seed:v2:acceptance": "tsc -p tsconfig.v2-tests.json && node scripts/seed-v2-acceptance.mjs",
     "db:local:start": "bash scripts/local-postgres.sh start",
