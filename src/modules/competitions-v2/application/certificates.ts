@@ -15,6 +15,7 @@ const V2_CERTIFICATE_MATCH_SELECT = Prisma.validator<Prisma.MatchSelect>()({
   id: true,
   title: true,
   engineVersion: true,
+  status: true,
   isQuickMatch: true,
   type: true,
   format: true,
@@ -305,6 +306,7 @@ export function toV2CertificateSnapshot(
     match: {
       id: source.id,
       engineVersion: source.engineVersion,
+      status: source.status,
       isQuickMatch: source.isQuickMatch,
       type: source.type,
       format: source.format,

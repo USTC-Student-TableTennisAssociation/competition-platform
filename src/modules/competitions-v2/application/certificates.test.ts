@@ -49,6 +49,7 @@ function eligibleSource(): V2CertificateMatchSource {
     id: "match-1",
     title: "V2 单打赛",
     engineVersion: "V2",
+    status: "ongoing",
     isQuickMatch: false,
     type: "single",
     format: "group_only",

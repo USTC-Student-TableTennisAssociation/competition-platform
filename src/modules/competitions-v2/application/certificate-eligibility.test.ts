@@ -213,6 +213,7 @@ function snapshot(
     match: {
       id: MATCH_ID,
       engineVersion: "V2",
+      status: "ongoing",
       isQuickMatch: false,
       type,
       format,
@@ -418,7 +419,7 @@ test("an inactive opponent's voided pair is no obligation, including retained co
   assert.equal(result.state, "ELIGIBLE", JSON.stringify(result));
 });
 
-test("VOIDED, READY, and SCHEDULED pairs against active opponents remain incomplete", () => {
+test("VOIDED, READY, and SCHEDULED pairs against active opponents remain incomplete before closure", () => {
   for (const status of ["VOIDED", "READY", "SCHEDULED"] as const) {
     const a = entry("entry-a", ["user-a"], "single");
     const b = entry("entry-b", ["user-b"], "single");
@@ -441,6 +442,108 @@ test("VOIDED, READY, and SCHEDULED pairs against active opponents remain incompl
       assert.equal(result.code, "INCOMPLETE_ACTIVE_OPPONENT_FIXTURES");
     }
   }
+});
+
+for (const type of ["single", "double", "team"] as const) {
+  for (const format of ["group_only", "group_then_knockout"] as const) {
+    test(`${type} + ${format} excludes voided group pairs only after the competition finishes`, () => {
+      const rosterSize = type === "single" ? 1 : 2;
+      const a = entry("entry-a", Array.from({ length: rosterSize }, (_, i) => `user-a${i}`), type);
+      const b = entry("entry-b", Array.from({ length: rosterSize }, (_, i) => `user-b${i}`), type);
+      const c = entry("entry-c", Array.from({ length: rosterSize }, (_, i) => `user-c${i}`), type);
+      const state = snapshot(type, format, [[a, b, c]], [
+        fixture(a, b, [1, 2]),
+        fixture(a, c, [1, 3], { status: "VOIDED" }),
+        fixture(b, c, [2, 3], { status: "VOIDED" }),
+      ]);
+      for (const status of ["registration", "ongoing"] as const) {
+        const result = evaluateV2CertificateEligibility({ ...state, match: { ...state.match, status } }, "user-a0");
+        assert.equal(result.state, "INELIGIBLE");
+        if (result.state === "INELIGIBLE") assert.equal(result.code, "INCOMPLETE_ACTIVE_OPPONENT_FIXTURES");
+      }
+      const finished = { ...state, match: { ...state.match, status: "finished" as const } };
+      for (const userId of [...a.members, ...b.members].map(member => member.userId)) {
+        const result = evaluateV2CertificateEligibility(finished, userId);
+        assert.equal(result.state, "ELIGIBLE", JSON.stringify(result));
+        if (result.state === "ELIGIBLE") assert.deepEqual(result.qualifyingRevisionIds, [state.fixtures[0].resultRevisions[0].id]);
+      }
+      const noPlayed = evaluateV2CertificateEligibility(finished, "user-c0");
+      assert.equal(noPlayed.state, "INELIGIBLE");
+      if (noPlayed.state === "INELIGIBLE") assert.equal(noPlayed.code, "NO_CONFIRMED_FIXTURE");
+    });
+  }
+}
+
+test("finishing does not waive READY or SCHEDULED obligations, even alongside a voided pair", () => {
+  const a = entry("entry-a", ["user-a"], "single");
+  const b = entry("entry-b", ["user-b"], "single");
+  const c = entry("entry-c", ["user-c"], "single");
+  for (const status of ["READY", "SCHEDULED"] as const) {
+    const state = snapshot("single", "group_only", [[a, b, c]], [
+      fixture(a, b, [1, 2], { status }),
+      fixture(a, c, [1, 3]),
+      fixture(b, c, [2, 3], { status: "VOIDED" }),
+    ]);
+    const result = evaluateV2CertificateEligibility({ ...state, match: { ...state.match, status: "finished" } }, "user-a");
+    assert.equal(result.state, "INELIGIBLE");
+    if (result.state === "INELIGIBLE") assert.equal(result.code, "INCOMPLETE_ACTIVE_OPPONENT_FIXTURES");
+  }
+});
+
+test("closed competitions with voided pairs still reject pending results and pending corrections", () => {
+  const a = entry("entry-a", ["user-a"], "single");
+  const b = entry("entry-b", ["user-b"], "single");
+  const c = entry("entry-c", ["user-c"], "single");
+  for (const correction of [false, true]) {
+    const played = fixture(a, b, [1, 2]);
+    const pending = revision(played.id, a, b, {
+      number: correction ? 2 : 1,
+      status: "PENDING",
+      supersedesRevisionId: correction ? played.resultRevisions[0].id : null,
+    });
+    const state = snapshot("single", "group_only", [[a, b, c]], [
+      { ...played, status: correction ? "COMPLETED" : "READY", completedAt: correction ? NOW : null,
+        resultRevisions: correction ? [...played.resultRevisions, pending] : [pending] },
+      fixture(a, c, [1, 3], { status: "VOIDED" }),
+      fixture(b, c, [2, 3], { status: "VOIDED" }),
+    ]);
+    const result = evaluateV2CertificateEligibility({ ...state, match: { ...state.match, status: "finished" } }, "user-a");
+    assert.equal(result.state, "INELIGIBLE");
+    if (result.state === "INELIGIBLE") assert.equal(result.code, "PENDING_RESULT");
+  }
+});
+
+test("a closed competition with only forfeits and voids provides no participation evidence", () => {
+  const a = entry("entry-a", ["user-a"], "single");
+  const b = entry("entry-b", ["user-b"], "single");
+  const c = entry("entry-c", ["user-c"], "single");
+  const state = snapshot("single", "group_only", [[a, b, c]], [
+    fixture(a, b, [1, 2], { resolutionKind: "FORFEIT" }),
+    fixture(a, c, [1, 3], { status: "VOIDED" }),
+    fixture(b, c, [2, 3], { status: "VOIDED" }),
+  ]);
+  const result = evaluateV2CertificateEligibility({ ...state, match: { ...state.match, status: "finished" } }, "user-a");
+  assert.equal(result.state, "INELIGIBLE");
+  if (result.state === "INELIGIBLE") assert.equal(result.code, "NO_CONFIRMED_FIXTURE");
+});
+
+test("closed voided fixtures still require a valid revision and settlement history", () => {
+  const a = entry("entry-a", ["user-a"], "single");
+  const b = entry("entry-b", ["user-b"], "single");
+  const c = entry("entry-c", ["user-c"], "single");
+  const voided = fixture(a, b, [1, 2], { status: "VOIDED" });
+  const old = revision(voided.id, a, b, { status: "VOIDED", settlement: "REVERSED" });
+  const state = snapshot("single", "group_only", [[a, b, c]], [
+    { ...voided, completedAt: NOW, resultRevisions: [old] },
+    fixture(a, c, [1, 3]),
+    fixture(b, c, [2, 3]),
+  ]);
+  const finished = { ...state, match: { ...state.match, status: "finished" as const } };
+  assert.equal(evaluateV2CertificateEligibility(finished, "user-a").state, "ELIGIBLE");
+  const corrupt = { ...finished, fixtures: finished.fixtures.map(f => f.id === voided.id
+    ? { ...f, resultRevisions: [{ ...old, settlementEvents: resultEvents(old.id, ["user-a", "user-b"], "APPLIED") }] }
+    : f) };
+  assert.equal(evaluateV2CertificateEligibility(corrupt, "user-a").state, "INTEGRITY_ERROR");
 });
 
 test("legal DRAFT rosters do not corrupt history and cannot own a certificate", () => {

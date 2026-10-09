@@ -7,6 +7,7 @@ import {
   createV2CertificateApplicationService,
   V2CertificateApplicationError,
 } from "./certificates";
+import { getV2CertificateReadState } from "../read-model/single-certificate";
 
 const integrationDatabaseUrl = process.env.V2_CORE_INTEGRATION_DATABASE_URL;
 
@@ -350,7 +351,7 @@ test(
 
 for (const certificateCase of sixCellCases) {
   test(
-    `real PostgreSQL issues ${certificateCase.type} + ${certificateCase.format} from relational V2 facts`,
+    `real PostgreSQL issues ${certificateCase.type} + ${certificateCase.format} and rechecks closure for voided group pairs`,
     { skip: integrationDatabaseUrl === undefined },
     async () => {
       process.env.DATABASE_URL = integrationDatabaseUrl;
@@ -580,6 +581,79 @@ for (const certificateCase of sixCellCases) {
         assert.equal(first.created, true);
         assert.equal(repeated.created, false);
         assert.equal(first.certificateNo, repeated.certificateNo);
+
+        // Reproduce a completed group with one played pair and voided pairs
+        // against an active third entry. Both page and issuer must reread the
+        // competition status, rather than reuse a previously eligible state.
+        const voidEntryId = `${prefix}-entry-c`;
+        const voidUserIds = Array.from({ length: certificateCase.rosterSize }, (_, index) => `${prefix}-user-3-${index + 1}`);
+        const voidMemberIds = voidUserIds.map((_userId, index) => `${prefix}-member-3-${index + 1}`);
+        allUserIds.push(...voidUserIds);
+        await db.user.createMany({ data: voidUserIds.map(id => ({
+          id, email: `${id}@example.test`, nickname: "Voided opponent", emailVerifiedAt: groupedAt,
+        })) });
+        await db.matchEntry.create({ data: {
+          id: voidEntryId, matchId, status: "ACTIVE", displayNameSnapshot: "Entry 3",
+          kind: certificateCase.type === "single" ? "INDIVIDUAL" : certificateCase.type === "double" ? "DOUBLES" : "TEAM",
+          sourceKey: certificateCase.type === "single"
+            ? `individual:${voidUserIds[0]}`
+            : `${certificateCase.type === "double" ? "doubles" : "team"}:${prefix}-3`,
+          ...(certificateCase.type === "single" ? { sourceUserId: voidUserIds[0] } : {}),
+          members: { create: voidUserIds.map((userId, index) => ({
+            id: voidMemberIds[index], userId, displayNameSnapshot: `Member 3-${index + 1}`,
+            role: certificateCase.type === "team" && index === 0 ? "captain" : "player",
+            status: "ACTIVE", slot: index + 1, rosterVersion: 1,
+          })) },
+        } });
+        await db.matchGroupEntry.create({ data: {
+          matchId, groupId, entryId: voidEntryId, position: 3, globalSeedRank: 3,
+          seedElo: 1200, seedPoints: 0, entryVersion: 0, rosterVersion: 1,
+        } });
+        for (const [entryIndex, entryId] of entryIds.entries()) {
+          const voidFixtureId = `${prefix}-void-${entryIndex + 1}`;
+          await db.matchFixture.create({ data: {
+            id: voidFixtureId, matchId, stage: "GROUP", status: "VOIDED", groupId, groupKey: "group:0001",
+            fixtureKey: `group:0001:pair:000${entryIndex + 1}-0003`,
+            sideAEntryId: entryId, sideBEntryId: voidEntryId, sideARosterVersion: 1, sideBRosterVersion: 1,
+          } });
+          await db.matchFixtureLineupMember.createMany({ data: [
+            ...memberIdsByEntry[entryIndex].map((entryMemberId, index) => ({
+              matchId, fixtureId: voidFixtureId, entryId, entryMemberId, side: "SIDE_A" as const, position: index + 1,
+            })),
+            ...voidMemberIds.map((entryMemberId, index) => ({
+              matchId, fixtureId: voidFixtureId, entryId: voidEntryId, entryMemberId, side: "SIDE_B" as const, position: index + 1,
+            })),
+          ] });
+        }
+        const userStats = () => db.user.findMany({ where: { id: { in: allUserIds } }, orderBy: { id: "asc" },
+          select: { id: true, points: true, eloRating: true, wins: true, losses: true, matchesPlayed: true } });
+        const beforeStats = await userStats();
+        await db.match.update({ where: { id: matchId }, data: { status: "ongoing", maxParticipants: 3 } });
+        const ongoingPage = await getV2CertificateReadState(db, matchId, command.actorId);
+        assert.equal(ongoingPage.kind, "CERTIFICATE_STATE");
+        if (ongoingPage.kind === "CERTIFICATE_STATE") {
+          assert.equal(ongoingPage.eligibility.state, "INELIGIBLE");
+          if (ongoingPage.eligibility.state === "INELIGIBLE") assert.equal(ongoingPage.eligibility.code, "INCOMPLETE_ACTIVE_OPPONENT_FIXTURES");
+        }
+        await assert.rejects(service.issue(command), (error: unknown) => error instanceof V2CertificateApplicationError && error.code === "NOT_ELIGIBLE");
+
+        await db.match.update({ where: { id: matchId }, data: { status: "finished" } });
+        const finishedPage = await getV2CertificateReadState(db, matchId, command.actorId);
+        assert.equal(finishedPage.kind, "CERTIFICATE_STATE");
+        if (finishedPage.kind === "CERTIFICATE_STATE") assert.equal(finishedPage.eligibility.state, "ELIGIBLE");
+        const afterClosure = await service.issue(command);
+        assert.equal(afterClosure.certificateNo, first.certificateNo);
+        assert.equal(afterClosure.created, false);
+        const otherParticipant = { ...command, actorId: userIdsByEntry[1][0] };
+        const otherCertificate = await service.issue(otherParticipant);
+        assert.equal(otherCertificate.created, true);
+        assert.equal((await service.issue(otherParticipant)).certificateNo, otherCertificate.certificateNo);
+        await assert.rejects(service.issue({ ...command, actorId: voidUserIds[0] }),
+          (error: unknown) => error instanceof V2CertificateApplicationError && error.code === "NOT_ELIGIBLE" && error.details.eligibilityCode === "NO_CONFIRMED_FIXTURE");
+        assert.equal(await db.userIdentity.count({ where: { userId: voidUserIds[0] } }), 0);
+        assert.deepEqual(await userStats(), beforeStats);
+        assert.equal(await db.matchFixture.count({ where: { matchId, status: "VOIDED" } }), 2);
+        assert.equal(await db.resultRevision.count({ where: { matchId, status: "CONFIRMED" } }), 1);
       } finally {
         await db.participationCertificate.deleteMany({ where: { matchId } });
         await db.userIdentity.deleteMany({ where: { userId: { in: allUserIds } } });
