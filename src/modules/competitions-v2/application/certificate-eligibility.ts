@@ -154,6 +154,7 @@ export type V2CertificateCompetitionSnapshot = Readonly<{
   match: Readonly<{
     id: string;
     engineVersion: "LEGACY" | "V2";
+    status: "registration" | "ongoing" | "finished";
     isQuickMatch: boolean;
     type: "single" | "double" | "team";
     format: "group_only" | "group_then_knockout";
@@ -1114,6 +1115,9 @@ export function evaluateV2CertificateEligibility(
       : fixture.sideAEntryId!;
     return (
       entryValidation.entriesById.get(opponentEntryId)?.source.status === "ACTIVE" &&
+      // A closed competition no longer requires playing a voided pair. It
+      // still needs real participation evidence and no pending result above.
+      !(match.status === "finished" && fixture.status === "VOIDED") &&
       (fixture.status !== "COMPLETED" || confirmed === null)
     );
   });
