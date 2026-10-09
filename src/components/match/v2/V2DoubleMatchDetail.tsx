@@ -246,6 +246,7 @@ export default function V2DoubleMatchDetail({
         currentUserId={currentUserId}
         isManager={canManageGrouping}
         canReplaceRoster={isAdmin}
+        canFinishMatch={isAdmin}
         registrationContent={
           !model.grouping.published ? registration : undefined
         }

@@ -81,6 +81,7 @@ export default function V2TeamMatchDetail({
         currentUserId={currentUserId}
         isManager={canManageGrouping}
         canReplaceRoster={currentUserRole === "admin"}
+        canFinishMatch={currentUserRole === "admin"}
         registrationContent={
           !grouping.published ? (
             <TeamRegistrationPanel
