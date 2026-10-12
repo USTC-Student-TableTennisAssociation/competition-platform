@@ -13,6 +13,7 @@ import {
   createSupermarketPrize,
   deleteSupermarketPrize,
   openSupermarketPeriod,
+  prepareSupermarketDraft,
   resolveSupermarketRedemption,
   settleMatchPointsIntoSupermarket,
   updateSupermarketPrize,
@@ -37,19 +38,23 @@ async function fetchSupermarketAdminData(): Promise<Omit<SupermarketAdminState, 
     where: { status: 'CLOSED' },
     orderBy: { closedAt: 'desc' },
   })
+  const draftPeriod = await prisma.supermarketPeriod.findFirst({ where: { status: 'DRAFT' } })
+  const catalogPeriod = openPeriod ?? draftPeriod
 
   const [prizes, redemptions, adjustments, walletSummary, pendingCount] =
     await Promise.all([
-      openPeriod
+      catalogPeriod
         ? prisma.supermarketPrize.findMany({
-            where: { periodId: openPeriod.id },
-            orderBy: [{ status: 'asc' }, { createdAt: 'asc' }],
+            where: { periodId: catalogPeriod.id },
+            orderBy: [{ status: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
             select: {
               id: true,
               name: true,
               description: true,
+              imageUrl: true,
               pointsCost: true,
               stock: true,
+              perUserLimit: true,
               status: true,
               _count: { select: { redemptions: true } },
             },
@@ -103,20 +108,23 @@ async function fetchSupermarketAdminData(): Promise<Omit<SupermarketAdminState, 
           id: period.id,
           sequence: period.sequence,
           status: period.status,
-          openedAt: period.openedAt.toISOString(),
+          openedAt: period.openedAt?.toISOString() ?? null,
           closedAt: period.closedAt?.toISOString() ?? null,
         }
       : null
 
   return {
     openPeriod: toPeriodView(openPeriod),
+    draftPeriod: toPeriodView(draftPeriod),
     lastClosedPeriod: toPeriodView(lastClosedPeriod),
     prizes: prizes.map((prize) => ({
       id: prize.id,
       name: prize.name,
       description: prize.description,
+      imageUrl: prize.imageUrl,
       pointsCost: prize.pointsCost,
       stock: prize.stock,
+      perUserLimit: prize.perUserLimit,
       status: prize.status,
       redemptionCount: prize._count.redemptions,
     })),
@@ -220,6 +228,15 @@ export async function supermarketAdminAction(
 
   try {
     switch (intent) {
+      case 'prepareDraft': {
+        const draft = await serializableTransaction((tx) => prepareSupermarketDraft(tx))
+        await writeAuditLog({
+          actorId, action: 'supermarket.period.prepare', entityType: 'SupermarketPeriod',
+          entityId: draft.id, details: { sequence: draft.sequence }, ...auditContext,
+        })
+        revalidatePath('/admin/supermarket')
+        return finish(`第 ${draft.sequence} 期草稿已准备好，会员暂不可见。`)
+      }
       case 'openPeriod': {
         const period = await serializableTransaction((tx) =>
           openSupermarketPeriod(tx),
@@ -290,9 +307,13 @@ export async function supermarketAdminAction(
         const pointsCost = Number(formData.get('pointsCost'))
         const stockRaw = String(formData.get('stock') ?? '').trim()
         const stock = stockRaw === '' ? null : Number(stockRaw)
+        const limitRaw = String(formData.get('perUserLimit') ?? '').trim()
+        const perUserLimit = limitRaw === '' ? null : Number(limitRaw)
+        const imageUrl = String(formData.get('imageUrl') ?? '').trim() || null
 
         const period = await prisma.supermarketPeriod.findFirst({
-          where: { status: 'OPEN' },
+          where: { status: { in: ['OPEN', 'DRAFT'] } },
+          orderBy: { sequence: 'asc' },
           select: { id: true },
         })
         if (!period) {
@@ -304,8 +325,10 @@ export async function supermarketAdminAction(
             periodId: period.id,
             name,
             description: description === '' ? null : description,
+            imageUrl,
             pointsCost,
             stock,
+            perUserLimit,
           }),
         )
         await writeAuditLog({
@@ -313,7 +336,13 @@ export async function supermarketAdminAction(
           action: 'supermarket.prize.create',
           entityType: 'SupermarketPrize',
           entityId: prize.id,
-          details: { name: prize.name, pointsCost: prize.pointsCost, stock: prize.stock },
+          details: {
+            name: prize.name,
+            pointsCost: prize.pointsCost,
+            stock: prize.stock,
+            perUserLimit: prize.perUserLimit,
+            imageUrl: prize.imageUrl,
+          },
           ...auditContext,
         })
         revalidatePath('/admin/supermarket')
@@ -324,9 +353,17 @@ export async function supermarketAdminAction(
       case 'updatePrize': {
         const prizeId = String(formData.get('prizeId') ?? '')
         const name = String(formData.get('name') ?? '').trim()
+        const description = formData.has('description')
+          ? String(formData.get('description') ?? '').trim() || null : undefined
+        const imageUrl = formData.has('imageUrl')
+          ? String(formData.get('imageUrl') ?? '').trim() || null : undefined
         const pointsCost = Number(formData.get('pointsCost'))
         const stockRaw = String(formData.get('stock') ?? '').trim()
         const stock = stockRaw === '' ? null : Number(stockRaw)
+        const limitRaw = String(formData.get('perUserLimit') ?? '').trim()
+        const perUserLimit = formData.has('perUserLimit')
+          ? (limitRaw === '' ? null : Number(limitRaw))
+          : undefined
         const statusRaw = String(formData.get('status') ?? '')
         const status =
           statusRaw === 'ACTIVE' || statusRaw === 'WITHDRAWN' ? statusRaw : undefined
@@ -335,8 +372,11 @@ export async function supermarketAdminAction(
           updateSupermarketPrize(tx, {
             prizeId,
             name,
+            description,
+            imageUrl,
             pointsCost,
             stock,
+            perUserLimit,
             status,
           }),
         )
@@ -347,8 +387,11 @@ export async function supermarketAdminAction(
           entityId: prize.id,
           details: {
             name: prize.name,
+            description: prize.description,
+            imageUrl: prize.imageUrl,
             pointsCost: prize.pointsCost,
             stock: prize.stock,
+            perUserLimit: prize.perUserLimit,
             status: prize.status,
           },
           ...auditContext,

@@ -53,7 +53,7 @@ export default function Header({
       icon: UserRound,
     },
     ...(isLoggedIn
-      ? [{ href: "/supermarket", label: "积分超市", icon: Gift }]
+      ? [{ href: "/supermarket", label: "积分商店", icon: Gift }]
       : []),
   ];
   const showAdminEntry = currentUser?.role === "admin" && adminViewEnabled;
@@ -151,6 +151,8 @@ export default function Header({
             type="button"
             className="btn-secondary shrink-0 rounded-md p-2 text-slate-200 md:hidden"
             aria-label="打开菜单"
+            aria-expanded={isMenuOpen}
+            aria-controls="site-mobile-menu"
             onClick={() => setIsMenuOpen((prev) => !prev)}
           >
             {isMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
@@ -158,7 +160,7 @@ export default function Header({
         </div>
 
         {isMenuOpen && (
-          <div className="space-y-2 border-t border-white/[0.06] pb-4 pt-3 md:hidden">
+          <div id="site-mobile-menu" className="space-y-2 border-t border-white/[0.06] pb-4 pt-3 md:hidden">
             {currentUser ? (
               <Link
                 href="/profile"

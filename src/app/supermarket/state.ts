@@ -2,8 +2,12 @@ export type SupermarketMemberPrize = {
   id: string
   name: string
   description: string | null
+  imageUrl: string | null
   pointsCost: number
   stock: number | null
+  perUserLimit: number | null
+  redeemedCount: number
+  limitReached: boolean
   affordable: boolean
   soldOut: boolean
 }

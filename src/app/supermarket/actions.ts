@@ -25,7 +25,7 @@ async function fetchMemberData(
     select: { id: true, sequence: true },
   })
 
-  const [wallet, user, prizes, redemptions] = await Promise.all([
+  const [wallet, user, prizes, redemptions, redemptionCounts] = await Promise.all([
     openPeriod ? readSupermarketWallet(prisma, { userId }) : Promise.resolve(null),
     prisma.user.findUnique({
       where: { id: userId },
@@ -34,13 +34,15 @@ async function fetchMemberData(
     openPeriod
       ? prisma.supermarketPrize.findMany({
           where: { periodId: openPeriod.id, status: 'ACTIVE' },
-          orderBy: [{ pointsCost: 'asc' }, { createdAt: 'asc' }],
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
           select: {
             id: true,
             name: true,
             description: true,
+            imageUrl: true,
             pointsCost: true,
             stock: true,
+            perUserLimit: true,
           },
         })
       : Promise.resolve([]),
@@ -58,9 +60,23 @@ async function fetchMemberData(
         period: { select: { sequence: true } },
       },
     }),
+    openPeriod
+      ? prisma.supermarketRedemption.groupBy({
+          by: ['prizeId'],
+          where: {
+            userId,
+            periodId: openPeriod.id,
+            status: { in: ['PENDING', 'FULFILLED'] },
+          },
+          _count: { _all: true },
+        })
+      : Promise.resolve([]),
   ])
 
   const balance = wallet?.balance ?? null
+  const countsByPrize = new Map(
+    redemptionCounts.map((row) => [row.prizeId, row._count._all]),
+  )
 
   return {
     periodSequence: openPeriod?.sequence ?? null,
@@ -70,8 +86,13 @@ async function fetchMemberData(
       id: prize.id,
       name: prize.name,
       description: prize.description,
+      imageUrl: prize.imageUrl,
       pointsCost: prize.pointsCost,
       stock: prize.stock,
+      perUserLimit: prize.perUserLimit,
+      redeemedCount: countsByPrize.get(prize.id) ?? 0,
+      limitReached: prize.perUserLimit !== null &&
+        (countsByPrize.get(prize.id) ?? 0) >= prize.perUserLimit,
       affordable: balance !== null && balance >= prize.pointsCost,
       soldOut: prize.stock !== null && prize.stock <= 0,
     })),

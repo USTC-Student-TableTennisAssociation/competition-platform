@@ -10,6 +10,7 @@ import {
   createSupermarketPrize,
   deleteSupermarketPrize,
   openSupermarketPeriod,
+  prepareSupermarketDraft,
   readSupermarketWallet,
   redeemSupermarketPrize,
   resolveSupermarketRedemption,
@@ -54,6 +55,203 @@ async function cleanupPeriods(db: PrismaClient, periodIds: string[]) {
   })
   await db.supermarketPeriod.deleteMany({ where: { id: { in: periodIds } } })
 }
+
+test(
+  'draft catalogs remain private and cannot move points until explicitly opened',
+  { skip: integrationDatabaseUrl === undefined },
+  async () => {
+    const db = new PrismaClient({ datasourceUrl: integrationDatabaseUrl })
+    const memberId = `sm-draft-${randomUUID()}`
+    const periodIds: string[] = []
+    try {
+      await db.user.create({ data: { id: memberId, email: `${memberId}@example.test`, nickname: 'Draft test', points: 23 } })
+      const draft = await serializable(db, prepareSupermarketDraft)
+      periodIds.push(draft.id)
+      assert.equal(draft.status, 'DRAFT')
+      assert.equal(draft.openedAt, null)
+      assert.equal((await serializable(db, prepareSupermarketDraft)).id,draft.id)
+      await assert.rejects(() => db.supermarketPeriod.create({
+        data: { sequence: draft.sequence + 1000, status: 'DRAFT', openedAt: null },
+      }), (error: unknown) => error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')
+      assert.equal(await db.supermarketPeriod.count({ where: { status: 'OPEN' } }),0)
+      const prize = await serializable(db,(tx) => createSupermarketPrize(tx,{
+        periodId:draft.id,name:'预览毛巾',pointsCost:8,stock:50,perUserLimit:1,
+        imageUrl:'/supermarket/towel-design.png',description:'50 × 50 cm',
+      }))
+      assert.equal(prize.imageUrl,'/supermarket/towel-design.png')
+      const noOpen = (error: unknown) => error instanceof SupermarketError && error.code === 'NO_OPEN_PERIOD'
+      await assert.rejects(() => serializable(db,(tx) => redeemSupermarketPrize(tx,{userId:memberId,prizeId:prize.id})),noOpen)
+      await assert.rejects(() => serializable(db,(tx) => settleMatchPointsIntoSupermarket(tx,{actorId:memberId})),noOpen)
+      assert.equal(await db.supermarketBalance.count({where:{periodId:draft.id}}),0)
+      assert.equal(await db.supermarketSettlement.count({where:{periodId:draft.id}}),0)
+      assert.equal(await db.supermarketRedemption.count({where:{periodId:draft.id}}),0)
+      assert.equal((await db.user.findUniqueOrThrow({where:{id:memberId}})).points,23)
+      const edited = await serializable(db,(tx) => updateSupermarketPrize(tx,{prizeId:prize.id,description:'更新说明',imageUrl:null}))
+      assert.equal(edited.imageUrl,null)
+      assert.equal(edited.description,'更新说明')
+      await assert.rejects(() => serializable(db,(tx) => updateSupermarketPrize(tx,{prizeId:prize.id,imageUrl:'javascript:alert(1)'})),(error: unknown) => error instanceof SupermarketError && error.code === 'INVALID_PRIZE_IMAGE')
+      assert.equal((await db.supermarketPrize.findUniqueOrThrow({where:{id:prize.id}})).imageUrl,null)
+      const opened = await serializable(db,(tx) => openSupermarketPeriod(tx,{clock:()=>new Date('2026-10-10T09:00:00Z')}))
+      assert.equal(opened.id,draft.id)
+      assert.equal(opened.sequence,draft.sequence)
+      assert.equal(opened.openedAt?.toISOString(),'2026-10-10T09:00:00.000Z')
+      assert.equal(await db.supermarketPrize.count({where:{periodId:opened.id}}),1)
+      assert.equal(await db.supermarketBalance.count({where:{periodId:opened.id}}),0)
+      assert.equal((await db.user.findUniqueOrThrow({where:{id:memberId}})).points,23)
+      await assert.rejects(() => serializable(db,prepareSupermarketDraft),(error: unknown) => error instanceof SupermarketError && error.code === 'PERIOD_ALREADY_OPEN')
+      await serializable(db,(tx) => closeSupermarketPeriod(tx))
+      await assert.rejects(() => serializable(db,(tx) => updateSupermarketPrize(tx,{prizeId:prize.id,imageUrl:'/supermarket/towel-design.png'})),(error: unknown) => error instanceof SupermarketError && error.code === 'PERIOD_CLOSED')
+      const nextDraft = await serializable(db,prepareSupermarketDraft)
+      periodIds.push(nextDraft.id)
+      assert.equal(nextDraft.sequence,draft.sequence+1)
+      assert.equal(await db.supermarketPrize.count({where:{periodId:nextDraft.id}}),0)
+    } finally {
+      await cleanupPeriods(db,periodIds)
+      await db.user.deleteMany({where:{id:memberId}})
+      await db.$disconnect()
+    }
+  },
+)
+
+test(
+  'per-prize quotas survive concurrent requests, count handovers, and release voided requests',
+  { skip: integrationDatabaseUrl === undefined },
+  async () => {
+    const db = new PrismaClient({ datasourceUrl: integrationDatabaseUrl })
+    const suffix = randomUUID().replaceAll('-', '')
+    const adminId = `sm-quota-admin-${suffix}`
+    const memberA = `sm-quota-a-${suffix}`
+    const memberB = `sm-quota-b-${suffix}`
+    const periodIds: string[] = []
+    const isLimitError = (error: unknown) =>
+      error instanceof SupermarketError && error.code === 'REDEMPTION_LIMIT_REACHED'
+    const isInvalidPrize = (error: unknown) =>
+      error instanceof SupermarketError && error.code === 'INVALID_PRIZE'
+    const redeem = (prizeId: string, userId = memberA) =>
+      serializable(db, (tx) => redeemSupermarketPrize(tx, { userId, prizeId }))
+
+    async function retryRedeem(prizeId: string) {
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          return await redeem(prizeId)
+        } catch (error) {
+          if (!(error instanceof Prisma.PrismaClientKnownRequestError) ||
+            !(error.code === 'P2034' ||
+              (error.code === 'P2010' && error.meta?.code === '40001')) ||
+            attempt >= 2) throw error
+        }
+      }
+    }
+
+    try {
+      await db.user.createMany({ data: [
+        { id: adminId, email: `${adminId}@example.test`, nickname: 'Quota admin', role: 'admin' },
+        { id: memberA, email: `${memberA}@example.test`, nickname: 'Quota A' },
+        { id: memberB, email: `${memberB}@example.test`, nickname: 'Quota B' },
+      ] })
+      const period = await serializable(db, (tx) => openSupermarketPeriod(tx))
+      periodIds.push(period.id)
+      for (const [userId, amount] of [[memberA, 300], [memberB, 80]] as const) {
+        await serializable(db, (tx) => adjustSupermarketPoints(tx, {
+          userId, amount, reason: '限兑测试预置', actorId: adminId,
+        }))
+      }
+      const towel = await serializable(db, (tx) => createSupermarketPrize(tx, {
+        periodId: period.id, name: '毛巾', pointsCost: 15, stock: 10, perUserLimit: 1,
+      }))
+      const first = await redeem(towel.id)
+      const ledgerCount = await db.supermarketBalanceEntry.count({ where: { balance: { userId: memberA } } })
+      await assert.rejects(() => redeem(towel.id), isLimitError)
+      assert.equal((await readSupermarketWallet(db, { userId: memberA })).balance, 285)
+      assert.equal((await db.supermarketPrize.findUniqueOrThrow({ where: { id: towel.id } })).stock, 9)
+      assert.equal(await db.supermarketBalanceEntry.count({ where: { balance: { userId: memberA } } }), ledgerCount)
+
+      // A void frees quota and refunds points, while stock still needs manual handling.
+      await serializable(db, (tx) => resolveSupermarketRedemption(tx, {
+        redemptionId: first.redemption.id, resolution: 'VOIDED', actorId: adminId,
+      }))
+      assert.equal((await readSupermarketWallet(db, { userId: memberA })).balance, 300)
+      const second = await redeem(towel.id)
+      await serializable(db, (tx) => resolveSupermarketRedemption(tx, {
+        redemptionId: second.redemption.id, resolution: 'FULFILLED', actorId: adminId,
+      }))
+      await assert.rejects(() => redeem(towel.id), isLimitError)
+
+      // Quotas belong to each member and each prize: 80 points buys a towel + rubber.
+      await redeem(towel.id, memberB)
+      const rubber = await serializable(db, (tx) => createSupermarketPrize(tx, {
+        periodId: period.id, name: '胶皮', pointsCost: 65, stock: 1, perUserLimit: 1,
+      }))
+      await redeem(rubber.id, memberB)
+      assert.equal((await readSupermarketWallet(db, { userId: memberB })).balance, 0)
+
+      // Unset limits permit repeat exchanges. Editing a limit counts previous exchanges.
+      const ball = await serializable(db, (tx) => createSupermarketPrize(tx, {
+        periodId: period.id, name: '乒乓球', pointsCost: 3, stock: 100,
+      }))
+      assert.equal(ball.perUserLimit, null)
+      await redeem(ball.id)
+      await redeem(ball.id)
+      await serializable(db, (tx) => updateSupermarketPrize(tx, { prizeId: ball.id, perUserLimit: 1 }))
+      await assert.rejects(() => redeem(ball.id), isLimitError)
+      await serializable(db, (tx) => updateSupermarketPrize(tx, { prizeId: ball.id, perUserLimit: 3 }))
+      await redeem(ball.id)
+      await assert.rejects(() => redeem(ball.id), isLimitError)
+      await serializable(db, (tx) => updateSupermarketPrize(tx, { prizeId: ball.id, perUserLimit: null }))
+      await redeem(ball.id)
+
+      // Invalid form values never create a prize or change an existing limit.
+      for (const perUserLimit of [0, -1, 1.5, Number.NaN, 2_147_483_648]) {
+        await assert.rejects(() => serializable(db, (tx) => createSupermarketPrize(tx, {
+          periodId: period.id, name: '无效限额', pointsCost: 3, stock: null, perUserLimit,
+        })), isInvalidPrize)
+        await assert.rejects(() => serializable(db, (tx) => updateSupermarketPrize(tx, {
+          prizeId: towel.id, perUserLimit,
+        })), isInvalidPrize)
+      }
+      assert.equal((await db.supermarketPrize.findUniqueOrThrow({ where: { id: towel.id } })).perUserLimit, 1)
+      await assert.rejects(() => db.$executeRaw`
+        UPDATE "supermarket_prize" SET "per_user_limit" = 0 WHERE "id" = ${towel.id}
+      `, (error: unknown) => error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2010' && error.meta?.code === '23514')
+
+      // Plenty of stock must not let the same member race past a quota of one.
+      // Also cover unlimited stock, where no prize-row write could prevent the race.
+      for (const stock of [10, null]) {
+        const prize = await serializable(db, (tx) => createSupermarketPrize(tx, {
+          periodId: period.id, name: '并发限兑', pointsCost: 3, stock, perUserLimit: 1,
+        }))
+        const balanceBefore = (await readSupermarketWallet(db, { userId: memberA })).balance
+        const results = await Promise.allSettled([retryRedeem(prize.id), retryRedeem(prize.id)])
+        assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1)
+        assert.ok(results.some((result) => result.status === 'rejected' && isLimitError(result.reason)))
+        assert.equal(await db.supermarketRedemption.count({ where: { prizeId: prize.id } }), 1)
+        assert.equal((await readSupermarketWallet(db, { userId: memberA })).balance, balanceBefore - 3)
+        assert.equal((await db.supermarketPrize.findUniqueOrThrow({ where: { id: prize.id } })).stock,
+          stock === null ? null : stock - 1)
+      }
+
+      await serializable(db, (tx) => closeSupermarketPeriod(tx))
+      await assert.rejects(() => serializable(db, (tx) => updateSupermarketPrize(tx, {
+        prizeId: towel.id, perUserLimit: null,
+      })), (error: unknown) => error instanceof SupermarketError && error.code === 'PERIOD_CLOSED')
+      const nextPeriod = await serializable(db, (tx) => openSupermarketPeriod(tx))
+      periodIds.push(nextPeriod.id)
+      await serializable(db, (tx) => adjustSupermarketPoints(tx, {
+        userId: memberA, amount: 15, reason: '新期限兑测试', actorId: adminId,
+      }))
+      const nextTowel = await serializable(db, (tx) => createSupermarketPrize(tx, {
+        periodId: nextPeriod.id, name: '毛巾', pointsCost: 15, stock: 10, perUserLimit: 1,
+      }))
+      await redeem(nextTowel.id)
+      await assert.rejects(() => redeem(nextTowel.id), isLimitError)
+    } finally {
+      await db.user.deleteMany({ where: { id: { in: [adminId, memberA, memberB] } } })
+      await cleanupPeriods(db, periodIds)
+      await db.$disconnect()
+    }
+  },
+)
 
 test(
   'supermarket period lifecycle, settlement, redemption and adjustment',

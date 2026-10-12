@@ -155,6 +155,7 @@ enum RewardType {
 /// are all scoped to a single period; closing a period freezes them as history
 /// and zeroes every member balance. Only redemption records outlive a period.
 enum SupermarketPeriodStatus {
+  DRAFT
   OPEN
   CLOSED
 }
@@ -842,7 +843,7 @@ model SupermarketPeriod {
   /// Human-facing round number, unique so admins can reference "第 N 期".
   sequence  Int                     @unique
   status    SupermarketPeriodStatus @default(OPEN)
-  openedAt  DateTime                @default(now()) @map("opened_at")
+  openedAt  DateTime?               @default(now()) @map("opened_at")
   closedAt  DateTime?               @map("closed_at")
 
   prizes        SupermarketPrize[]
@@ -920,8 +921,11 @@ model SupermarketPrize {
   periodId    String                  @map("period_id")
   name        String
   description String?
+  imageUrl    String?                 @map("image_url")
   pointsCost  Int                     @map("points_cost")
   stock       Int?
+  /// Per member, per prize in this period. Null means unlimited redemptions.
+  perUserLimit Int?                    @map("per_user_limit")
   status      SupermarketPrizeStatus  @default(ACTIVE)
   createdAt   DateTime                @default(now()) @map("created_at")
   updatedAt   DateTime                @updatedAt @map("updated_at")
@@ -957,6 +961,7 @@ model SupermarketRedemption {
   @@index([periodId, status])
   @@index([userId, createdAt])
   @@index([prizeId])
+  @@index([prizeId, userId, status])
   @@map("supermarket_redemption")
 }
 

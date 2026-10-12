@@ -1,0 +1,6 @@
+[
+  {"key":"towel","name":"科大乒协定制毛巾","description":"50 × 50 cm 方巾，带上属于科大乒协的图案去打球。","imageUrl":"/supermarket/towel-design.png","pointsCost":8,"stock":50,"perUserLimit":1},
+  {"key":"plush","name":"乒乓球主题毛绒挂件","description":"给球包或书包挂上一位小球友，留下一份打球的纪念。","imageUrl":"/supermarket/plush-preview.svg","pointsCost":20,"stock":15,"perUserLimit":1},
+  {"key":"ball","name":"乒乓球","description":"日常训练用球，按个兑换。","imageUrl":null,"pointsCost":4,"stock":250,"perUserLimit":null},
+  {"key":"rubber","name":"最高积分奖励 · 胶皮","description":"胶皮型号待确认。按当前积分，80 分可以兑换毛巾和胶皮。","imageUrl":null,"pointsCost":72,"stock":1,"perUserLimit":1}
+]
