@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Medal, Shield, Trophy } from "lucide-react";
 import { prisma } from "@/lib/prisma";
+import { requireCurrentUser } from "@/lib/auth";
 import { normalizeAvatarUrl } from "@/lib/utils";
 
 type TabKey = "elo" | "points" | "honors";
@@ -85,6 +86,7 @@ export default async function RankingsPage({
 }: {
   searchParams: Promise<{ tab?: string }>;
 }) {
+  await requireCurrentUser();
   const { tab: rawTab } = await searchParams;
   const tab: TabKey =
     rawTab === "points" || rawTab === "honors" ? rawTab : "elo";

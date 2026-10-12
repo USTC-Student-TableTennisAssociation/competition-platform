@@ -1,7 +1,7 @@
 import { expireOpenMatchPosts } from "@/app/match-posts/actions";
 import type { FreeMatchPostItem } from "@/components/home/FreeMatchHall";
 import PersonalHome, { type HomeOpenMatch } from "@/components/home/PersonalHome";
-import { getCurrentUser } from "@/lib/auth";
+import { requireCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { normalizeAvatarUrl } from "@/lib/utils";
 import { getHomeUserCompetitionProjection, type HomeUserCompetitionProjection } from "@/modules/competitions-v2/read-model/home-user-competition";
@@ -9,7 +9,7 @@ import { resolveMatchListRegistrationSummary } from "@/modules/competitions-v2/r
 import { MatchApplicationStatus, MatchPostStatus, MatchStatus } from "@prisma/client";
 
 export default async function Home() {
-  const currentUser = await getCurrentUser();
+  const currentUser = await requireCurrentUser();
   const openRegistrationUserId = currentUser?.id ?? "__guest__";
   const now = new Date();
 

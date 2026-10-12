@@ -1,4 +1,5 @@
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
+import { requireCurrentUser } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { isLocalSupermarketDatabase } from '@/lib/server/supermarket/image-policy'
 import SupermarketPreview from '@/components/supermarket/SupermarketPreview'
@@ -9,6 +10,8 @@ export const dynamic = 'force-dynamic'
 export default async function LocalSupermarketPreviewPage() {
   // Never exposes a draft catalog on a deployed site or against a remote DB.
   if (process.env.NODE_ENV !== 'development' || !isLocalSupermarketDatabase()) notFound()
+  const user = await requireCurrentUser()
+  if (user.role !== 'admin') redirect('/')
   const period = await prisma.supermarketPeriod.findFirst({
     where: { status: { in: ['DRAFT', 'OPEN'] } },
     orderBy: { sequence: 'desc' },
