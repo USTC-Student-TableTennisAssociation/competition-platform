@@ -80,9 +80,9 @@ test.after(async () => {
   }
 })
 
-async function request(path, cookie) {
+async function request(path, cookie, headers = {}) {
   const response = await fetch(`${origin}${path}`, {
-    redirect: 'manual', headers: cookie ? { cookie: `ustc_tta_session=${cookie}` } : {},
+    redirect: 'manual', headers: { ...headers, ...(cookie ? { cookie: `ustc_tta_session=${cookie}` } : {}) },
   })
   await response.body?.cancel()
   return response
@@ -153,6 +153,30 @@ test('verified members retain access while admin pages retain their role restric
   assert.equal(memberAdmin.status, 307)
   assert.equal(new URL(memberAdmin.headers.get('location'), origin).pathname, '/')
   assert.equal((await request('/admin/supermarket', signedToken(undefined, adminId))).status, 200)
+})
+
+test('verified members retain access behind an HTTPS reverse proxy', { skip: !useFixtures }, async () => {
+  const forwarded = { host: 'kedapp.club', 'x-forwarded-proto': 'https', 'x-forwarded-host': 'kedapp.club' }
+  for (const path of ['/', '/supermarket']) {
+    assert.equal((await request(path, signedToken(undefined, memberId), forwarded)).status, 200, path)
+  }
+})
+
+test('maintenance still closes member pages while admins can reopen the site', { skip: !useFixtures }, async () => {
+  const prior = await fixtureDb.siteSetting.findUnique({ where: { id: 1 } })
+  await fixtureDb.siteSetting.upsert({ where: { id: 1 }, create: { id: 1, isClosed: true }, update: { isClosed: true } })
+  try {
+    const forwarded = { host: 'kedapp.club', 'x-forwarded-proto': 'https', 'x-forwarded-host': 'kedapp.club' }
+    for (const path of ['/', '/supermarket']) {
+      const response = await request(path, signedToken(undefined, memberId), forwarded)
+      assert.equal(response.status, 307, path)
+      assert.equal(new URL(response.headers.get('location'), origin).pathname, '/closed', path)
+    }
+    assert.equal((await request('/admin/supermarket', signedToken(undefined, adminId), forwarded)).status, 200)
+  } finally {
+    if (prior) await fixtureDb.siteSetting.update({ where: { id: 1 }, data: { isClosed: prior.isClosed } })
+    else await fixtureDb.siteSetting.delete({ where: { id: 1 } })
+  }
 })
 
 test('bans, unverified email, session revocation and password resets reject previously signed cookies', { skip: !useFixtures }, async () => {

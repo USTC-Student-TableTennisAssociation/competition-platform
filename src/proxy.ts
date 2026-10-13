@@ -3,6 +3,7 @@ import type { NextRequest } from 'next/server'
 import { isPublicRoute, isRouteWithin } from './lib/route-access'
 import { SESSION_COOKIE_NAME, verifySessionToken } from './lib/session'
 import { isLocalSupermarketDatabase } from './lib/server/supermarket/image-policy'
+import { prisma } from './lib/prisma'
 
 export async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl
@@ -28,11 +29,14 @@ export async function proxy(request: NextRequest) {
   // during maintenance so an authenticated administrator can reopen the site.
   if (!isRouteWithin(pathname, '/admin')) {
     try {
-      const response = await fetch(new URL('/api/site-status', request.nextUrl.origin), { cache: 'no-store' })
-      if (!response.ok) throw new Error('Site status unavailable')
-      const status = await response.json() as { isClosed?: boolean }
-      if (status.isClosed) return NextResponse.redirect(new URL('/closed', request.url))
-    } catch {
+      // Forwarded HTTPS describes the public connection, while the standalone
+      // server listens on HTTP. Read directly rather than making a TLS self-call.
+      const setting = await prisma.siteSetting.findUnique({
+        where: { id: 1 }, select: { isClosed: true },
+      })
+      if (setting?.isClosed) return NextResponse.redirect(new URL('/closed', request.url))
+    } catch (error) {
+      console.error('Site maintenance status check failed', error)
       return new NextResponse('站点状态暂时无法确认，请稍后重试。', { status: 503 })
     }
   }
