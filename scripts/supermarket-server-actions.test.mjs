@@ -15,6 +15,7 @@ const manifest = JSON.parse(
 for (const [filename, exportedName] of [
   ['app/supermarket/actions.ts', 'supermarketMemberAction'],
   ['app/admin/supermarket/actions.ts', 'supermarketAdminAction'],
+  ['app/admin/supermarket/upload-image.ts', 'uploadPrizeImageAction'],
 ]) {
   test(`${filename} loads its built server action at runtime`, () => {
     const entries = Object.entries(manifest.node).filter(

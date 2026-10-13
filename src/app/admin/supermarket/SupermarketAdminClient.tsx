@@ -10,12 +10,16 @@ import {
   type SupermarketRedemptionView,
 } from '@/app/admin/supermarket/state'
 import { supermarketAdminAction } from '@/app/admin/supermarket/actions'
+import PrizeImage from '@/components/supermarket/PrizeImage'
+import PrizeImagePicker from '@/components/supermarket/PrizeImagePicker'
+import SupermarketPreview from '@/components/supermarket/SupermarketPreview'
 
-type TabKey = 'period' | 'prizes' | 'redemptions' | 'adjustments'
+type TabKey = 'period' | 'prizes' | 'preview' | 'redemptions' | 'adjustments'
 
 const TABS: ReadonlyArray<{ key: TabKey; label: string }> = [
   { key: 'period', label: '期次与结算' },
   { key: 'prizes', label: '奖品' },
+  { key: 'preview', label: '会员页面预览' },
   { key: 'redemptions', label: '兑换记录' },
   { key: 'adjustments', label: '积分调整' },
 ]
@@ -32,7 +36,8 @@ const REDEMPTION_STATUS_CLASS: Record<SupermarketRedemptionView['status'], strin
   VOIDED: 'bg-neutral-200 text-neutral-600',
 }
 
-function formatDateTime(value: string) {
+function formatDateTime(value: string | null) {
+  if (!value) return '尚未开放'
   return new Date(value).toLocaleString('zh-CN')
 }
 
@@ -135,6 +140,8 @@ export default function SupermarketAdminClient() {
     INITIAL_SUPERMARKET_ADMIN_STATE,
   )
   const [tab, setTab] = useState<TabKey>('period')
+  const [imageUploads, setImageUploads] = useState(0)
+  const onImageBusyChange = (busy: boolean) => setImageUploads((count) => Math.max(0, count + (busy ? 1 : -1)))
 
   useEffect(() => {
     const formData = new FormData()
@@ -175,9 +182,9 @@ export default function SupermarketAdminClient() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold text-slate-100">积分超市管理</h1>
+        <h1 className="text-2xl font-semibold text-slate-100">积分商店管理</h1>
         <p className="mt-1 text-sm text-slate-400">
-          超市按期开放。结算会把所有人的比赛积分转入本期超市积分并将比赛积分清零（ELO 不受影响），
+          可先准备商品草稿并预览，再正式开放。结算会把所有人的比赛积分转入本期超市积分并将比赛积分清零（ELO 不受影响），
           关闭后未使用积分作废，兑换记录长期保留。
         </p>
       </div>
@@ -256,14 +263,26 @@ export default function SupermarketAdminClient() {
                   关闭不受待发放兑换的限制；关期后仍可在「兑换记录」中标记已发放或已作废。
                 </p>
               </div>
+            ) : state.draftPeriod ? (
+              <div className="mt-4 space-y-4">
+                <p className="text-sm text-neutral-600">第 {state.draftPeriod.sequence} 期草稿 · 尚未开放。商品图片、价格和库存已保存，会员暂不可见。</p>
+                <div className="flex flex-wrap gap-3">
+                  <button type="button" onClick={() => setTab('prizes')} className="rounded-xl bg-neutral-100 px-4 py-2 text-sm text-neutral-700">编辑草稿商品</button>
+                  <button type="button" onClick={() => setTab('preview')} className="rounded-xl bg-neutral-100 px-4 py-2 text-sm text-neutral-700">会员页面预览</button>
+                  <form action={formAction}>
+                    <input type="hidden" name="intent" value="openPeriod" />
+                    <SubmitButton pending={pending || imageUploads > 0 || !state.prizes.some((prize) => prize.status === 'ACTIVE')} confirm="正式开放后，会员会看到草稿中已上架的商品。积分仍需单独结算。确定开放？">正式开放本期</SubmitButton>
+                  </form>
+                </div>
+              </div>
             ) : (
               <div className="mt-4 space-y-4">
                 <p className="text-sm text-neutral-600">
-                  当前没有开放的期次。开启新期后，本期奖品与库存从零开始，不会继承上一期。
+                  当前没有开放的期次。可先准备草稿、添加商品图片并预览，确认后再开放。
                 </p>
                 <form action={formAction}>
-                  <input type="hidden" name="intent" value="openPeriod" />
-                  <SubmitButton pending={pending}>开启新一期积分超市</SubmitButton>
+                  <input type="hidden" name="intent" value="prepareDraft" />
+                  <SubmitButton pending={pending}>准备下一期草稿</SubmitButton>
                 </form>
               </div>
             )}
@@ -287,14 +306,17 @@ export default function SupermarketAdminClient() {
       {/* ---------------------------------------------------------------- */}
       {tab === 'prizes' ? (
         <div className="space-y-4">
-          {!state.openPeriod ? (
+          {!state.openPeriod && !state.draftPeriod ? (
             <p className="rounded-2xl border border-neutral-200 bg-white p-6 text-sm text-neutral-500">
-              需要先开启一期积分超市才能设置奖品。
+              请先在「期次与结算」中准备草稿，即可设置商品，无需开放商店。
             </p>
           ) : (
             <>
               <section className="rounded-2xl border border-neutral-200 bg-white p-6">
                 <h2 className="text-lg font-semibold text-neutral-900">新增奖品</h2>
+                <p className="mt-1 text-xs text-neutral-500">
+                  每人限兑按本期每种奖品分别计算；待发放和已发放计入，未履行不占用名额。
+                </p>
                 <form action={formAction} className="mt-4 grid gap-3 sm:grid-cols-2">
                   <input type="hidden" name="intent" value="createPrize" />
                   <label className="space-y-1 text-sm">
@@ -323,6 +345,17 @@ export default function SupermarketAdminClient() {
                     />
                   </label>
                   <label className="space-y-1 text-sm">
+                    <span className="text-neutral-600">每人限兑（留空为不限）</span>
+                    <input
+                      name="perUserLimit"
+                      type="number"
+                      min={1}
+                      step={1}
+                      placeholder="例如毛巾填 1"
+                      className={inputClass}
+                    />
+                  </label>
+                  <label className="space-y-1 text-sm sm:col-span-2">
                     <span className="text-neutral-600">说明（可选）</span>
                     <input
                       name="description"
@@ -330,8 +363,9 @@ export default function SupermarketAdminClient() {
                       className={inputClass}
                     />
                   </label>
+                  <PrizeImagePicker onBusyChange={onImageBusyChange} />
                   <div className="sm:col-span-2">
-                    <SubmitButton pending={pending}>添加奖品</SubmitButton>
+                    <SubmitButton pending={pending || imageUploads > 0}>{state.draftPeriod ? '保存到草稿' : '添加奖品'}</SubmitButton>
                   </div>
                 </form>
               </section>
@@ -346,7 +380,8 @@ export default function SupermarketAdminClient() {
                     <PrizeCard
                       key={prize.id}
                       prize={prize}
-                      pending={pending}
+                      pending={pending || imageUploads > 0}
+                      onImageBusyChange={onImageBusyChange}
                       formAction={formAction}
                       editing={editingPrizeId === prize.id}
                       onEdit={() =>
@@ -361,6 +396,11 @@ export default function SupermarketAdminClient() {
             </>
           )}
         </div>
+      ) : null}
+
+      {/* ---------------------------------------------------------------- */}
+      {tab === 'preview' ? (
+        <div className="rounded-3xl border border-white/[0.06] bg-[#070A12] p-3 sm:p-6"><SupermarketPreview prizes={state.prizes.filter((prize) => prize.status === 'ACTIVE')} sequence={(state.openPeriod ?? state.draftPeriod)?.sequence ?? null} /></div>
       ) : null}
 
       {/* ---------------------------------------------------------------- */}
@@ -586,17 +626,20 @@ function PrizeCard({
   formAction,
   editing,
   onEdit,
+  onImageBusyChange,
 }: {
   prize: SupermarketPrizeView
   pending: boolean
   formAction: (formData: FormData) => void
   editing: boolean
   onEdit: () => void
+  onImageBusyChange: (busy: boolean) => void
 }) {
   const withdrawn = prize.status === 'WITHDRAWN'
 
   return (
     <div className="rounded-2xl border border-neutral-200 bg-white p-5">
+      {prize.imageUrl ? <div className="mb-4 max-w-xs overflow-hidden rounded-xl"><PrizeImage imageUrl={prize.imageUrl} name={prize.name} /></div> : null}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -614,6 +657,11 @@ function PrizeCard({
             {prize.pointsCost} 分 ·{' '}
             {prize.stock === null ? '不限量' : `库存 ${prize.stock}`} · 已兑换{' '}
             {prize.redemptionCount} 次
+          </p>
+          <p className="mt-1 text-xs text-neutral-500">
+            {prize.perUserLimit === null
+              ? '每人不限兑'
+              : `本期每人限兑 ${prize.perUserLimit} 件`}
           </p>
         </div>
 
@@ -702,7 +750,23 @@ function PrizeCard({
               className={inputClass}
             />
           </label>
-          <div className="flex items-end">
+          <label className="space-y-1 text-sm">
+            <span className="text-neutral-600">每人限兑（留空为不限）</span>
+            <input
+              name="perUserLimit"
+              type="number"
+              min={1}
+              step={1}
+              defaultValue={prize.perUserLimit ?? ''}
+              className={inputClass}
+            />
+          </label>
+          <label className="space-y-1 text-sm sm:col-span-2">
+            <span className="text-neutral-600">说明（可选）</span>
+            <textarea name="description" defaultValue={prize.description ?? ''} maxLength={200} rows={3} className={inputClass} />
+          </label>
+          <PrizeImagePicker key={prize.imageUrl ?? 'none'} initialUrl={prize.imageUrl} onBusyChange={onImageBusyChange} />
+          <div className="flex items-end sm:col-span-2">
             <SubmitButton pending={pending} variant="secondary">
               保存修改
             </SubmitButton>

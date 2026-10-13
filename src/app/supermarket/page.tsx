@@ -4,7 +4,7 @@ import { getCurrentUser } from '@/lib/auth'
 import SupermarketClient from '@/app/supermarket/SupermarketClient'
 
 export const metadata = {
-  title: '积分超市',
+  title: '积分商店',
 }
 
 export default async function SupermarketPage() {

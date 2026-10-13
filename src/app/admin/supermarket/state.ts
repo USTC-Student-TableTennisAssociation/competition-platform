@@ -2,8 +2,10 @@ export type SupermarketPrizeView = {
   id: string
   name: string
   description: string | null
+  imageUrl: string | null
   pointsCost: number
   stock: number | null
+  perUserLimit: number | null
   status: 'ACTIVE' | 'WITHDRAWN'
   redemptionCount: number
 }
@@ -24,8 +26,8 @@ export type SupermarketRedemptionView = {
 export type SupermarketPeriodView = {
   id: string
   sequence: number
-  status: 'OPEN' | 'CLOSED'
-  openedAt: string
+  status: 'DRAFT' | 'OPEN' | 'CLOSED'
+  openedAt: string | null
   closedAt: string | null
 }
 
@@ -44,6 +46,7 @@ export type SupermarketAdminState = {
   error?: string
   success?: string
   openPeriod: SupermarketPeriodView | null
+  draftPeriod: SupermarketPeriodView | null
   lastClosedPeriod: SupermarketPeriodView | null
   prizes: SupermarketPrizeView[]
   redemptions: SupermarketRedemptionView[]
@@ -56,6 +59,7 @@ export type SupermarketAdminState = {
 export const INITIAL_SUPERMARKET_ADMIN_STATE: SupermarketAdminState = {
   unlocked: false,
   openPeriod: null,
+  draftPeriod: null,
   lastClosedPeriod: null,
   prizes: [],
   redemptions: [],

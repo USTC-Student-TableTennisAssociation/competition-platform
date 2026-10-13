@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client'
 
 import { lockUsersForUpdate } from '../user/lock-users'
 import { SupermarketError } from './errors'
+import { isPrizeImageUrl } from './image-policy'
 
 export type SupermarketTransaction = Prisma.TransactionClient
 
@@ -36,6 +37,16 @@ function assertInt32(value: number, name: string) {
     name,
     value,
   })
+}
+
+function assertPerUserLimit(value: number | null) {
+  if (value === null) return
+  assertInt32(value, 'perUserLimit')
+  if (value === 0) {
+    fail('INVALID_PRIZE', 'A redemption limit must be at least one.', {
+      perUserLimit: value,
+    })
+  }
 }
 
 /**
@@ -79,10 +90,23 @@ async function requirePrizePeriodOpen(tx: SupermarketTransaction, periodId: stri
   if (!period) {
     fail('PRIZE_NOT_FOUND', 'The target period does not exist.', { periodId })
   }
-  if (period.status !== 'OPEN') {
+  if (period.status === 'CLOSED') {
     fail('PERIOD_CLOSED', 'Prizes in a closed period are frozen.', { periodId })
   }
   return period
+}
+
+/** A private catalog only: no wallets, settlements, or member visibility. */
+export async function prepareSupermarketDraft(tx: SupermarketTransaction) {
+  if (await findOpenPeriod(tx)) {
+    fail('PERIOD_ALREADY_OPEN', 'Close the current period before preparing the next.')
+  }
+  const existing = await tx.supermarketPeriod.findFirst({ where: { status: 'DRAFT' } })
+  if (existing) return existing
+  const highest = await tx.supermarketPeriod.aggregate({ _max: { sequence: true } })
+  return tx.supermarketPeriod.create({
+    data: { sequence: (highest._max.sequence ?? 0) + 1, status: 'DRAFT', openedAt: null },
+  })
 }
 
 /**
@@ -104,6 +128,17 @@ export async function openSupermarketPeriod(
   const highest = await tx.supermarketPeriod.aggregate({ _max: { sequence: true } })
   const sequence = (highest._max.sequence ?? 0) + 1
   const now = (input.clock ?? (() => new Date()))()
+
+  const draft = await tx.supermarketPeriod.findFirst({ where: { status: 'DRAFT' } })
+  if (draft) {
+    const locked = await findLockedPeriod(tx, draft.id, true)
+    if (!locked || locked.status !== 'DRAFT') {
+      fail('PERIOD_ALREADY_OPEN', 'The draft has already opened.')
+    }
+    return tx.supermarketPeriod.update({
+      where: { id: draft.id }, data: { status: 'OPEN', openedAt: now },
+    })
+  }
 
   return tx.supermarketPeriod.create({
     data: { sequence, status: 'OPEN', openedAt: now },
@@ -252,8 +287,10 @@ export type CreatePrizeInput = Readonly<{
   periodId: string
   name: string
   description?: string | null
+  imageUrl?: string | null
   pointsCost: number
   stock: number | null
+  perUserLimit?: number | null
 }>
 
 export async function createSupermarketPrize(
@@ -268,6 +305,10 @@ export async function createSupermarketPrize(
     })
   }
   if (input.stock !== null) assertInt32(input.stock, 'stock')
+  assertPerUserLimit(input.perUserLimit ?? null)
+  if (input.imageUrl != null && !isPrizeImageUrl(input.imageUrl)) {
+    fail('INVALID_PRIZE_IMAGE', 'The image source is not supported.')
+  }
   if (input.description != null) {
     assertNonEmptyTrimmed(
       input.description,
@@ -283,8 +324,10 @@ export async function createSupermarketPrize(
       periodId: period.id,
       name: input.name,
       description: input.description ?? null,
+      imageUrl: input.imageUrl ?? null,
       pointsCost: input.pointsCost,
       stock: input.stock,
+      perUserLimit: input.perUserLimit ?? null,
     },
   })
 }
@@ -293,8 +336,10 @@ export type UpdatePrizeInput = Readonly<{
   prizeId: string
   name?: string
   description?: string | null
+  imageUrl?: string | null
   pointsCost?: number
   stock?: number | null
+  perUserLimit?: number | null
   status?: 'ACTIVE' | 'WITHDRAWN'
 }>
 
@@ -312,6 +357,12 @@ export async function updateSupermarketPrize(
   await requirePrizePeriodOpen(tx, prize.periodId)
 
   const data: Prisma.SupermarketPrizeUpdateInput = {}
+  if (input.imageUrl !== undefined) {
+    if (input.imageUrl !== null && !isPrizeImageUrl(input.imageUrl)) {
+      fail('INVALID_PRIZE_IMAGE', 'The image source is not supported.')
+    }
+    data.imageUrl = input.imageUrl
+  }
   if (input.name !== undefined) {
     assertNonEmptyTrimmed(input.name, 'name', MAX_PRIZE_NAME_LENGTH)
     data.name = input.name
@@ -338,6 +389,10 @@ export async function updateSupermarketPrize(
   if (input.stock !== undefined) {
     if (input.stock !== null) assertInt32(input.stock, 'stock')
     data.stock = input.stock
+  }
+  if (input.perUserLimit !== undefined) {
+    assertPerUserLimit(input.perUserLimit)
+    data.perUserLimit = input.perUserLimit
   }
   if (input.status !== undefined) data.status = input.status
 
@@ -399,6 +454,7 @@ export async function redeemSupermarketPrize(
       name: true,
       pointsCost: true,
       stock: true,
+      perUserLimit: true,
       status: true,
     },
   })
@@ -426,6 +482,26 @@ export async function redeemSupermarketPrize(
   if (!user) fail('USER_NOT_FOUND', 'The redeeming member does not exist.', {
     userId: input.userId,
   })
+
+  // Count after locking the member, in the same transaction as the debit.
+  // Pending handovers already consume quota; voided requests release it.
+  if (prize.perUserLimit !== null) {
+    const redeemedCount = await tx.supermarketRedemption.count({
+      where: {
+        periodId: period.id,
+        prizeId: prize.id,
+        userId: input.userId,
+        status: { in: ['PENDING', 'FULFILLED'] },
+      },
+    })
+    if (redeemedCount >= prize.perUserLimit) {
+      fail('REDEMPTION_LIMIT_REACHED', 'The member has reached the prize limit.', {
+        prizeId: prize.id,
+        limit: prize.perUserLimit,
+        redeemedCount,
+      })
+    }
+  }
 
   if (prize.stock !== null) {
     const decremented = await tx.supermarketPrize.updateMany({

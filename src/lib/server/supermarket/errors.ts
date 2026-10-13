@@ -7,11 +7,13 @@ export type SupermarketErrorCode =
   | 'PRIZE_NOT_AVAILABLE'
   | 'PRIZE_SOLD_OUT'
   | 'INSUFFICIENT_POINTS'
+  | 'REDEMPTION_LIMIT_REACHED'
   | 'REDEMPTION_NOT_FOUND'
   | 'REDEMPTION_ALREADY_RESOLVED'
   | 'INVALID_AMOUNT'
   | 'INVALID_REASON'
   | 'INVALID_PRIZE'
+  | 'INVALID_PRIZE_IMAGE'
   | 'USER_NOT_FOUND'
   | 'SETTLEMENT_STATE_CONFLICT'
 
@@ -61,6 +63,8 @@ export function supermarketErrorMessage(error: unknown): string {
       return '该奖品已兑完。'
     case 'INSUFFICIENT_POINTS':
       return `积分不足，还差 ${error.details.shortfall ?? 0} 分。`
+    case 'REDEMPTION_LIMIT_REACHED':
+      return `本期该奖品每人限兑 ${error.details.limit ?? 1} 件，你已达到上限。`
     case 'REDEMPTION_NOT_FOUND':
       return '兑换记录不存在。'
     case 'REDEMPTION_ALREADY_RESOLVED':
@@ -71,6 +75,8 @@ export function supermarketErrorMessage(error: unknown): string {
       return '请填写原因。'
     case 'INVALID_PRIZE':
       return '奖品信息不合法。'
+    case 'INVALID_PRIZE_IMAGE':
+      return '图片地址不受支持，请上传图片或选择现有商品图。'
     case 'USER_NOT_FOUND':
       return '用户不存在。'
     case 'SETTLEMENT_STATE_CONFLICT':
