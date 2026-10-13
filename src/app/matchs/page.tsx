@@ -1,5 +1,5 @@
 import MatchCard from "@/components/match/MatchCard";
-import { getCurrentUser } from "@/lib/auth";
+import { requireCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { resolveMatchListRegistrationSummary } from "@/modules/competitions-v2/read-model/match-list-registration";
 import { MatchStatus,Prisma } from "@prisma/client";
@@ -19,7 +19,7 @@ type MatchesPageProps = {
 };
 
 export default async function MatchesPage({ searchParams }: MatchesPageProps) {
-  const currentUser = await getCurrentUser();
+  const currentUser = await requireCurrentUser();
 
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
 

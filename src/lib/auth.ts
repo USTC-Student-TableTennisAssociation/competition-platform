@@ -1,4 +1,5 @@
 import { cookies } from 'next/headers'
+import { redirect } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import {
   createSessionAuthStamp,
@@ -67,4 +68,11 @@ export async function getCurrentUser() {
   void isBanned
   void sessionVersion
   return safeUser
+}
+
+/** Require a live, verified, unbanned account before querying protected data. */
+export async function requireCurrentUser() {
+  const user = await getCurrentUser()
+  if (!user) redirect('/auth')
+  return user
 }

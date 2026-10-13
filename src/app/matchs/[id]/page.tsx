@@ -3,7 +3,7 @@ import V2DoubleMatchDetail from "@/components/match/v2/V2DoubleMatchDetail";
 import V2SingleMatchDetail from "@/components/match/v2/V2SingleMatchDetail";
 import V2TeamMatchDetail from "@/components/match/v2/V2TeamMatchDetail";
 import BackLinkButton from "@/components/navigation/BackLinkButton";
-import { getCurrentUser } from "@/lib/auth";
+import { getCurrentUser, requireCurrentUser } from "@/lib/auth";
 import {
 getPendingMatchInvitesForUser,
 searchDoublesInviteCandidates
@@ -155,7 +155,7 @@ export default async function MatchDetailPage({
   }>;
 }) {
   const { id } = await params;
-  const authenticatedUser = await getCurrentUser();
+  const authenticatedUser = await requireCurrentUser();
   const adminMode = (await cookies()).get(ADMIN_MODE_COOKIE)?.value;
   const currentUser = authenticatedUser && adminMode === "user" ? { ...authenticatedUser, role: "user" as const } : authenticatedUser;
   let competitionDetail: V2CompetitionDetailReadModel;
