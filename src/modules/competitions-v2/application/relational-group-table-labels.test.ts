@@ -167,6 +167,25 @@ for (const type of ["single", "double", "team"] as const) {
       });
       assert.equal(current.audits[0]?.action, `v2_${type}_group_table_labels_update`);
     });
+
+    test(`${type} + ${format} changes campus and clears it without changing the group`, async () => {
+      const current = state(type, format);
+      const service = createV2RelationalGroupTableLabelsApplicationService(
+        { db: fakeDatabase(current) }, { matchType: type },
+      );
+      const originalPublication = { ...current.group.fixtures[0].metadata };
+      for (const labels of [["东区乒乓球馆", "1 号台"], ["西区乒乓球馆", "1 号台"], ["1 号台"]]) {
+        await service.update({ ...command(current, current.group.fixtures[0].version), labels });
+        assert.deepEqual(current.group.fixtures[0].metadata.v2Display, { schemaVersion: 1, tableLabels: labels });
+        const publication = { ...current.group.fixtures[0].metadata };
+        delete publication.v2Display;
+        assert.deepEqual(publication, originalPublication);
+      }
+      assert.equal(current.group.fixtures[0].version, 7);
+      assert.equal(current.audits.length, 3);
+      await expectCode(() => service.update({ ...command(current, 7), labels: ["东区乒乓球馆", "西区乒乓球馆"] }), "INVALID_INPUT");
+      assert.equal(current.fixtureWrites, 3);
+    });
   }
 }
 

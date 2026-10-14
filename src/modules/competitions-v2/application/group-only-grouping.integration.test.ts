@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { PrismaClient } from "@prisma/client";
+import { createV2RelationalGroupTableLabelsApplicationService } from "./relational-group-table-labels";
+import { readGroupVenueAssignment } from "../domain/group-venue";
 
 import {
   createV2GroupOnlyGroupingApplicationService,
@@ -287,6 +289,22 @@ for (const fixtureCase of cases) {
         assert.equal(readModel.groups.length, 1);
         assert.equal(readModel.groups[0].entries.length, 2);
         assert.equal(readModel.groups[0].fixtures.length, 1);
+        const campusService = createV2RelationalGroupTableLabelsApplicationService(
+          { db }, { matchType: fixtureCase.type },
+        );
+        const campusResult = await campusService.update({
+          actor: { id: ownerId, role: "user" }, matchId,
+          groupKey: readModel.groups[0].groupKey,
+          expectedFixtures: readModel.groups[0].fixtures.map(fixture => ({ fixtureId: fixture.fixtureId, version: fixture.fixtureVersion })),
+          labels: ["东区乒乓球馆", "3 号台"],
+        });
+        assert.equal(campusResult.changed, true);
+        const afterCampus = await getV2GroupOnlyGroupingReadModel(db, matchId, fixtureCase.readProfile);
+        if (afterCampus.kind !== "GROUP_ONLY_V2_MATCH" && afterCampus.kind !== "GROUP_THEN_KNOCKOUT_V2_MATCH") assert.fail("campus assignment made grouping unreadable");
+        assert.deepEqual(afterCampus.groups[0].tableLabels, ["东区乒乓球馆", "3 号台"]);
+        assert.equal(readGroupVenueAssignment(afterCampus.groups[0].tableLabels).venue, "东区乒乓球馆");
+        assert.deepEqual(afterCampus.groups[0].entries, readModel.groups[0].entries);
+        assert.equal(afterCampus.groups[0].fixtures[0].fixtureVersion, readModel.groups[0].fixtures[0].fixtureVersion + 1);
         assert.equal(
           readModel.groups[0].fixtures[0].sideA.members.length,
           fixtureCase.membersPerEntry,

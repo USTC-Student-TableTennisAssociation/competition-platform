@@ -425,6 +425,8 @@ test("the command contract rejects untrimmed, duplicate, control, or oversized l
     ["1 号台", "1 号台"],
     ["1\t号台"],
     ["x".repeat(65)],
+    ["东区乒乓球馆", "西区乒乓球馆"],
+    ["西区", "西区馆"],
   ]) {
     const state = initialState();
     const service = createV2SingleGroupTableLabelsApplicationService({

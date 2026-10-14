@@ -1,6 +1,12 @@
 "use client";
 
 import { useActionState, useMemo, useState } from "react";
+import {
+  groupVenueOptions,
+  isGroupVenueAssignmentValid,
+  readGroupVenueAssignment,
+} from "@/modules/competitions-v2/domain/group-venue";
+import V2GroupVenue from "./V2GroupVenue";
 
 import {
   getV2GroupOnlyGroupingPublishIssues,
@@ -140,7 +146,9 @@ function StateMessage({
         <p className="text-sm text-rose-300">{state.error}</p>
       ) : null}
       {state.success ? (
-        <p className="text-sm text-emerald-300">{state.success}</p>
+        <p role="status" aria-live="polite" className="text-sm text-emerald-300">
+          {state.success}
+        </p>
       ) : null}
     </>
   );
@@ -160,16 +168,43 @@ function PublishedGroupTableLabelsForm({
     boundAction,
     INITIAL_STATE,
   );
-  const [value, setValue] = useState(() => group.tableLabels.join("\n"));
+  const assignment = readGroupVenueAssignment(group.tableLabels);
+  const options = groupVenueOptions();
+  const sourceLabels = JSON.stringify(group.tableLabels);
+  const [draft, setDraft] = useState<{
+    sourceLabels: string;
+    venue: string | null;
+    value: string;
+  }>(() => ({
+    sourceLabels,
+    venue: assignment.conflicting ? null : assignment.venue ?? "",
+    value: assignment.tableLabels.join("\n"),
+  }));
+  // Refresh saved fields when server labels change without remounting the
+  // action state, so the organizer can still see the save confirmation.
+  if (draft.sourceLabels !== sourceLabels) {
+    setDraft({
+      sourceLabels,
+      venue: assignment.conflicting ? null : assignment.venue ?? "",
+      value: assignment.tableLabels.join("\n"),
+    });
+  }
+  const { venue, value } = draft;
 
-  const labels = value
+  const tableLabels = value
     .split(/\r?\n/)
     .map((label) => label.trim())
     .filter((label) => label.length > 0);
+  const labels = [...(venue ? [venue] : []), ...tableLabels];
+  const campusInTableLabels =
+    readGroupVenueAssignment(tableLabels).venues.length > 0;
+  const unresolvedConflict = assignment.conflicting && venue === null;
   const duplicate = new Set(labels).size !== labels.length;
   const tooMany = labels.length > 32;
   const tooLong = labels.some((label) => label.length > 64);
-  const invalid = duplicate || tooMany || tooLong;
+  const invalid =
+    duplicate || tooMany || tooLong || campusInTableLabels ||
+    unresolvedConflict || !isGroupVenueAssignmentValid(labels);
 
   return (
     <form
@@ -185,32 +220,91 @@ function PublishedGroupTableLabelsForm({
       />
       <input type="hidden" name="labelsJson" value={JSON.stringify(labels)} />
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <label
-          htmlFor={`v2-table-labels-${group.groupKey}`}
-          className="font-medium text-cyan-100"
-        >
-          {group.label}
-        </label>
+        <h4 className="font-medium text-cyan-100">{group.label}</h4>
         <span className="text-xs text-slate-400">
           {group.expectedFixtures.length} 场小组对局
         </span>
       </div>
+      {group.competitorNames?.length ? (
+        <p className="break-words text-sm leading-6 text-slate-200">
+          {group.competitorNames.join("、")}
+        </p>
+      ) : null}
+      <div className="space-y-2">
+        <label
+          htmlFor={`v2-group-venue-${group.groupKey}`}
+          className="block text-sm text-slate-300"
+        >
+          小组校区
+        </label>
+        <select
+          id={`v2-group-venue-${group.groupKey}`}
+          value={venue ?? "conflicting"}
+          disabled={pending}
+          aria-invalid={unresolvedConflict}
+          aria-describedby={`v2-group-venue-hint-${group.groupKey}`}
+          onChange={(event) => {
+            const nextVenue = event.target.value;
+            setDraft((current) => ({ ...current, venue: nextVenue }));
+          }}
+          className="min-h-11 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus-visible:outline-2 focus-visible:outline-orange-300 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {unresolvedConflict ? (
+            <option value="conflicting" disabled>
+              请选择唯一校区
+            </option>
+          ) : null}
+          <option value="">待安排</option>
+          {options.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
+        <p
+          id={`v2-group-venue-hint-${group.groupKey}`}
+          className="text-xs leading-5 text-slate-400"
+        >
+          同组统一在所选校区比赛；具体安排以小组赛程为准。
+        </p>
+      </div>
+      {unresolvedConflict ? (
+        <p role="alert" className="text-sm text-amber-200">
+          原场地同时包含东区和西区，请选择一个校区，或选择“待安排”后保存。
+        </p>
+      ) : null}
+      <label
+        htmlFor={`v2-table-labels-${group.groupKey}`}
+        className="block text-sm text-slate-300"
+      >
+        桌号或其他场地说明（选填）
+      </label>
       <textarea
         id={`v2-table-labels-${group.groupKey}`}
         value={value}
-        rows={Math.max(2, Math.min(5, labels.length || 2))}
-        onChange={(event) => setValue(event.target.value)}
-        placeholder={"每行一个桌号或场地标签\n例如：1 号台"}
-        className="w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-slate-100"
+        rows={Math.max(2, Math.min(5, tableLabels.length || 2))}
+        disabled={pending}
+        aria-invalid={campusInTableLabels || duplicate || tooMany || tooLong}
+        onChange={(event) => {
+          const nextValue = event.target.value;
+          setDraft((current) => ({ ...current, value: nextValue }));
+        }}
+        placeholder={"每行一项，例如：1 号台\n校区请在上方选择"}
+        className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus-visible:outline-2 focus-visible:outline-orange-300 disabled:cursor-not-allowed disabled:opacity-50"
       />
       <p className="text-xs text-slate-400">
-        每行一个标签，保存后应用于本组全部对局；留空可清除。
+        每行一项，保存后同步到本组全部对局和成员赛程；留空仅清除桌号或其他说明。
       </p>
+      {campusInTableLabels ? (
+        <p role="alert" className="text-sm text-rose-300">
+          校区请在上方选择，不要填入桌号或说明。
+        </p>
+      ) : null}
       {duplicate ? (
         <p className="text-sm text-rose-300">标签不能重复。</p>
       ) : null}
       {tooMany ? (
-        <p className="text-sm text-rose-300">每组最多 32 个标签。</p>
+        <p className="text-sm text-rose-300">校区与场地说明合计最多 32 项。</p>
       ) : null}
       {tooLong ? (
         <p className="text-sm text-rose-300">每个标签最多 64 个字符。</p>
@@ -218,9 +312,9 @@ function PublishedGroupTableLabelsForm({
       <button
         type="submit"
         disabled={pending || invalid}
-        className="rounded-lg border border-cyan-500/40 px-3 py-1.5 text-sm text-cyan-200 hover:bg-cyan-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+        className="min-h-11 rounded-lg border border-cyan-500/40 px-4 py-2 text-sm text-cyan-200 hover:bg-cyan-500/10 focus-visible:outline-2 focus-visible:outline-orange-300 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {pending ? "保存中..." : "保存桌号/场地标签"}
+        {pending ? "保存中..." : "保存小组场地"}
       </button>
       <StateMessage state={state} />
     </form>
@@ -356,7 +450,7 @@ export default function V2GroupOnlyGroupingPanel({
       <section className="space-y-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4">
         <h3 className="font-semibold text-emerald-100">小组赛分组已发布</h3>
         <p className="text-sm text-slate-300">
-          分组已发布，签位和对阵不能重新排列。需要换人时，请联系平台管理员在比赛详情的赛事管理中操作。
+          按小组安排东区或西区，同组全部对局使用相同场地，成员可在赛程中查看。签位和对阵不能重新排列；需要换人时，请联系平台管理员在比赛详情的赛事管理中操作。
         </p>
         {!published ? <StateMessage state={publishState} /> : null}
         {format === "group_then_knockout" &&
@@ -386,7 +480,7 @@ export default function V2GroupOnlyGroupingPanel({
           <div className="grid gap-4 md:grid-cols-2">
             {publishedGroups.map((group) => (
               <PublishedGroupTableLabelsForm
-                key={`${group.groupKey}:${JSON.stringify(group.tableLabels)}`}
+                key={group.groupKey}
                 matchId={matchId}
                 group={group}
                 action={updateTableLabelsAction}
@@ -411,11 +505,11 @@ export default function V2GroupOnlyGroupingPanel({
                 </p>
                 {updateTableLabelsAction ? (
                   <>
-                    <p className="mt-1 text-sm text-slate-300">
-                      {group.tableLabels.length > 0
-                        ? `桌号/场地：${group.tableLabels.join("、")}`
-                        : "未设置桌号/场地标签"}
-                    </p>
+                    <V2GroupVenue
+                      labels={group.tableLabels}
+                      showUnassigned
+                      className="mt-2"
+                    />
                     <p className="mt-1 text-xs text-slate-500">
                       当前状态不可编辑，标签仅供查看。
                     </p>
@@ -446,7 +540,7 @@ export default function V2GroupOnlyGroupingPanel({
           {format === "group_then_knockout"
             ? "先发布小组循环赛；全部成绩确认后，再确定排名并发布淘汰赛程。"
             : "当前赛制为小组内单循环。"}
-          {updateTableLabelsAction ? "桌号/场地标签可在发布后维护。" : ""}
+          {updateTableLabelsAction ? "发布后可按小组安排校区和桌号，同组统一场地。" : ""}
         </p>
       </div>
 

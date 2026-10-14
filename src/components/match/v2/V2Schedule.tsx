@@ -21,6 +21,7 @@ import type {
   V2KnockoutFixtureSideReadModel,
 } from "@/modules/competitions-v2/read-model/group-only-grouping";
 import V2FixtureCard from "./V2FixtureCard";
+import V2GroupVenue from "./V2GroupVenue";
 import V2KnockoutTableLabelsForm from "./V2KnockoutTableLabelsForm";
 
 function feederLabel(
@@ -320,13 +321,13 @@ export default function V2Schedule({
                     </span>
                   ) : null}
                 </h3>
-                <p className="text-xs text-slate-500">
-                  {group.entries.length}{" "}
-                  {competitionType === "single" ? "人" : "队"}
-                  {group.tableLabels.length
-                    ? ` · ${group.tableLabels.join("、")}`
-                    : ""}
-                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-slate-500">
+                    {group.entries.length}{" "}
+                    {competitionType === "single" ? "人" : "队"}
+                  </span>
+                  <V2GroupVenue labels={group.tableLabels} showUnassigned />
+                </div>
               </div>
               <div
                 className="overflow-x-auto"
