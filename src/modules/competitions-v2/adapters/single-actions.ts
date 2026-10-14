@@ -398,8 +398,8 @@ export function createV2SingleActionHandlers(
         await revalidate([`/matchs/${matchId}`, `/matchs/${matchId}/grouping`]);
         return {
           success: result.changed
-            ? `${result.groupName}桌号已更新。`
-            : `${result.groupName}桌号未变化。`,
+            ? `${result.groupName}：小组场地已更新。`
+            : `${result.groupName}：小组场地未变化。`,
         };
       }),
 

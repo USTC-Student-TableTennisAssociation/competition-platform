@@ -4,7 +4,9 @@ import ScheduleFixtureDialog, {
 } from "@/components/match/detail/ScheduleFixtureDialog";
 import type { V2GroupOnlyGroupingFixture } from "@/modules/competitions-v2/read-model/group-only-grouping";
 import type { V2GroupOnlyResultFixtureView } from "@/modules/competitions-v2/read-model/group-only-result-view";
+import { readGroupVenueAssignment } from "@/modules/competitions-v2/domain/group-venue";
 import V2FixtureCard from "./V2FixtureCard";
+import V2GroupVenue from "./V2GroupVenue";
 
 type Fixture = V2GroupOnlyGroupingFixture &
   Readonly<{
@@ -63,6 +65,13 @@ export default function V2PersonalFixtures({
       <div className="divide-y divide-white/10 border-y border-white/10">
         {ordered.map((fixture) => {
           const { view } = fixture;
+          const assignment = readGroupVenueAssignment(fixture.tableLabels);
+          const campusLabel = assignment.conflicting
+            ? "校区待确认"
+            : assignment.venue ?? (fixture.stage === "GROUP" ? "校区待安排" : "");
+          const venueLabel = [campusLabel, ...assignment.tableLabels]
+            .filter(Boolean)
+            .join("，");
           const result = view.authoritativeResult ?? view.pendingResult;
           const score = result?.score ?? result?.aggregateScore;
           const aWon = result?.winnerEntryId === fixture.sideA.entryId;
@@ -89,15 +98,16 @@ export default function V2PersonalFixtures({
             <FixtureTrigger
               key={fixture.fixtureId}
               fixtureId={fixture.fixtureId}
-              label={`${fixture.label}，${fixture.sideA.frozenDisplayName} 对 ${fixture.sideB.frozenDisplayName}，${action}`}
+              label={`${fixture.label}${venueLabel ? `，${venueLabel}` : ""}，${fixture.sideA.frozenDisplayName} 对 ${fixture.sideB.frozenDisplayName}，${action}`}
               className="block w-full px-1 py-4 text-left transition-colors hover:bg-white/[0.03] focus-visible:outline-2 focus-visible:outline-orange-300 sm:px-3 sm:py-5"
             >
               <span className="mb-3 flex items-center justify-between gap-3 text-xs">
-                <span className="text-slate-400">
-                  {fixture.label}
-                  {fixture.tableLabels.length
-                    ? ` · ${fixture.tableLabels.join("、")}`
-                    : ""}
+                <span className="flex min-w-0 flex-wrap items-center gap-2 text-slate-400">
+                  <span>{fixture.label}</span>
+                  <V2GroupVenue
+                    labels={fixture.tableLabels}
+                    showUnassigned={fixture.stage === "GROUP"}
+                  />
                 </span>
                 <span
                   className={`inline-flex shrink-0 items-center gap-1 ${actionable ? "text-white" : view.pendingResult ? "text-amber-200" : "text-slate-400"}`}

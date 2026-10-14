@@ -1,4 +1,5 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
+import { isGroupVenueAssignmentValid } from "../domain/group-venue";
 
 import {
   isValidV2GroupTableLabels,
@@ -127,6 +128,9 @@ function normalize(
   }
   if (!isValidV2GroupTableLabels(command.labels)) {
     fail("INVALID_INPUT", "labels must be unique bounded display strings.");
+  }
+  if (!isGroupVenueAssignmentValid(command.labels)) {
+    fail("INVALID_INPUT", "A group must have at most one campus assignment.");
   }
   return {
     actor,

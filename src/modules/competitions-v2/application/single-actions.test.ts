@@ -570,7 +570,7 @@ test("SINGLE table-label action forwards only stable group, fixture versions, la
 
   assert.deepEqual(
     await handlers.updateGroupTableLabels("match-1", formData),
-    { success: "第 1 组桌号已更新。" },
+    { success: "第 1 组：小组场地已更新。" },
   );
   assert.deepEqual(commands, [
     {

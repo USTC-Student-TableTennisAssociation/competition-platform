@@ -226,7 +226,11 @@ export default function V2CompetitionPhases({
               href={`/matchs/${grouping.match.id}/grouping`}
               className="btn-primary rounded-lg px-4 py-2.5 text-sm font-medium"
             >
-              {grouping.published ? "分组与晋级管理" : "预览与发布分组"}
+              {grouping.published
+                ? grouping.match.format === "group_then_knockout"
+                  ? "分组、场地与晋级管理"
+                  : "分组与场地管理"
+                : "预览与发布分组"}
             </Link>
           </div>
           {canFinishMatch && grouping.published && grouping.match.status === "ongoing" && grouping.match.format === "group_only" ? (

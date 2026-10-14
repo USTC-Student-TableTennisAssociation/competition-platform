@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import V2GroupOnlyFixtureResultPanel from "./V2GroupOnlyFixtureResultPanel";
 import FixtureScoreboard from "./FixtureScoreboard";
+import V2GroupVenue from "./V2GroupVenue";
 import type { V2GroupOnlyGroupingFixture } from "@/modules/competitions-v2/read-model/group-only-grouping";
 import type { V2GroupOnlyResultFixtureView } from "@/modules/competitions-v2/read-model/group-only-result-view";
 import {
@@ -71,10 +72,10 @@ export default function V2FixtureCard({
   return (
     <article className="min-w-0">
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-        <p className="text-slate-400">
-          {label}
-          {tableLabels.length ? ` · ${tableLabels.join("、")}` : ""}
-        </p>
+        <div className="flex min-w-0 flex-wrap items-center gap-2 text-slate-400">
+          <span>{label}</span>
+          <V2GroupVenue labels={tableLabels} showUnassigned={stage === "GROUP"} />
+        </div>
         <span
           className={
             view.pendingResult
