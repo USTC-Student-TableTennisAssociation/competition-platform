@@ -310,6 +310,30 @@ function validateRevision(
 export function evaluateV2GroupQualification(
   input: EvaluateV2QualificationInput,
 ): V2QualificationEvaluation {
+  return evaluateQualification(input);
+}
+
+/** Evaluates one completed group without requiring other groups to be terminal. */
+export function evaluateV2SingleGroupQualification(
+  input: Readonly<{
+    matchType: V2StandingsMatchType;
+    qualifiersPerGroup: number;
+    publishedGroupCount: number;
+    group: V2StandingsGroup;
+  }>,
+): V2QualificationEvaluation {
+  assertPositiveInteger(input.publishedGroupCount, "publishedGroupCount");
+  return evaluateQualification({
+    matchType: input.matchType,
+    qualifiersPerGroup: input.qualifiersPerGroup,
+    groups: [input.group],
+  }, input.publishedGroupCount);
+}
+
+function evaluateQualification(
+  input: EvaluateV2QualificationInput,
+  publishedGroupCount?: number,
+): V2QualificationEvaluation {
   if (
     input.matchType !== "single" &&
     input.matchType !== "double" &&
@@ -341,7 +365,9 @@ export function evaluateV2GroupQualification(
     const group = sortedGroups[groupIndex];
     assertIdentifier(group.groupId, "groupId");
     assertPositiveInteger(group.position, "group.position");
-    if (group.position !== groupIndex + 1 || groupIds.has(group.groupId)) {
+    if ((publishedGroupCount === undefined
+      ? group.position !== groupIndex + 1
+      : group.position > publishedGroupCount) || groupIds.has(group.groupId)) {
       fail("INTEGRITY_ERROR", "Published group positions and IDs must be unique and contiguous.", {
         groupId: group.groupId,
       });
@@ -391,7 +417,7 @@ export function evaluateV2GroupQualification(
       reasonByEntryId.set(entry.entryId, normalizeReason(entry));
     }
     const eligibleEntries = entries.filter((entry) => entry.eligible);
-    if (eligibleEntries.length < input.qualifiersPerGroup) {
+    if (publishedGroupCount === undefined && eligibleEntries.length < input.qualifiersPerGroup) {
       fail(
         "QUALIFICATION_NOT_READY",
         "A group does not contain enough eligible Entries for the configured qualifiers.",
@@ -636,7 +662,7 @@ export function evaluateV2GroupQualification(
   }
 
   const orderedSeedRanks = [...allGlobalSeedRanks].sort((left, right) => left - right);
-  if (orderedSeedRanks.some((rank, index) => rank !== index + 1)) {
+  if (publishedGroupCount === undefined && orderedSeedRanks.some((rank, index) => rank !== index + 1)) {
     fail("INTEGRITY_ERROR", "Published global seed ranks must be contiguous.", {
       globalSeedRanks: orderedSeedRanks,
     });
@@ -648,7 +674,8 @@ export function evaluateV2GroupQualification(
       compareIdentifiers(left.standing.entryId, right.standing.entryId),
   );
   const qualificationOrderByEntryId = new Map(
-    qualifiedByRankAndGroup.map((item, index) => [item.standing.entryId, index + 1]),
+    qualifiedByRankAndGroup.map((item, index) => [item.standing.entryId,
+      publishedGroupCount === undefined ? index + 1 : (item.rank - 1) * publishedGroupCount + item.groupPosition]),
   );
   const standings = allStandings.map((standing) => ({
     ...standing,
@@ -666,6 +693,7 @@ export function evaluateV2GroupQualification(
     qualificationCount: qualifiedByRankAndGroup.length,
     sourceFingerprintPayload: stableJson({
       policyVersion: 1,
+      ...(publishedGroupCount === undefined ? {} : { scope: "GROUP", publishedGroupCount }),
       matchType: input.matchType,
       qualifiersPerGroup: input.qualifiersPerGroup,
       entries: sortedGroups.flatMap((group) =>

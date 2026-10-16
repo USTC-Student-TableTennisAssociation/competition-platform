@@ -1,6 +1,8 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { lockUsersForUpdate } from "../../../lib/server/user/lock-users";
 import { assertEntryCanActivate } from "../domain/entries";
+import { reconcileV2ProgressiveKnockoutInTransaction } from "./progressive-knockout-graph";
+import { reconcileUnavailableV2KnockoutFixtures } from "./results";
 import {
   V2CompetitionApplicationError,
   loadV2WriteContext,
@@ -90,8 +92,13 @@ export async function replaceCompetitionRoster(
       await tx.matchDoublesTeamMember.createMany({ data: members.map((member, index) => ({ teamId: entry.sourceDoublesTeamId!, matchId: command.matchId, userId: member.userId, slot: index + 1 })) });
     }
     const newMembers = await tx.matchEntryMember.findMany({ where: { entryId: entry.id, rosterVersion: replacement.rosterVersion }, orderBy: { slot: "asc" }, select: { id: true, slot: true } });
+    const progressive = await tx.matchKnockoutSchedule.findUnique({ where: { matchId: command.matchId }, select: { id: true } });
+    const frozenGroup = progressive ? await tx.matchGroupQualificationStanding.findFirst({
+      where: { matchId: command.matchId, entryId: entry.id }, select: { groupId: true },
+    }) : null;
     const future = await tx.matchFixture.findMany({
-      where: { matchId: command.matchId, OR: [{ sideAEntryId: entry.id }, { sideBEntryId: entry.id }], status: { in: ["SCHEDULED", "READY"] }, startedAt: null, resultRevisions: { none: {} }, administrativeResolution: null },
+      where: { matchId: command.matchId, OR: [{ sideAEntryId: entry.id }, { sideBEntryId: entry.id }], status: { in: ["SCHEDULED", "READY"] }, startedAt: null, resultRevisions: { none: {} }, administrativeResolution: null,
+        ...(frozenGroup ? { NOT: { stage: "GROUP" as const, groupId: frozenGroup.groupId } } : {}) },
       orderBy: { id: "asc" }, select: { id: true, sideAEntryId: true, version: true },
     });
     for (const fixture of future) {
@@ -99,6 +106,12 @@ export async function replaceCompetitionRoster(
       await tx.matchFixtureLineupMember.deleteMany({ where: { fixtureId: fixture.id, side } });
       await tx.matchFixture.update({ where: { id: fixture.id }, data: { ...(side === "SIDE_A" ? { sideARosterVersion: replacement.rosterVersion } : { sideBRosterVersion: replacement.rosterVersion }), version: { increment: 1 } } });
       await tx.matchFixtureLineupMember.createMany({ data: newMembers.map(member => ({ matchId: command.matchId, fixtureId: fixture.id, entryId: entry.id, entryMemberId: member.id, side, position: member.slot })) });
+    }
+    if (progressive) {
+      const now = new Date();
+      await reconcileV2ProgressiveKnockoutInTransaction(tx, command.matchId, { actorId: command.actor.id, clock: () => now });
+      await reconcileUnavailableV2KnockoutFixtures(tx, { match: context.match,
+        actor: { actorId: command.actor.id, role: command.actor.role }, reason: "名单更新后同步后续淘汰对局", now });
     }
     await tx.auditLog.create({ data: { actorId: command.actor.id, action: "competition_roster_replace", entityType: "MatchEntry", entityId: entry.id, details: { matchId: command.matchId, reason: command.reason.trim(), previousMemberIds: entry.members.map(member => member.userId), memberIds: [...command.memberIds], rosterVersion: replacement.rosterVersion, reboundFixtureIds: future.map(fixture => fixture.id) } } });
     return { entryId: entry.id, entryVersion: replacement.version, rosterVersion: replacement.rosterVersion, updatedFixtureCount: future.length };

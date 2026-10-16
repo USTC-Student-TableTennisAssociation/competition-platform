@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { buildV2ProgressiveKnockoutPlan } from "../domain/progressive-knockout-plan";
 
 import {
   evaluateV2CertificateEligibility,
@@ -280,6 +281,139 @@ function snapshot(
       : [],
   };
 }
+
+function progressiveSnapshot(options: {
+  frozenGroups?: number;
+  completed?: boolean;
+  emptySecondGroup?: boolean;
+  otherGroupInProgress?: boolean;
+} = {}): V2CertificateCompetitionSnapshot {
+  const frozenGroups = options.frozenGroups ?? 0;
+  const a = entry("entry-a", ["user-a"], "single");
+  const b = entry("entry-b", ["user-b"], "single");
+  const c = entry("entry-c", ["user-c"], "single", options.emptySecondGroup ? "DISQUALIFIED" : "ACTIVE");
+  const d = entry("entry-d", ["user-d"], "single", options.emptySecondGroup ? "DISQUALIFIED" : "ACTIVE");
+  const base = snapshot("single", "group_then_knockout", [[a, b], [c, d]], [
+    fixture(a, b, [1, 2]), fixture(c, d, [1, 2], {
+      groupPosition: 2, status: options.otherGroupInProgress ? "READY" : "COMPLETED",
+    }),
+  ]);
+  const plan = buildV2ProgressiveKnockoutPlan({ groupingId: GROUPING_ID, groups: base.groups, qualifiersPerGroup: 1 });
+  const groups = base.groups.map((group, index) => ({
+    ...group,
+    qualificationSnapshot: index >= frozenGroups ? null : {
+      id: `group-qualification-${index + 1}`, matchId: MATCH_ID, groupId: group.id,
+      schemaVersion: 1, standingsPolicyVersion: 1, sourceRevisionFingerprint: "a".repeat(64),
+      standings: group.entries.map((membership, rankIndex) => {
+        const inactive = options.emptySecondGroup === true && index === 1;
+        return {
+          id: `standing-${membership.entryId}`, matchId: MATCH_ID,
+          snapshotId: `group-qualification-${index + 1}`, groupId: group.id,
+          entryId: membership.entryId, rank: rankIndex + 1, qualified: rankIndex === 0 && !inactive,
+          qualificationOrder: rankIndex === 0 && !inactive ? index + 1 : null,
+          entryVersion: 0, rosterVersion: 1,
+          played: inactive ? 0 : 1, wins: inactive ? 0 : Number(rankIndex === 0),
+          losses: inactive ? 0 : Number(rankIndex !== 0),
+          scoreFor: inactive ? 0 : rankIndex === 0 ? 2 : 0,
+          scoreAgainst: inactive ? 0 : rankIndex === 0 ? 0 : 2,
+          scoreDifferential: inactive ? 0 : rankIndex === 0 ? 2 : -2,
+          ineligibilityReason: inactive ? "DISQUALIFIED" : null,
+        };
+      }),
+    },
+  }));
+  const final = fixture(a, c, [1, 1], { id: "progressive-final", stage: "KNOCKOUT" });
+  const hasA = frozenGroups >= 1;
+  const hasB = frozenGroups >= 2 && !options.emptySecondGroup;
+  const bye = frozenGroups >= 2 && options.emptySecondGroup;
+  const knockout: V2CertificateFixtureSnapshot = {
+    ...final,
+    status: bye ? "VOIDED" : options.completed ? "COMPLETED" : hasA && hasB ? "READY" : "SCHEDULED",
+    sideAEntryId: hasA ? a.id : null, sideBEntryId: hasB ? c.id : null,
+    sideARosterVersion: hasA ? 1 : null, sideBRosterVersion: hasB ? 1 : null,
+    lineupMembers: final.lineupMembers.filter((lineup) => lineup.side === "SIDE_A" ? hasA : hasB),
+    resultRevisions: options.completed ? final.resultRevisions : [],
+    completedAt: options.completed || bye ? NOW : null,
+    startedAt: null, version: 0,
+    metadata: {
+      publication: "V2_PROGRESSIVE_KNOCKOUT_BRACKET", schemaVersion: 1, bracketPolicyVersion: 2,
+      groupingId: GROUPING_ID, layoutFingerprint: plan.layoutFingerprint,
+      publishedAt: NOW.toISOString(), roundNumber: 1, position: 1,
+    },
+    administrativeResolution: bye ? {
+      id: "admin-bye", matchId: MATCH_ID, fixtureId: final.id, kind: "ADMIN_BYE",
+      advancingEntryId: a.id, advancingRosterVersion: 1, resolvedById: "manager", reason: "已确认的来源席位无晋级者", createdAt: NOW,
+    } : null,
+  };
+  return {
+    ...base,
+    match: { ...base.match, status: options.completed || bye ? "finished" : "ongoing" },
+    grouping: { ...base.grouping!, knockoutSchedule: {
+      id: "progressive-schedule", matchId: MATCH_ID, groupingId: GROUPING_ID,
+      schemaVersion: 1, bracketPolicyVersion: 2, layoutFingerprint: plan.layoutFingerprint, createdAt: NOW,
+    } },
+    groups,
+    fixtures: [...base.fixtures, knockout],
+    fixtureDependencies: base.groups.map((group, index) => ({
+      id: `progressive-source-${index}`, matchId: MATCH_ID,
+      sourceFixtureId: null, sourceOutcome: null, sourceQualificationStandingId: null,
+      sourceGroupId: group.id, sourceGroupRank: 1,
+      targetFixtureId: final.id, targetSide: index === 0 ? "SIDE_A" : "SIDE_B",
+    })),
+  };
+}
+
+test("progressive certificates retain real participation eligibility before, during and after qualification", () => {
+  for (const source of [progressiveSnapshot(), progressiveSnapshot({ frozenGroups: 1, otherGroupInProgress: true }),
+    progressiveSnapshot({ frozenGroups: 2 }), progressiveSnapshot({ frozenGroups: 2, completed: true })]) {
+    assert.equal(source.grouping?.qualificationSnapshot, null);
+    const result = evaluateV2CertificateEligibility(source, "user-a");
+    assert.equal(result.state, "ELIGIBLE", JSON.stringify(result));
+    if (result.state === "ELIGIBLE") {
+      assert.equal(result.qualifyingRevisionIds.length, source.match.status === "finished" ? 2 : 1);
+    }
+  }
+});
+
+test("progressive certificates reject incomplete authority, cross-group sources and polluted standings", () => {
+  const valid = progressiveSnapshot({ frozenGroups: 2 });
+  const frozenGroup = valid.groups[0].qualificationSnapshot!;
+  const corrupted: V2CertificateCompetitionSnapshot[] = [
+    { ...valid, fixtureDependencies: valid.fixtureDependencies.slice(1) },
+    { ...valid, fixtures: valid.fixtures.filter((item) => item.stage !== "KNOCKOUT") },
+    { ...valid, fixtureDependencies: valid.fixtureDependencies.map((dependency, index) => index === 0
+      ? { ...dependency, sourceGroupId: "group-2" } : dependency) },
+    { ...valid, groups: valid.groups.map((group, index) => index === 0 ? { ...group,
+      qualificationSnapshot: { ...frozenGroup, standings: frozenGroup.standings.map((standing, standingIndex) => standingIndex === 0
+        ? { ...standing, entryId: "entry-c" } : standing) },
+    } : group) },
+    { ...valid, grouping: { ...valid.grouping!, qualificationSnapshot: { id: "forged-global", matchId: MATCH_ID, groupingId: GROUPING_ID } } },
+    { ...valid, grouping: { ...valid.grouping!, knockoutSchedule: null } },
+    { ...valid, match: { ...valid.match, status: "finished" } },
+    { ...valid, fixtures: valid.fixtures.map((item) => item.stage === "KNOCKOUT" ? { ...item, metadata: null } : item) },
+    { ...valid, groups: valid.groups.map((group, index) => index === 1 ? { ...group, qualificationSnapshot: null } : group) },
+  ];
+  for (const source of corrupted) {
+    assert.equal(evaluateV2CertificateEligibility(source, "user-a").state, "INTEGRITY_ERROR");
+  }
+});
+
+test("a verified progressive bye preserves certificates but contributes no play evidence", () => {
+  const source = progressiveSnapshot({ frozenGroups: 2, emptySecondGroup: true });
+  const result = evaluateV2CertificateEligibility(source, "user-a");
+  assert.equal(result.state, "ELIGIBLE", JSON.stringify(result));
+  if (result.state === "ELIGIBLE") assert.equal(result.qualifyingRevisionIds.length, 1);
+  const unknownSource = { ...source, groups: source.groups.map((group, index) => index === 1
+    ? { ...group, qualificationSnapshot: null } : group) };
+  assert.equal(evaluateV2CertificateEligibility(unknownSource, "user-a").state, "INTEGRITY_ERROR");
+  const a = source.entries.find((item) => item.id === "entry-a")!;
+  const b = source.entries.find((item) => item.id === "entry-b")!;
+  const noPlayed = { ...source, fixtures: source.fixtures.map((item) => item.id === "group-entry-a-entry-b"
+    ? fixture(a, b, [1, 2], { resolutionKind: "FORFEIT" }) : item) };
+  const noEvidence = evaluateV2CertificateEligibility(noPlayed, "user-a");
+  assert.equal(noEvidence.state, "INELIGIBLE", JSON.stringify(noEvidence));
+  if (noEvidence.state === "INELIGIBLE") assert.equal(noEvidence.code, "NO_CONFIRMED_FIXTURE");
+});
 
 for (const type of ["single", "double", "team"] as const) {
   for (const format of ["group_only", "group_then_knockout"] as const) {

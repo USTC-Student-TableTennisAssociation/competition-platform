@@ -5,6 +5,7 @@ import {
   V2KnockoutBracketError,
 } from "../domain/knockout-bracket";
 import { parseV2SingleGroupTableLabelsFromMetadata } from "../domain/group-fixture-metadata";
+import { loadAndValidateV2ProgressiveKnockoutGraph, reconcileV2ProgressiveKnockoutInTransaction } from "./progressive-knockout-graph";
 import { V2ResultApplicationError } from "./results-errors";
 import type { ResultSettlementTransaction } from "./settlements";
 
@@ -83,7 +84,7 @@ export type V2KnockoutAdministrativeResolutionRow = Readonly<{
   createdAt: Date;
 }>;
 
-type FixtureRow = Readonly<{
+export type FixtureRow = Readonly<{
   id: string;
   matchId: string;
   fixtureKey: string;
@@ -106,17 +107,19 @@ type FixtureRow = Readonly<{
   administrativeResolution?: V2KnockoutAdministrativeResolutionRow | null;
 }>;
 
-type DependencyRow = Readonly<{
+export type DependencyRow = Readonly<{
   id: string;
   matchId: string;
   sourceFixtureId: string | null;
   sourceOutcome: "WINNER" | "LOSER" | null;
   sourceQualificationStandingId: string | null;
+  sourceGroupId?: string | null;
+  sourceGroupRank?: number | null;
   targetFixtureId: string;
   targetSide: FixtureSide;
 }>;
 
-type RosterMemberRow = Readonly<{
+export type RosterMemberRow = Readonly<{
   id: string;
   entryId: string;
   rosterVersion: number;
@@ -133,8 +136,8 @@ export type V2KnockoutGraphSnapshot = Readonly<{
   rosterMembers: readonly RosterMemberRow[];
 }>;
 
-type ValidatedGraph = Readonly<{
-  graph: V2KnockoutGraphSnapshot;
+export type ValidatedGraph = Readonly<{
+  graph: Readonly<{match: V2KnockoutMatchContext; fixtures: readonly FixtureRow[]}>;
   fixturesById: ReadonlyMap<string, FixtureRow>;
   fixtureByKey: ReadonlyMap<string, FixtureRow>;
   dependencyByTargetSide: ReadonlyMap<string, DependencyRow>;
@@ -218,7 +221,7 @@ function revisionHasExactParticipants(
   );
 }
 
-function assertActiveRevisionShape(fixture: FixtureRow) {
+export function assertActiveRevisionShape(fixture: FixtureRow) {
   const pending = fixture.resultRevisions.filter(
     (revision) => revision.status === "PENDING",
   );
@@ -333,7 +336,7 @@ function assertActiveRevisionShape(fixture: FixtureRow) {
   }
 }
 
-function authoritativeAdvancement(fixture: FixtureRow) {
+export function authoritativeAdvancement(fixture: FixtureRow) {
   const confirmed = currentConfirmedRevision(fixture);
   if (confirmed !== null) {
     return {
@@ -408,7 +411,7 @@ function assertFixtureMetadata(
   }
 }
 
-function assertExactLineup(
+export function assertExactLineup(
   fixture: FixtureRow,
   side: FixtureSide,
   entryId: string | null,
@@ -609,6 +612,7 @@ export function validateV2KnockoutGraph(
     const key = targetSideKey(dependency.targetFixtureId, dependency.targetSide);
     if (
       dependency.matchId !== graph.match.id ||
+      dependency.sourceGroupId != null || dependency.sourceGroupRank != null ||
       !target ||
       dependencyByTargetSide.has(key)
     ) {
@@ -908,6 +912,7 @@ async function lockAndLoadGraph(
         sourceFixtureId: true,
         sourceOutcome: true,
         sourceQualificationStandingId: true,
+        sourceGroupId: true, sourceGroupRank: true,
         targetFixtureId: true,
         targetSide: true,
       },
@@ -935,6 +940,13 @@ async function lockAndLoadGraph(
     dependencies,
     rosterMembers,
   };
+}
+
+async function loadAndValidateRuntimeGraph(tx: ResultSettlementTransaction, match: V2KnockoutMatchContext, ignoredWinnerSourceId?: string) {
+  const schedule = await tx.matchKnockoutSchedule?.findUnique({ where: { matchId: match.id }, select: { id: true } });
+  return schedule
+    ? loadAndValidateV2ProgressiveKnockoutGraph(tx, match, ignoredWinnerSourceId)
+    : validateV2KnockoutGraph(await lockAndLoadGraph(tx, match), ignoredWinnerSourceId);
 }
 
 function assertNoPendingAncestorCorrection(
@@ -1010,7 +1022,7 @@ export async function assertV2KnockoutResultMayStart(
       { matchId: match.id, matchStatus: match.status },
     );
   }
-  const validated = validateV2KnockoutGraph(await lockAndLoadGraph(tx, match));
+  const validated = await loadAndValidateRuntimeGraph(tx, match);
   if (!validated.fixturesById.has(fixtureId)) {
     fail("The result fixture is absent from the published knockout graph.", {
       fixtureId,
@@ -1025,7 +1037,7 @@ export async function assertV2KnockoutCorrectionMayProceed(
   match: V2KnockoutMatchContext,
   fixtureId: string,
 ) {
-  const validated = validateV2KnockoutGraph(await lockAndLoadGraph(tx, match));
+  const validated = await loadAndValidateRuntimeGraph(tx, match);
   if (!validated.fixturesById.has(fixtureId)) {
     fail("The correction fixture is absent from the published knockout graph.", {
       fixtureId,
@@ -1116,8 +1128,7 @@ async function advanceAuthoritativeV2KnockoutOutcome(
     requiredConfirmedWinnerEntryId?: string;
   }>,
 ) {
-  const graph = await lockAndLoadGraph(tx, input.match);
-  const validated = validateV2KnockoutGraph(graph, input.fixtureId);
+  const validated = await loadAndValidateRuntimeGraph(tx, input.match, input.fixtureId);
   const source = validated.fixturesById.get(input.fixtureId);
   if (!source) {
     fail("The confirmed fixture is absent from the published knockout graph.", {
@@ -1287,13 +1298,16 @@ export async function advanceConfirmedV2KnockoutWinner(
     match: V2KnockoutMatchContext;
     fixtureId: string;
     winnerEntryId: string;
+    actorId?: string;
   }>,
 ) {
-  return advanceAuthoritativeV2KnockoutOutcome(tx, {
+  const outcome = await advanceAuthoritativeV2KnockoutOutcome(tx, {
     match: input.match,
     fixtureId: input.fixtureId,
     requiredConfirmedWinnerEntryId: input.winnerEntryId,
   });
+  if (input.actorId) await reconcileV2ProgressiveKnockoutInTransaction(tx, input.match.id, { actorId: input.actorId });
+  return outcome;
 }
 
 /**
@@ -1323,9 +1337,7 @@ export async function resolveV2KnockoutFixtureAdministratively(
       fixtureId: input.fixtureId,
     });
   }
-  const validated = validateV2KnockoutGraph(
-    await lockAndLoadGraph(tx, input.match),
-  );
+  const validated = await loadAndValidateRuntimeGraph(tx, input.match);
   const fixture = validated.fixturesById.get(input.fixtureId);
   if (!fixture) {
     fail("The administrative target is absent from the knockout graph.", {
@@ -1424,5 +1436,6 @@ export async function resolveV2KnockoutFixtureAdministratively(
     match: input.match,
     fixtureId: fixture.id,
   });
+  await reconcileV2ProgressiveKnockoutInTransaction(tx, input.match.id, { actorId: input.actorId, clock: input.clock });
   return { resolution, advancement } as const;
 }

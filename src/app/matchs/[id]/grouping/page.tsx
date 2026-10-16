@@ -111,7 +111,13 @@ export default async function MatchGroupingManagePage({
       ),
     );
     const published = readModel.published;
+    const groupQualifications = new Map(
+      readModel.kind === "GROUP_THEN_KNOCKOUT_V2_MATCH"
+        ? readModel.groupQualifications.map((group) => [group.groupId, group])
+        : [],
+    );
     const publishedGroups = readModel.groups.map((group) => ({
+      groupId: group.groupId,
       groupKey: group.groupKey,
       label: group.displayName,
       tableLabels: group.tableLabels,
@@ -120,6 +126,11 @@ export default async function MatchGroupingManagePage({
         version: fixture.fixtureVersion,
       })),
       competitorNames: group.entries.map((entry) => entry.frozenDisplayName),
+      qualificationState: groupQualifications.get(group.groupId)?.sourceHistoryFrozen
+        ? "FROZEN" as const
+        : groupQualifications.get(group.groupId)?.canFreezeGroup
+          ? "READY_TO_CONFIRM" as const
+          : "PENDING" as const,
     }));
     const canEditTableLabels = Boolean(
       readModel.match.groupingGeneratedAt !== null &&
@@ -143,6 +154,7 @@ export default async function MatchGroupingManagePage({
                 : undefined
             }
             published={published}
+            knockoutProfile={readModel.kind === "GROUP_THEN_KNOCKOUT_V2_MATCH" ? readModel.knockoutProfile : null}
             managementState={
               readModel.kind === "GROUP_THEN_KNOCKOUT_V2_MATCH"
                 ? readModel.managementState
@@ -168,6 +180,7 @@ export default async function MatchGroupingManagePage({
                 : undefined
             }
             published={published}
+            knockoutProfile={readModel.kind === "GROUP_THEN_KNOCKOUT_V2_MATCH" ? readModel.knockoutProfile : null}
             managementState={
               readModel.kind === "GROUP_THEN_KNOCKOUT_V2_MATCH"
                 ? readModel.managementState
@@ -193,6 +206,7 @@ export default async function MatchGroupingManagePage({
                 : undefined
             }
             published={published}
+            knockoutProfile={readModel.kind === "GROUP_THEN_KNOCKOUT_V2_MATCH" ? readModel.knockoutProfile : null}
             managementState={
               readModel.kind === "GROUP_THEN_KNOCKOUT_V2_MATCH"
                 ? readModel.managementState

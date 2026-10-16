@@ -8,6 +8,7 @@ import V2PersonalFixtures from "./V2PersonalFixtures";
 import V2EntryDisqualificationForm from "./V2EntryDisqualificationForm";
 import V2Schedule from "./V2Schedule";
 import V2MatchClosureForm from "./V2MatchClosureForm";
+import { PublishEarlyKnockoutScheduleForm } from "./V2ProgressiveKnockoutForms";
 import { bracketRoundLabel } from "@/modules/competitions-v2/read-model/bracket-layout";
 import {
   buildV2GroupOnlyResultFixtureView,
@@ -59,6 +60,11 @@ export default function V2CompetitionPhases({
   const viewer = currentUserId ? { userId: currentUserId } : null;
   const knockout =
     grouping.kind === "GROUP_THEN_KNOCKOUT_V2_MATCH" ? grouping.knockout : null;
+  const frozenGroupIds = new Set(
+    grouping.kind === "GROUP_THEN_KNOCKOUT_V2_MATCH"
+      ? grouping.groupQualifications.filter((group) => group.sourceHistoryFrozen).map((group) => group.groupId)
+      : [],
+  );
   const personalFixtures = [
     ...grouping.groups.flatMap((group) =>
       group.fixtures.map((fixture) => ({
@@ -66,6 +72,8 @@ export default function V2CompetitionPhases({
         stage: "GROUP" as const,
         label: group.displayName,
         tableLabels: group.tableLabels,
+        sourceHistoryFrozen: frozenGroupIds.has(group.groupId) ||
+          (grouping.kind === "GROUP_THEN_KNOCKOUT_V2_MATCH" && Boolean(grouping.qualification)),
       })),
     ),
     ...(knockout?.rounds.flatMap((round) =>
@@ -77,6 +85,7 @@ export default function V2CompetitionPhases({
                 sideA: fixture.sideA.entry,
                 sideB: fixture.sideB.entry,
                 stage: "KNOCKOUT" as const,
+                sourceHistoryFrozen: false,
                 label: `淘汰赛 · ${bracketRoundLabel(round.roundNumber, knockout!.roundCount)}`,
               },
             ]
@@ -91,7 +100,7 @@ export default function V2CompetitionPhases({
         viewer,
         isManager,
         profile,
-        { stage: fixture.stage },
+        { stage: fixture.stage, sourceHistoryFrozen: fixture.sourceHistoryFrozen },
       ),
     }))
     .filter((fixture) =>
@@ -177,7 +186,7 @@ export default function V2CompetitionPhases({
               : finished
                 ? "比赛已结束，你参加过的对局与成绩保留在这里。"
                 : waitingForOpponent
-                  ? "等待下一轮对手确定，签位发布后会在这里更新。"
+                  ? "你已进入下一轮签位，等待另一侧来源确定。可在完整赛程中查看对阵来源和场地。"
                   : competitionType === "team"
                     ? "查看本队对局；本场队长负责录入和确认队伍总比分。"
                     : submissions
@@ -233,6 +242,10 @@ export default function V2CompetitionPhases({
                 : "预览与发布分组"}
             </Link>
           </div>
+          {grouping.kind === "GROUP_THEN_KNOCKOUT_V2_MATCH" && grouping.published &&
+          grouping.match.status === "ongoing" && !knockout ? (
+            <PublishEarlyKnockoutScheduleForm matchId={grouping.match.id} />
+          ) : null}
           {canFinishMatch && grouping.published && grouping.match.status === "ongoing" && grouping.match.format === "group_only" ? (
             <V2MatchClosureForm matchId={grouping.match.id} />
           ) : null}

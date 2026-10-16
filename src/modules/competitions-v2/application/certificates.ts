@@ -35,6 +35,9 @@ const V2_CERTIFICATE_MATCH_SELECT = Prisma.validator<Prisma.MatchSelect>()({
       qualificationSnapshot: {
         select: { id: true, matchId: true, groupingId: true },
       },
+      knockoutSchedule: {
+        select: { id: true, matchId: true, groupingId: true, schemaVersion: true, bracketPolicyVersion: true, layoutFingerprint: true, createdAt: true },
+      },
     },
   },
   matchGroups: {
@@ -56,6 +59,18 @@ const V2_CERTIFICATE_MATCH_SELECT = Prisma.validator<Prisma.MatchSelect>()({
           globalSeedRank: true,
           entryVersion: true,
           rosterVersion: true,
+        },
+      },
+      qualificationSnapshot: {
+        select: {
+          id: true, matchId: true, groupId: true, schemaVersion: true,
+          standingsPolicyVersion: true, sourceRevisionFingerprint: true,
+          standings: { select: {
+            id: true, matchId: true, snapshotId: true, groupId: true, entryId: true,
+            rank: true, qualified: true, qualificationOrder: true, entryVersion: true, rosterVersion: true,
+            played: true, wins: true, losses: true, scoreFor: true, scoreAgainst: true,
+            scoreDifferential: true, ineligibilityReason: true,
+          } },
         },
       },
     },
@@ -100,6 +115,10 @@ const V2_CERTIFICATE_MATCH_SELECT = Prisma.validator<Prisma.MatchSelect>()({
       sideARosterVersion: true,
       sideBRosterVersion: true,
       completedAt: true,
+      startedAt: true,
+      version: true,
+      metadata: true,
+      administrativeResolution: true,
       lineupMembers: {
         orderBy: [{ side: "asc" }, { position: "asc" }, { id: "asc" }],
         select: {
@@ -158,6 +177,8 @@ const V2_CERTIFICATE_DEPENDENCY_SELECT =
     sourceFixtureId: true,
     sourceOutcome: true,
     sourceQualificationStandingId: true,
+    sourceGroupId: true,
+    sourceGroupRank: true,
     targetFixtureId: true,
     targetSide: true,
   });

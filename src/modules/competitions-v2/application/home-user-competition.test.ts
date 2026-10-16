@@ -897,6 +897,27 @@ test("group-then phase waits for an atomic knockout publication and never finish
   );
 });
 
+test("home accepts an early real knockout graph while group results remain unfinished", () => {
+  const matchId = "match-progressive-home";
+  const group = formalFixture({ id: "group-pending", matchId, type: "single", format: "group_then_knockout", stage: "GROUP", status: "READY" });
+  const publishedAt = new Date("2026-10-16T00:00:00.000Z");
+  const schedule = { id: "schedule", matchId, groupingId: "grouping", schemaVersion: 1, bracketPolicyVersion: 2, layoutFingerprint: "a".repeat(64), createdAt: publishedAt };
+  const knockout: V2Fixture = { ...group, id: "ko-final", stage: "KNOCKOUT", status: "SCHEDULED", groupKey: null,
+    fixtureKey: "knockout:r0001:m0001", roundNumber: 1, position: 1,
+    metadata: { publication: "V2_PROGRESSIVE_KNOCKOUT_BRACKET", schemaVersion: 1, bracketPolicyVersion: 2,
+      groupingId: schedule.groupingId, layoutFingerprint: schedule.layoutFingerprint, publishedAt: publishedAt.toISOString(), roundNumber: 1, position: 1 },
+    sideAEntryId: null, sideBEntryId: null, sideARosterVersion: null, sideBRosterVersion: null,
+    sideAEntry: null, sideBEntry: null, lineupMembers: [], resultRevisions: [],
+  };
+  const entry = formalEntry({ matchId, type: "single", format: "group_then_knockout", fixtures: [group, knockout] });
+  const progressive = { ...entry, match: { ...entry.match, knockoutSchedule: schedule } };
+  const projection = buildHomeUserCompetitionProjection(baseInput({ v2Entries: [progressive] }));
+  assert.equal(projection.myMatches[0].phase, "小组赛 0/1 · 淘汰签表已发布");
+  assert.equal(projection.myMatches[0].confirmedCount, 0);
+  assert.throws(() => buildHomeUserCompetitionProjection(baseInput({ v2Entries: [{ ...progressive, match: { ...progressive.match, knockoutSchedule: { ...schedule, layoutFingerprint: "b".repeat(64) } } }] })), /inconsistent layout metadata/);
+  assert.throws(() => buildHomeUserCompetitionProjection(baseInput({ v2Entries: [{ ...progressive, match: { ...progressive.match, qualificationSnapshots: [{ id: "legacy-snapshot" }] } }] })), /progressive knockout authority/);
+});
+
 test("same Entry roster history is deduplicated while multiple current Entries fail closed", () => {
   const matchId = "match-roster-history";
   const group = formalFixture({

@@ -159,6 +159,7 @@ type LockedFixture = Pick<
   | "id"
   | "matchId"
   | "stage"
+  | "groupId"
   | "bestOf"
   | "status"
   | "version"
@@ -478,6 +479,7 @@ async function lockAggregate(
         id: true,
         matchId: true,
         stage: true,
+        groupId: true,
         bestOf: true,
         status: true,
         version: true,
@@ -689,14 +691,17 @@ async function assertQualificationSourceHistoryMutable(
     where: { matchId: aggregate.match.id },
     select: { id: true },
   });
-  if (snapshot === null) return;
+  const groupSnapshot = aggregate.fixture.groupId == null ? null : await tx.matchGroupQualificationSnapshot?.findUnique({
+    where: { groupId: aggregate.fixture.groupId }, select: { id: true },
+  });
+  if (snapshot === null && !groupSnapshot) return;
   fail(
     "INVALID_FIXTURE_STATE",
     "Group result history is frozen after qualification is published.",
     {
       matchId: aggregate.match.id,
       fixtureId: aggregate.fixture.id,
-      qualificationSnapshotId: snapshot.id,
+      qualificationSnapshotId: snapshot?.id ?? groupSnapshot?.id,
     },
   );
 }
@@ -1179,6 +1184,7 @@ async function confirmForfeitKernel(
           match: aggregate.match,
           fixtureId: aggregate.fixture.id,
           winnerEntryId: command.winnerEntryId,
+          actorId: command.actor.actorId,
         };
         if (authorization === "MANAGER") {
           await advanceAndReconcileV2KnockoutWinner(tx, {
@@ -1279,6 +1285,7 @@ async function confirmForfeitKernel(
       match: aggregate.match,
       fixtureId: aggregate.fixture.id,
       winnerEntryId: command.winnerEntryId,
+      actorId: command.actor.actorId,
     };
     if (authorization === "MANAGER") {
       await advanceAndReconcileV2KnockoutWinner(tx, {
@@ -1311,7 +1318,8 @@ const MAX_KNOCKOUT_RECONCILIATION_STEPS = 1_023;
  * every newly decidable fixture in the same transaction instead of leaving a
  * READY bracket dead end for a second manual command.
  */
-async function reconcileUnavailableV2KnockoutFixtures(
+/** Trusted transaction kernel: the caller owns the Match mutex and supplies the real initiating actor. */
+export async function reconcileUnavailableV2KnockoutFixtures(
   tx: ResultSettlementTransaction,
   input: Readonly<{
     match: LockedAggregate["match"];
@@ -1474,6 +1482,7 @@ async function advanceAndReconcileV2KnockoutWinner(
     match: input.match,
     fixtureId: input.fixtureId,
     winnerEntryId: input.winnerEntryId,
+    actorId: input.actor.actorId,
   });
   await reconcileUnavailableV2KnockoutFixtures(tx, {
     match: input.match,

@@ -2,6 +2,11 @@ import {
   isCanonicalV2BestOfScoreText,
   V2_MAX_TEAM_SCORE_PER_FIXTURE,
 } from "../domain/group-standings";
+import type { FixtureRow } from "./knockout-advancement";
+import {
+  validateV2ProgressiveKnockoutGraph,
+  type V2ProgressiveKnockoutGraph,
+} from "./progressive-knockout-graph";
 
 export type V2CertificateEligibility =
   | Readonly<{
@@ -94,6 +99,10 @@ export type V2CertificateFixtureSnapshot = Readonly<{
   sideARosterVersion: number | null;
   sideBRosterVersion: number | null;
   completedAt: Date | null;
+  startedAt?: Date | null;
+  version?: number;
+  metadata?: FixtureRow["metadata"];
+  administrativeResolution?: FixtureRow["administrativeResolution"];
   lineupMembers: readonly Readonly<{
     id: string;
     matchId: string;
@@ -120,6 +129,7 @@ export type V2CertificateGroupingSnapshot = Readonly<{
     matchId: string;
     groupingId: string;
   }> | null;
+  knockoutSchedule?: V2ProgressiveKnockoutGraph["schedule"] | null;
 }>;
 
 export type V2CertificateGroupSnapshot = Readonly<{
@@ -138,6 +148,7 @@ export type V2CertificateGroupSnapshot = Readonly<{
     entryVersion: number;
     rosterVersion: number;
   }>[];
+  qualificationSnapshot?: V2ProgressiveKnockoutGraph["groups"][number]["qualificationSnapshot"];
 }>;
 
 export type V2CertificateFixtureDependencySnapshot = Readonly<{
@@ -146,6 +157,8 @@ export type V2CertificateFixtureDependencySnapshot = Readonly<{
   sourceFixtureId: string | null;
   sourceOutcome: "WINNER" | "LOSER" | null;
   sourceQualificationStandingId: string | null;
+  sourceGroupId?: string | null;
+  sourceGroupRank?: number | null;
   targetFixtureId: string;
   targetSide: "SIDE_A" | "SIDE_B";
 }>;
@@ -739,6 +752,10 @@ function validateFixture(
 ): ValidatedFixture | V2CertificateEligibility {
   const isGroup = fixture.stage === "GROUP";
   const isKnockout = fixture.stage === "KNOCKOUT";
+  // The progressive shell validates these resolutions against their exact
+  // fixed sources; a bye remains absence of play, never participation evidence.
+  const progressive = snapshot.grouping?.knockoutSchedule != null;
+  const administrative = isKnockout && progressive && Boolean(fixture.administrativeResolution);
   if (
     fixture.matchId !== snapshot.match.id ||
     fixture.fixtureKey.trim() === "" ||
@@ -756,8 +773,8 @@ function validateFixture(
         (fixture.roundNumber ?? 0) < 1 ||
         !Number.isSafeInteger(fixture.position) ||
         (fixture.position ?? 0) < 1 ||
-        fixture.status === "VOIDED")) ||
-    (isKnockout &&
+        (fixture.status === "VOIDED" && !administrative))) ||
+    (isKnockout && !progressive &&
       fixture.resultRevisions.some((revision) => revision.status === "VOIDED")) ||
     (fixture.status === "COMPLETED" && fixture.completedAt === null) ||
     (fixture.completedAt !== null && !isValidDate(fixture.completedAt)) ||
@@ -790,11 +807,9 @@ function validateFixture(
     return integrity(fixture.id);
   }
 
-  const revisions = validateRevisionHistory(
-    fixture,
-    [...sideAUserIds, ...sideBUserIds],
-    snapshot.match.type,
-  );
+  const revisions = administrative && fixture.resultRevisions.length === 0
+    ? { pending: null, confirmed: null }
+    : validateRevisionHistory(fixture, [...sideAUserIds, ...sideBUserIds], snapshot.match.type);
   if (!revisions) return integrity(fixture.id);
   return {
     fixture,
@@ -810,11 +825,40 @@ function validateKnockoutPublicationShell(
   knockoutFixtures: readonly V2CertificateFixtureSnapshot[],
 ) {
   const qualification = snapshot.grouping?.qualificationSnapshot ?? null;
+  const schedule = snapshot.grouping?.knockoutSchedule ?? null;
   if (snapshot.match.format === "group_only") {
-    return qualification === null &&
+    return qualification === null && schedule === null &&
+      snapshot.groups.every((group) => group.qualificationSnapshot == null) &&
       knockoutFixtures.length === 0 &&
       snapshot.fixtureDependencies.length === 0;
   }
+  if (schedule !== null) {
+    if (!snapshot.grouping || qualification !== null) return false;
+    const fixtures: FixtureRow[] = [];
+    for (const fixture of knockoutFixtures) {
+      if (!Number.isSafeInteger(fixture.version) || (fixture.version ?? -1) < 0 ||
+          fixture.startedAt === undefined || (fixture.startedAt !== null && !isValidDate(fixture.startedAt)) ||
+          fixture.metadata === undefined) return false;
+      fixtures.push({ ...fixture, version: fixture.version!, startedAt: fixture.startedAt, metadata: fixture.metadata });
+    }
+    const graph: V2ProgressiveKnockoutGraph = {
+      match: snapshot.match, grouping: snapshot.grouping, schedule,
+      groups: snapshot.groups.map((group) => ({ ...group, qualificationSnapshot: group.qualificationSnapshot ?? null })),
+      fixtures, dependencies: snapshot.fixtureDependencies,
+      rosterMembers: snapshot.entries.flatMap((entry) => entry.members),
+    };
+    try {
+      validateV2ProgressiveKnockoutGraph(graph);
+      if (snapshot.match.status === "finished" &&
+          (graph.groups.some((group) => group.qualificationSnapshot === null) ||
+           graph.fixtures.some((fixture) => (fixture.status !== "COMPLETED" && fixture.status !== "VOIDED") ||
+             fixture.resultRevisions.some((revision) => revision.status === "PENDING")))) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  if (snapshot.groups.some((group) => group.qualificationSnapshot != null)) return false;
   const hasAny =
     qualification !== null ||
     knockoutFixtures.length > 0 ||
@@ -840,6 +884,7 @@ function validateKnockoutPublicationShell(
       dependency.matchId !== snapshot.match.id ||
       !fixturesById.has(dependency.targetFixtureId) ||
       targetSides.has(key) ||
+      dependency.sourceGroupId != null || dependency.sourceGroupRank != null ||
       sourceKinds !== 1 ||
       (dependency.sourceFixtureId !== null &&
         (!fixturesById.has(dependency.sourceFixtureId) ||

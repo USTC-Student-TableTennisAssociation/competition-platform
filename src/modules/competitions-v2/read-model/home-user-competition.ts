@@ -17,6 +17,7 @@ export const HOME_V2_FIXTURE_SELECT =
     stage: true,
     status: true,
     groupKey: true,
+    fixtureKey: true, roundNumber: true, position: true, metadata: true,
     sideAEntryId: true,
     sideBEntryId: true,
     sideARosterVersion: true,
@@ -277,6 +278,7 @@ export type V2FixtureSource = Readonly<{
   stage: "GROUP" | "KNOCKOUT" | "FREE_PLAY";
   status: "SCHEDULED" | "READY" | "COMPLETED" | "VOIDED";
   groupKey: string | null;
+  fixtureKey?: string; roundNumber?: number | null; position?: number | null; metadata?: Prisma.JsonValue | null;
   sideAEntryId: string | null;
   sideBEntryId: string | null;
   sideARosterVersion: number | null;
@@ -315,6 +317,7 @@ type V2EntrySource = Readonly<{
     teamMinMembers: number | null;
     teamMaxMembers: number | null;
     qualificationSnapshots: readonly Readonly<{ id: string }>[];
+    knockoutSchedule?: Readonly<{id:string;matchId:string;groupingId:string;schemaVersion:number;bracketPolicyVersion:number;layoutFingerprint:string;createdAt:Date}> | null;
     fixtures: readonly V2FixtureSource[];
   }>;
 }>;
@@ -1114,7 +1117,7 @@ function buildV2MatchItem(
   }
 
   const hasMaterializedStage =
-    match.fixtures.length > 0 || match.qualificationSnapshots.length > 0;
+    match.fixtures.length > 0 || match.qualificationSnapshots.length > 0 || match.knockoutSchedule != null;
   if (
     (match.groupingGeneratedAt === null && hasMaterializedStage) ||
     (match.groupingGeneratedAt !== null && match.fixtures.length === 0) ||
@@ -1146,12 +1149,36 @@ function buildV2MatchItem(
       fixture.status === "COMPLETED" || fixture.status === "VOIDED",
     );
   const hasQualificationSnapshot = match.qualificationSnapshots.length === 1;
+  const schedule = match.knockoutSchedule ?? null;
+  const hasProgressiveSchedule = schedule !== null;
+  if (schedule) {
+    if (schedule.matchId !== match.id || schedule.schemaVersion !== 1 || schedule.bracketPolicyVersion !== 2 ||
+        !/^[a-f0-9]{64}$/.test(schedule.layoutFingerprint) || !Number.isFinite(schedule.createdAt.getTime()) ||
+        hasQualificationSnapshot || knockoutFixtures.length === 0) integrity("A V2 progressive knockout authority is malformed.", match.id);
+    const keys = new Set<string>();
+    let maxRound = 0;
+    for (const {fixture} of knockoutFixtures) {
+      const metadata = fixture.metadata;
+      if (metadata === null || typeof metadata !== "object" || Array.isArray(metadata) ||
+          metadata.publication !== "V2_PROGRESSIVE_KNOCKOUT_BRACKET" || metadata.schemaVersion !== 1 || metadata.bracketPolicyVersion !== 2 ||
+          metadata.groupingId !== schedule.groupingId || metadata.layoutFingerprint !== schedule.layoutFingerprint || metadata.publishedAt !== schedule.createdAt.toISOString() ||
+          !Number.isSafeInteger(fixture.roundNumber) || (fixture.roundNumber ?? 0) < 1 ||
+          !Number.isSafeInteger(fixture.position) || (fixture.position ?? 0) < 1 ||
+          metadata.roundNumber !== fixture.roundNumber || metadata.position !== fixture.position ||
+          fixture.fixtureKey !== `knockout:r${String(fixture.roundNumber).padStart(4,"0")}:m${String(fixture.position).padStart(4,"0")}` || keys.has(fixture.fixtureKey)) {
+        integrity("A V2 progressive knockout fixture has inconsistent layout metadata.", fixture.id);
+      }
+      keys.add(fixture.fixtureKey!); maxRound = Math.max(maxRound, fixture.roundNumber!);
+    }
+    if (maxRound > 10 || knockoutFixtures.length !== 2 ** maxRound - 1 || knockoutFixtures.some(({fixture}) => fixture.position! > 2 ** (maxRound-fixture.roundNumber!))) integrity("A V2 progressive knockout graph is incomplete.", match.id);
+  }
+  const hasKnockoutAuthority = hasQualificationSnapshot || hasProgressiveSchedule;
   if (
     (match.format === "group_only" &&
-      (knockoutFixtures.length > 0 || hasQualificationSnapshot)) ||
+      (knockoutFixtures.length > 0 || hasKnockoutAuthority)) ||
     (match.format === "group_then_knockout" &&
-      ((hasQualificationSnapshot && knockoutFixtures.length === 0) ||
-        (!hasQualificationSnapshot && knockoutFixtures.length > 0) ||
+      ((hasKnockoutAuthority && knockoutFixtures.length === 0) ||
+        (!hasKnockoutAuthority && knockoutFixtures.length > 0) ||
         (hasQualificationSnapshot && !allGroupsTerminal)))
   ) {
     integrity("A V2 Match has an illegal GROUP/KNOCKOUT stage combination.", match.id);
@@ -1165,7 +1192,7 @@ function buildV2MatchItem(
     match.status === "finished" &&
     (!allFixturesTerminal ||
       (match.format === "group_then_knockout" &&
-        (!hasQualificationSnapshot || knockoutFixtures.length === 0)))
+        (!hasKnockoutAuthority || knockoutFixtures.length === 0)))
   ) {
     integrity("A finished V2 Match retains an unfinished stage graph.", match.id);
   }
@@ -1217,7 +1244,7 @@ function buildV2MatchItem(
   if (
     match.status === "ongoing" &&
     allFixturesTerminal &&
-    (match.format === "group_only" || hasQualificationSnapshot)
+    (match.format === "group_only" || hasKnockoutAuthority)
   ) {
     integrity("A terminal V2 Match has not reached finished status.", match.id);
   }
@@ -1229,13 +1256,13 @@ function buildV2MatchItem(
         : match.groupingGeneratedAt === null
           ? "等待分组"
           : match.format === "group_then_knockout" &&
-              !hasQualificationSnapshot &&
+              !hasKnockoutAuthority &&
               allGroupsTerminal
             ? "等待淘汰签表"
             : match.format === "group_then_knockout" &&
-                hasQualificationSnapshot
+                hasKnockoutAuthority
               ? relevantKnockout.length === 0
-                ? "淘汰赛"
+                ? hasProgressiveSchedule && groupDone < relevantGroups.length ? `小组赛 ${groupDone}/${relevantGroups.length} · 淘汰签表已发布` : "淘汰赛"
                 : `淘汰赛 ${knockoutDone}/${relevantKnockout.length}`
               : `小组赛 ${groupDone}/${relevantGroups.length}`;
 
@@ -1688,6 +1715,7 @@ export async function getHomeUserCompetitionProjection(
               groupingGeneratedAt: true,
               teamMinMembers: true,
               teamMaxMembers: true,
+              knockoutSchedule: true,
               qualificationSnapshots: {
                 orderBy: { id: "asc" },
                 select: { id: true },

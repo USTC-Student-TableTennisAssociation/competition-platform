@@ -5,6 +5,7 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import {
   V2GroupStandingsError,
   evaluateV2GroupQualification,
+  evaluateV2SingleGroupQualification,
   type V2QualificationStanding,
   type V2StandingsFixture,
   type V2StandingsGroup,
@@ -1215,11 +1216,14 @@ function assertExactPersistedSnapshot(
   }
 }
 
-async function freezeInTransaction(
+/** Shared strict source validation for whole-match and progressive group freezing. */
+export async function loadV2QualificationSourceInTransaction(
   tx: V2CompetitionTransaction,
-  command: NormalizedCommand,
+  rawCommand: FreezeV2QualificationSnapshotCommand,
   clock: () => Date,
-): Promise<FreezeV2QualificationSnapshotResult> {
+  scope: Readonly<{ groupId?: string }> = {},
+) {
+  const command = normalizeCommand(rawCommand);
   await lockQualificationAggregate(tx, command);
 
   const match = (await tx.match.findUnique({
@@ -1281,6 +1285,9 @@ async function freezeInTransaction(
     });
   }
   validateGrouping(match, grouping, groups.length);
+  if (scope.groupId !== undefined && !groups.some(group => group.id === scope.groupId)) {
+    fail("FIXTURE_NOT_FOUND", "The requested published group does not exist.", { groupId: scope.groupId });
+  }
 
   const memberships = (await tx.matchGroupEntry.findMany({
     where: { matchId: command.matchId },
@@ -1301,6 +1308,15 @@ async function freezeInTransaction(
   })) as readonly GroupEntryRow[];
   if (memberships.length < 2 || memberships.length > MAX_STANDING_COUNT) {
     fail("PERSISTENCE_CONFLICT", "The grouping has an invalid Entry membership count.");
+  }
+  if (scope.groupId !== undefined) {
+    const ranked = [...memberships].sort((left, right) =>
+      right.seedElo - left.seedElo || right.seedPoints - left.seedPoints || compareIdentifiers(left.entryId, right.entryId));
+    if (ranked.some((membership, index) =>
+      !Number.isSafeInteger(membership.seedElo) || membership.seedElo < -2_147_483_648 ||
+      membership.seedElo > 2_147_483_647 || membership.globalSeedRank !== index + 1)) {
+      fail("PERSISTENCE_CONFLICT", "Published global seed ranks or seed inputs are inconsistent.");
+    }
   }
 
   const entryIds = memberships.map((membership) => membership.entryId);
@@ -1472,14 +1488,17 @@ async function freezeInTransaction(
       matchId: match.id,
     });
   }
+  const currentRosters = new Map<string, FrozenRoster>();
   for (const membership of memberships) {
     const entry = entriesById.get(membership.entryId)!;
+    if (scope.groupId !== undefined && membership.groupId !== scope.groupId) continue;
     if (entry.status !== "ACTIVE") continue;
     const currentMembers = memberRows.filter(member => member.entryId === entry.id && member.status === "ACTIVE" && member.effectiveUntil === null);
     if (currentMembers.length === 0) fail("PERSISTENCE_CONFLICT", "An active Entry must have a current roster.", { entryId: entry.id });
     const currentVersion = currentMembers[0].rosterVersion;
     if (currentVersion < membership.rosterVersion || currentMembers.some(member => member.rosterVersion !== currentVersion)) fail("PERSISTENCE_CONFLICT", "The current roster has inconsistent versions.", { entryId: entry.id });
     const roster = validateFrozenRoster(match, grouping, { ...membership, rosterVersion: currentVersion }, entry, currentMembers, new Date(Math.max(grouping.createdAt.getTime(), ...currentMembers.map(member => member.effectiveFrom.getTime()))));
+    currentRosters.set(membership.entryId, roster);
     const unavailableUserIds = roster.members
       .filter((member) => {
         const user = lockedUsers.byId.get(member.userId);
@@ -1871,22 +1890,35 @@ async function freezeInTransaction(
   }));
   let evaluation;
   try {
-    evaluation = evaluateV2GroupQualification({
-      matchType: match.type,
-      qualifiersPerGroup: grouping.qualifiersPerGroup!,
-      groups: domainGroups,
-    });
+    evaluation = scope.groupId === undefined
+      ? evaluateV2GroupQualification({
+          matchType: match.type, qualifiersPerGroup: grouping.qualifiersPerGroup!, groups: domainGroups,
+        })
+      : evaluateV2SingleGroupQualification({
+          matchType: match.type, qualifiersPerGroup: grouping.qualifiersPerGroup!, publishedGroupCount: groups.length,
+          group: domainGroups.find(group => group.groupId === scope.groupId)!,
+        });
   } catch (error) {
     if (error instanceof V2GroupStandingsError) mapStandingsError(error);
     throw error;
   }
   if (
-    evaluation.qualificationCount !== grouping.qualifiersPerGroup! * groups.length
+    scope.groupId === undefined
+      ? evaluation.qualificationCount !== grouping.qualifiersPerGroup! * groups.length
+      : evaluation.qualificationCount > grouping.qualifiersPerGroup!
   ) {
     fail("PERSISTENCE_CONFLICT", "The evaluator returned an incomplete qualifier set.");
   }
 
+  const scopedGroups = groups.filter(group => scope.groupId === undefined || group.id === scope.groupId);
+  const scopedMemberships = memberships.filter(membership => scope.groupId === undefined || membership.groupId === scope.groupId);
+  const scopedFixtures = fixtures.filter(fixture => scope.groupId === undefined || fixture.groupId === scope.groupId);
+  const scopedFixtureIds = new Set(scopedFixtures.map(fixture => fixture.id));
+  const scopedRevisions = revisions.filter(revision => scopedFixtureIds.has(revision.fixtureId));
+  const scopedRevisionIds = new Set(scopedRevisions.map(revision => revision.id));
+  const scopedSettlements = settlements.filter(event => event.resultRevisionId !== null && scopedRevisionIds.has(event.resultRevisionId));
   const sourceRevisionFingerprint = sha256({
+    ...(scope.groupId === undefined ? {} : { scope: "GROUP", groupId: scope.groupId }),
     evaluator: evaluation.sourceFingerprintPayload,
     grouping: {
       id: grouping.id,
@@ -1898,14 +1930,14 @@ async function freezeInTransaction(
       bracketPolicyVersion: grouping.bracketPolicyVersion,
       createdAt: grouping.createdAt.toISOString(),
     },
-    groups: groups.map((group) => ({
+    groups: scopedGroups.map((group) => ({
       id: group.id,
       groupKey: group.groupKey,
       displayName: group.displayName,
       position: group.position,
       createdAt: group.createdAt.toISOString(),
     })),
-    memberships: memberships.map((membership) => ({
+    memberships: scopedMemberships.map((membership) => ({
       id: membership.id,
       groupId: membership.groupId,
       entryId: membership.entryId,
@@ -1917,6 +1949,13 @@ async function freezeInTransaction(
       rosterVersion: membership.rosterVersion,
       currentEntryStatus: entriesById.get(membership.entryId)!.status,
       currentEntryVersion: entriesById.get(membership.entryId)!.version,
+      ...(scope.groupId === undefined ? {} : {
+        currentRoster: currentRosters.get(membership.entryId)?.members.map(member => ({
+          id: member.id, userId: member.userId, role: member.role, slot: member.slot,
+          rosterVersion: member.rosterVersion, effectiveFrom: member.effectiveFrom.toISOString(),
+          effectiveUntil: iso(member.effectiveUntil, "entryMember.effectiveUntil"), status: member.status,
+        })) ?? null,
+      }),
       // Keep existing publication fingerprints byte-for-byte compatible for
       // ordinary entries, while binding every explicit admission fact.
       ...(lateAdmissions.has(membership.entryId) ? {
@@ -1939,7 +1978,7 @@ async function freezeInTransaction(
         endReason: member.endReason,
       })),
     })),
-    fixtures: fixtures.map((fixture) => ({
+    fixtures: scopedFixtures.map((fixture) => ({
       id: fixture.id,
       fixtureKey: fixture.fixtureKey,
       status: fixture.status,
@@ -1961,7 +2000,7 @@ async function freezeInTransaction(
     })),
     // Every revision, not merely the current CONFIRMED row, is part of the
     // source identity. This makes later correction/history tampering visible.
-    revisions: revisions.map((revision) => ({
+    revisions: scopedRevisions.map((revision) => ({
       id: revision.id,
       fixtureId: revision.fixtureId,
       revisionNumber: revision.revisionNumber,
@@ -1978,7 +2017,7 @@ async function freezeInTransaction(
       createdAt: iso(revision.createdAt, "resultRevision.createdAt"),
       updatedAt: iso(revision.updatedAt, "resultRevision.updatedAt"),
     })),
-    settlements: settlements.map((event) => ({
+    settlements: scopedSettlements.map((event) => ({
       id: event.id,
       idempotencyKey: event.idempotencyKey,
       kind: event.kind,
@@ -2006,6 +2045,21 @@ async function freezeInTransaction(
       })),
     })),
   });
+
+  return { match, grouping, groups, memberships, entriesById, frozenRosters, currentRosters, lockedUsers,
+    frozenAt, evaluation, sourceRevisionFingerprint };
+}
+
+async function freezeInTransaction(
+  tx: V2CompetitionTransaction,
+  command: NormalizedCommand,
+  clock: () => Date,
+): Promise<FreezeV2QualificationSnapshotResult> {
+  const { match, grouping, groups, lockedUsers, frozenAt, evaluation, sourceRevisionFingerprint } =
+    await loadV2QualificationSourceInTransaction(tx, command, clock);
+  if (await tx.matchKnockoutSchedule?.findUnique({ where: { matchId: match.id }, select: { id: true } })) {
+    fail("FIXTURE_CREATION_NOT_ALLOWED", "This knockout schedule confirms qualification one group at a time.");
+  }
 
   const existingSnapshot = (await tx.matchQualificationSnapshot.findUnique({
     where: { groupingId: grouping.id },

@@ -38,6 +38,7 @@ export type V2SingleGroupingApplicationService = Readonly<{
 export type V2SingleGroupingApplicationServiceDependencies = Readonly<{
   db: Pick<PrismaClient, "$transaction">;
   clock?: () => Date;
+  publishKnockoutEarly?: boolean;
 }>;
 
 /** Stable SINGLE facade retained for existing routes and UI adapters. */

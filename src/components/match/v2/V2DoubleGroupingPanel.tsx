@@ -22,8 +22,10 @@ type Props = Readonly<{
     | "READY_TO_FINALIZE"
     | "KNOCKOUT_PUBLISHED";
   knockoutSummary?: Readonly<{ fixtureCount: number; roundCount: number }> | null;
+  knockoutProfile?: "PROGRESSIVE_GROUP_RANK" | "GLOBAL_SNAPSHOT" | null;
   canEditTableLabels?: boolean;
   publishedGroups?: readonly Readonly<{
+    groupId?: string;
     groupKey: string;
     label: string;
     tableLabels: readonly string[];
@@ -32,6 +34,7 @@ type Props = Readonly<{
       version: number;
     }>[];
     competitorNames?: readonly string[];
+    qualificationState?: "PENDING" | "READY_TO_CONFIRM" | "FROZEN";
   }>[];
 }>;
 

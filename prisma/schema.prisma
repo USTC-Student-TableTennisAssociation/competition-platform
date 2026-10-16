@@ -330,6 +330,9 @@ model Match {
   matchGroupEntries                MatchGroupEntry[]
   qualificationSnapshots           MatchQualificationSnapshot[]
   qualificationStandings           MatchQualificationStanding[]
+  knockoutSchedule                MatchKnockoutSchedule?
+  groupQualificationSnapshots     MatchGroupQualificationSnapshot[]
+  groupQualificationStandings     MatchGroupQualificationStanding[]
   fixtureAdministrativeResolutions MatchFixtureAdministrativeResolution[]
 
   @@unique([createdBy, creationRequestKey], map: "match_creator_creation_request_key_unique")
@@ -371,6 +374,7 @@ model MatchEntry {
   settlementEvents           SettlementEvent[]
   groupEntries               MatchGroupEntry[]
   qualificationStandings     MatchQualificationStanding[]
+  groupQualificationStandings MatchGroupQualificationStanding[]
   administrativeAdvancements MatchFixtureAdministrativeResolution[] @relation("FixtureAdministrativeAdvancingEntry")
 
   @@unique([id, matchId], map: "match_entry_id_match_id_key")
@@ -522,18 +526,23 @@ model MatchFixtureDependency {
   sourceFixtureId               String?              @map("source_fixture_id")
   sourceOutcome                 MatchFixtureOutcome? @map("source_outcome")
   sourceQualificationStandingId String?              @unique(map: "fixture_dependency_qualification_source_key") @map("source_qualification_standing_id")
+  sourceGroupId                 String?              @map("source_group_id")
+  sourceGroupRank               Int?                 @map("source_group_rank")
   targetFixtureId               String               @map("target_fixture_id")
   targetSide                    MatchFixtureSide     @map("target_side")
   createdAt                     DateTime             @default(now()) @map("created_at")
 
   sourceFixture               MatchFixture?               @relation("MatchFixtureDependencySource", fields: [sourceFixtureId, matchId], references: [id, matchId], onDelete: Restrict, map: "fixture_dependency_source_match_fkey")
   sourceQualificationStanding MatchQualificationStanding? @relation("MatchFixtureDependencyQualificationSource", fields: [sourceQualificationStandingId, matchId], references: [id, matchId], onDelete: Restrict, map: "fixture_dependency_qualification_match_fkey")
+  sourceGroup                 MatchGroup?                 @relation("MatchFixtureDependencyGroupSource", fields: [sourceGroupId, matchId], references: [id, matchId], onDelete: Restrict, map: "fixture_dependency_group_match_fkey")
   targetFixture               MatchFixture                @relation("MatchFixtureDependencyTarget", fields: [targetFixtureId, matchId], references: [id, matchId], onDelete: Restrict, map: "fixture_dependency_target_match_fkey")
 
   @@unique([targetFixtureId, targetSide], map: "fixture_dependency_target_side_key")
   @@unique([sourceFixtureId, sourceOutcome], map: "fixture_dependency_source_outcome_key")
+  @@unique([sourceGroupId, sourceGroupRank], map: "fixture_dependency_group_rank_key")
   @@index([matchId], map: "fixture_dependency_match_id_idx")
   @@index([sourceQualificationStandingId, matchId], map: "fixture_dependency_qualification_match_idx")
+  @@index([sourceGroupId, matchId], map: "fixture_dependency_group_match_idx")
   @@map("match_fixture_dependency")
 }
 
@@ -1073,6 +1082,7 @@ model MatchGrouping {
   match                 Match                       @relation(fields: [matchId], references: [id], onDelete: Cascade)
   groups                MatchGroup[]
   qualificationSnapshot MatchQualificationSnapshot?
+  knockoutSchedule      MatchKnockoutSchedule?
 
   @@unique([id, matchId], map: "match_grouping_id_match_id_key")
 }
@@ -1093,6 +1103,9 @@ model MatchGroup {
   entries                MatchGroupEntry[]
   fixtures               MatchFixture[]
   qualificationStandings MatchQualificationStanding[]
+  qualificationSnapshot  MatchGroupQualificationSnapshot?
+  progressiveStandings   MatchGroupQualificationStanding[]
+  knockoutDependencies   MatchFixtureDependency[] @relation("MatchFixtureDependencyGroupSource")
 
   @@unique([id, matchId], map: "match_group_id_match_id_key")
   @@unique([groupingId, groupKey], map: "match_group_grouping_key_key")
@@ -1120,6 +1133,7 @@ model MatchGroupEntry {
   group                  MatchGroup                   @relation(fields: [groupId, matchId], references: [id, matchId], onDelete: Restrict, map: "match_group_entry_group_match_fkey")
   entry                  MatchEntry                   @relation(fields: [entryId, matchId], references: [id, matchId], onDelete: Restrict, map: "match_group_entry_entry_match_fkey")
   qualificationStandings MatchQualificationStanding[]
+  progressiveQualificationStandings MatchGroupQualificationStanding[]
 
   @@unique([id, matchId], map: "match_group_entry_id_match_id_key")
   @@unique([groupId, entryId], map: "match_group_entry_group_entry_key")
@@ -1188,6 +1202,80 @@ model MatchQualificationStanding {
   @@index([groupId, entryId, matchId], map: "match_qualification_standing_membership_idx")
   @@index([entryId], map: "match_qualification_standing_entry_id_idx")
   @@map("match_qualification_standing")
+}
+
+/// A fixed, early-published knockout graph, independent of result completion.
+model MatchKnockoutSchedule {
+  id                   String   @id @default(cuid())
+  matchId              String   @unique(map: "knockout_schedule_match_key") @map("match_id")
+  groupingId           String   @unique(map: "knockout_schedule_grouping_key") @map("grouping_id")
+  schemaVersion        Int      @default(1) @map("schema_version")
+  bracketPolicyVersion Int      @default(2) @map("bracket_policy_version")
+  layoutFingerprint    String   @map("layout_fingerprint")
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  match    Match         @relation(fields: [matchId], references: [id], onDelete: Restrict, map: "knockout_schedule_match_fkey")
+  grouping MatchGrouping @relation(fields: [groupingId, matchId], references: [id, matchId], onDelete: Restrict, map: "knockout_schedule_grouping_match_fkey")
+
+  @@unique([id, matchId], map: "knockout_schedule_id_match_key")
+  @@unique([groupingId, matchId], map: "knockout_schedule_grouping_match_key")
+  @@map("match_knockout_schedule")
+}
+
+/// One immutable, independently confirmed group result source.
+model MatchGroupQualificationSnapshot {
+  id                        String   @id @default(cuid())
+  matchId                   String   @map("match_id")
+  groupId                   String   @unique(map: "group_qualification_snapshot_group_key") @map("group_id")
+  schemaVersion             Int      @default(1) @map("schema_version")
+  standingsPolicyVersion    Int      @default(1) @map("standings_policy_version")
+  sourceRevisionFingerprint String   @map("source_revision_fingerprint")
+  createdAt                 DateTime @default(now()) @map("created_at")
+
+  match     Match                             @relation(fields: [matchId], references: [id], onDelete: Restrict, map: "group_qualification_snapshot_match_fkey")
+  group     MatchGroup                        @relation(fields: [groupId, matchId], references: [id, matchId], onDelete: Restrict, map: "group_qualification_snapshot_group_match_fkey")
+  standings MatchGroupQualificationStanding[]
+
+  @@unique([id, matchId], map: "group_qualification_snapshot_id_match_key")
+  @@unique([id, groupId, matchId], map: "group_qualification_snapshot_identity_key")
+  @@unique([groupId, matchId], map: "group_qualification_snapshot_group_match_key")
+  @@index([matchId], map: "group_qualification_snapshot_match_idx")
+  @@map("match_group_qualification_snapshot")
+}
+
+/// Frozen standings and the roster admitted to one group's knockout slots.
+model MatchGroupQualificationStanding {
+  id                  String   @id @default(cuid())
+  matchId             String   @map("match_id")
+  snapshotId          String   @map("snapshot_id")
+  groupId             String   @map("group_id")
+  entryId             String   @map("entry_id")
+  rank                Int
+  played              Int
+  wins                Int
+  losses              Int
+  scoreFor            Int      @map("score_for")
+  scoreAgainst        Int      @map("score_against")
+  scoreDifferential   Int      @map("score_differential")
+  qualified           Boolean
+  qualificationOrder  Int?     @map("qualification_order")
+  ineligibilityReason String?  @map("ineligibility_reason")
+  entryVersion        Int      @map("entry_version")
+  rosterVersion       Int      @map("roster_version")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  match      Match                           @relation(fields: [matchId], references: [id], onDelete: Restrict, map: "group_qualification_standing_match_fkey")
+  snapshot   MatchGroupQualificationSnapshot @relation(fields: [snapshotId, groupId, matchId], references: [id, groupId, matchId], onDelete: Restrict, map: "group_qualification_standing_snapshot_fkey")
+  group      MatchGroup                      @relation(fields: [groupId, matchId], references: [id, matchId], onDelete: Restrict, map: "group_qualification_standing_group_fkey")
+  entry      MatchEntry                      @relation(fields: [entryId, matchId], references: [id, matchId], onDelete: Restrict, map: "group_qualification_standing_entry_fkey")
+  groupEntry MatchGroupEntry                 @relation(fields: [groupId, entryId, matchId], references: [groupId, entryId, matchId], onDelete: Restrict, map: "group_qualification_standing_membership_fkey")
+
+  @@unique([id, matchId], map: "group_qualification_standing_id_match_key")
+  @@unique([snapshotId, entryId], map: "group_qualification_standing_snapshot_entry_key")
+  @@unique([groupId, rank], map: "group_qualification_standing_group_rank_key")
+  @@unique([matchId, qualificationOrder], map: "group_qualification_standing_order_key")
+  @@index([matchId], map: "group_qualification_standing_match_idx")
+  @@map("match_group_qualification_standing")
 }
 
 model RankingSnapshot {

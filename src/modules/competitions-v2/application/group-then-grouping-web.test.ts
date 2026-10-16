@@ -17,9 +17,31 @@ test("the shared grouping panel preserves group-only defaults and makes qualifie
   );
   assert.match(source, /总晋级数必须是 2 的幂/);
   assert.match(source, /当前状态：尚未发布小组分组/);
-  assert.match(source, /managementState === ["']GROUP_IN_PROGRESS["']/);
+  assert.match(source, /PublishEarlyKnockoutScheduleForm/);
+  assert.match(source, /FreezeGroupQualificationForm/);
+  assert.match(source, /!progressive/);
   assert.match(source, /managementState === ["']READY_TO_FINALIZE["']/);
   assert.match(source, /managementState === ["']KNOCKOUT_PUBLISHED["']/);
+});
+
+test("progressive qualification forms send targets without client-supplied qualification authority", () => {
+  const source = read("src/components/match/v2/V2ProgressiveKnockoutForms.tsx");
+  const inputNames = [...source.matchAll(/name=["']([^"']+)["']/g)].map((match) => match[1]);
+  assert.deepEqual([...new Set(inputNames)].sort(), ["csrfToken", "groupId", "matchId"]);
+  assert.match(source, /<dialog\b/);
+  assert.match(source, /确认并锁定本组/);
+  assert.match(source, /本组成绩和晋级名次将锁定/);
+  assert.doesNotMatch(source, /name=["'](?:entryId|standingId|winnerEntryId|snapshotId|sourceRevisionFingerprint|qualifiersJson)["']/);
+});
+
+test("early brackets retain group-first navigation and keep unresolved sides outside result forms", () => {
+  const source = read("src/components/match/v2/V2Schedule.tsx");
+  assert.match(source, /defaultId=["']group["']/);
+  assert.match(source, /const resolved = sideA && sideB/);
+  assert.match(source, /resolved && view \?/);
+  assert.match(source, /sourceHistoryFrozen:/);
+  assert.match(source, /canFreezeGroup/);
+  assert.match(source, /等待本组确认晋级/);
 });
 
 test("the finalize form posts csrf only and never accepts bracket authority", () => {

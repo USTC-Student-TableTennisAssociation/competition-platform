@@ -5,6 +5,7 @@ import {
   V2_MAX_TEAM_SCORE_PER_FIXTURE,
   V2GroupStandingsError,
   evaluateV2GroupQualification,
+  evaluateV2SingleGroupQualification,
   type V2StandingsEntry,
   type V2StandingsFixture,
   type V2StandingsGroup,
@@ -426,4 +427,50 @@ test("fingerprint payload is deterministic across input ordering", () => {
     groups: [group("group-a", 1, [...entries].reverse(), [fixture])],
   });
   assert.equal(first.sourceFingerprintPayload, second.sourceFingerprintPayload);
+});
+
+test("one completed group freezes independently using fixed global qualification slots", () => {
+  const completed = group("group-21", 21, [
+    entry("entry-a", 1, 1200, { globalSeedRank: 7 }),
+    entry("entry-b", 2, 1100, { globalSeedRank: 98 }),
+  ], [playedFixture("fixture-ab", "entry-a", "entry-b", "entry-a", 3, 0)]);
+  const result = evaluateV2SingleGroupQualification({
+    matchType: "single", qualifiersPerGroup: 2, publishedGroupCount: 32, group: completed,
+  });
+  assert.deepEqual(result.standings.map(row => [row.rank, row.qualificationOrder]), [[1, 21], [2, 53]]);
+  assert.equal(evaluateV2SingleGroupQualification({
+    matchType: "single", qualifiersPerGroup: 1, publishedGroupCount: 32, group: completed,
+  }).qualificationCount, 1);
+  // The existing all-groups contract must not silently accept this partial source.
+  expectError(() => evaluateV2GroupQualification({ matchType: "single", qualifiersPerGroup: 1, groups: [completed] }), "INTEGRITY_ERROR");
+});
+
+test("single-group qualification still rejects pending results and invalid fixed slots", () => {
+  const completed = group("group-2", 2, [entry("entry-a", 1, 1200), entry("entry-b", 2, 1100)], [
+    playedFixture("fixture-ab", "entry-a", "entry-b", "entry-a", 3, 0),
+  ]);
+  expectError(() => evaluateV2SingleGroupQualification({
+    matchType: "single", qualifiersPerGroup: 1, publishedGroupCount: 1, group: completed,
+  }), "INTEGRITY_ERROR");
+  expectError(() => evaluateV2SingleGroupQualification({
+    matchType: "single", qualifiersPerGroup: 1, publishedGroupCount: 4,
+    group: { ...completed, fixtures: [{ ...completed.fixtures[0], pendingRevisionIds: ["pending-correction"] }] },
+  }), "QUALIFICATION_NOT_READY");
+});
+
+test("progressive groups freeze genuine empty ranks after withdrawal, never uncompleted ranks", () => {
+  const a = entry("entry-a", 1, 1200);
+  const b = entry("entry-b", 2, 1100, { eligible: false, ineligibilityReason: "WITHDRAWN" });
+  const fixture = { ...playedFixture("fixture-ab", a.entryId, b.entryId, a.entryId, 3, 0), status: "VOIDED" as const, confirmedRevision: null };
+  const input = { matchType: "single" as const, qualifiersPerGroup: 2, publishedGroupCount: 2,
+    group: group("group-1", 1, [a, b], [fixture]) };
+  const short = evaluateV2SingleGroupQualification(input);
+  assert.equal(short.qualificationCount, 1);
+  assert.deepEqual(short.standings.map(row => [row.rank, row.qualified, row.qualificationOrder]), [[1, true, 1], [2, false, null]]);
+  const empty = evaluateV2SingleGroupQualification({ ...input,
+    group: { ...input.group, entries: [{ ...a, eligible: false, ineligibilityReason: "WITHDRAWN" }, b] } });
+  assert.equal(empty.qualificationCount, 0);
+  expectError(() => evaluateV2GroupQualification({ matchType: "single", qualifiersPerGroup: 2, groups: [input.group] }), "QUALIFICATION_NOT_READY");
+  expectError(() => evaluateV2SingleGroupQualification({ ...input,
+    group: { ...input.group, fixtures: [{ ...fixture, status: "READY" }] } }), "QUALIFICATION_NOT_READY");
 });

@@ -139,6 +139,45 @@ test("SINGLE participant submit compatibility remains enabled", () => {
   );
 });
 
+test("frozen group qualification keeps scores visible and hides every source-history write", () => {
+  for (const profile of [
+    V2_SINGLE_GROUP_ONLY_RESULT_VIEW_PROFILE,
+    V2_DOUBLE_GROUP_ONLY_RESULT_VIEW_PROFILE,
+    V2_TEAM_GROUP_ONLY_RESULT_VIEW_PROFILE,
+  ]) {
+    for (const state of ["NONE", "PENDING", "CONFIRMED"] as const) {
+      for (const resolution of ["PLAYED", "FORFEIT"] as const) {
+        const view = buildV2GroupOnlyResultFixtureView(
+          fixture(state, resolution), { userId: "manager" }, true, profile,
+          { stage: "GROUP", sourceHistoryFrozen: true },
+        );
+        for (const [capability, allowed] of Object.entries(view)) {
+          if (capability.startsWith("can")) assert.equal(allowed, false, capability);
+        }
+        assert.equal(Boolean(view.authoritativeResult), state === "CONFIRMED");
+        assert.equal(Boolean(view.pendingResult), state === "PENDING");
+        assert.deepEqual(view.forfeitWinnerEntries, []);
+      }
+    }
+  }
+});
+
+test("a frozen group does not disable the ready knockout fixture or another open group", () => {
+  for (const stage of ["GROUP", "KNOCKOUT"] as const) {
+    const view = buildV2GroupOnlyResultFixtureView(
+      fixture(), { userId: "manager" }, true, V2_SINGLE_GROUP_ONLY_RESULT_VIEW_PROFILE,
+      { stage, sourceHistoryFrozen: stage === "KNOCKOUT" },
+    );
+    assert.equal(view.canSubmitResult, true);
+  }
+  const scheduled = buildV2GroupOnlyResultFixtureView(
+    { ...fixture(), status: "SCHEDULED" }, { userId: "manager" }, true,
+    V2_SINGLE_GROUP_ONLY_RESULT_VIEW_PROFILE, { stage: "KNOCKOUT" },
+  );
+  assert.equal(scheduled.canSubmitResult, false);
+  assert.equal(scheduled.canConfirmForfeit, false);
+});
+
 test("TEAM exposes aggregate scoring only to frozen captains or managers", () => {
   const base = fixture();
   const teamFixture = {

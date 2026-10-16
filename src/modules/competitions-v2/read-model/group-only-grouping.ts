@@ -4,6 +4,7 @@ import {
   validateV2KnockoutGraph,
   type V2KnockoutGraphSnapshot,
 } from "../application/knockout-advancement";
+import { validateV2ProgressiveKnockoutGraph, type V2ProgressiveKnockoutGraph } from "../application/progressive-knockout-graph";
 import { V2ResultApplicationError } from "../application/results-errors";
 import {
   parseV2SingleGroupTableLabelsFromMetadata,
@@ -108,6 +109,7 @@ const GROUPING_SELECT = Prisma.validator<Prisma.MatchSelect>()({
       qualifiersPerGroup: true,
       bracketPolicyVersion: true,
       createdAt: true,
+      knockoutSchedule: true,
       qualificationSnapshot: {
         select: {
           id: true,
@@ -155,6 +157,7 @@ const GROUPING_SELECT = Prisma.validator<Prisma.MatchSelect>()({
       groupKey: true,
       displayName: true,
       position: true,
+      qualificationSnapshot: { include: { standings: { orderBy: { rank: "asc" } } } },
       entries: {
         orderBy: [{ position: "asc" }, { id: "asc" }],
         select: {
@@ -255,6 +258,7 @@ const KNOCKOUT_DEPENDENCY_SELECT =
     sourceFixtureId: true,
     sourceOutcome: true,
     sourceQualificationStandingId: true,
+    sourceGroupId: true, sourceGroupRank: true,
     targetFixtureId: true,
     targetSide: true,
   });
@@ -396,12 +400,13 @@ export type V2KnockoutFixtureFeederReadModel =
   | Readonly<{
       kind: "QUALIFIER";
       dependencyId: string;
-      sourceQualificationStandingId: string;
-      sourceEntryId: string;
+      sourceQualificationStandingId: string | null;
+      sourceEntryId: string | null;
       sourceGroupId: string;
       sourceRank: number;
       qualificationOrder: number;
-      resolved: true;
+      resolved: boolean;
+      empty?: boolean;
     }>
   | Readonly<{
       kind: "WINNER";
@@ -458,6 +463,15 @@ export type V2QualificationSnapshotReadModel = Readonly<{
   standings: readonly V2QualificationStandingReadModel[];
 }>;
 
+export type V2GroupQualificationReadModel = Readonly<{
+  groupId: string; groupKey: string; groupName: string;
+  status: "PENDING" | "READY" | "FROZEN";
+  canFreezeGroup: boolean; sourceHistoryFrozen: boolean;
+  snapshotId: string | null; frozenAt: string | null;
+  sourceRevisionFingerprint: string | null;
+  standings: readonly V2QualificationStandingReadModel[];
+}>;
+
 export type V2KnockoutBracketReadModel = Readonly<{
   fixtureCount: number;
   roundCount: number;
@@ -504,6 +518,8 @@ export type V2GroupOnlyGroupingReadModel =
       published: boolean;
       qualifiersPerGroup: number | null;
       managementState: V2GroupThenKnockoutManagementState;
+      knockoutProfile: "GLOBAL_SNAPSHOT" | "PROGRESSIVE_GROUP_RANK" | null;
+      groupQualifications: readonly V2GroupQualificationReadModel[];
       qualification: V2QualificationSnapshotReadModel | null;
       knockout: V2KnockoutBracketReadModel | null;
     }>;
@@ -985,6 +1001,24 @@ function validateKnockoutProjection(
   const standingsById = new Map(
     qualificationStandings.map((standing) => [standing.standingId, standing]),
   );
+  return {
+    qualification: {
+      snapshotId: snapshot.id, frozenAt: snapshot.createdAt.toISOString(),
+      sourceRevisionFingerprint: snapshot.sourceRevisionFingerprint,
+      standings: qualificationStandings,
+    } satisfies V2QualificationSnapshotReadModel,
+    knockout: mapKnockoutFixtures(source, knockoutFixtures, knockoutDependencies, entriesById, profile, standingsById),
+  };
+}
+
+function mapKnockoutFixtures(
+  source: Source,
+  knockoutFixtures: readonly Source["fixtures"][number][],
+  knockoutDependencies: readonly SourceDependency[],
+  entriesById: ReadonlyMap<string, SourceEntry>,
+  profile: V2GroupOnlyGroupingReadProfile,
+  standingsById: ReadonlyMap<string, V2QualificationStandingReadModel>,
+): V2KnockoutBracketReadModel {
   const fixturesById = new Map(knockoutFixtures.map((fixture) => [fixture.id, fixture]));
   const dependencyByTargetSide = new Map(
     knockoutDependencies.map((dependency) => [
@@ -1035,6 +1069,23 @@ function validateKnockoutProjection(
         participant.members,
         profile,
       );
+    }
+    if (dependency.sourceGroupId != null) {
+      const group = source.matchGroups.find(group => group.id === dependency.sourceGroupId);
+      if (!group || dependency.sourceGroupRank === null) integrity(source, "A progressive group feeder is invalid.", dependency.id);
+      const snapshot = group.qualificationSnapshot;
+      const standing = snapshot?.standings.find(standing => standing.rank === dependency.sourceGroupRank);
+      return {
+        feeder: {
+          kind: "QUALIFIER", dependencyId: dependency.id,
+          sourceQualificationStandingId: standing?.qualified ? standing.id : null,
+          sourceEntryId: standing?.qualified ? standing.entryId : null,
+          sourceGroupId: group.id, sourceRank: dependency.sourceGroupRank,
+          qualificationOrder: (dependency.sourceGroupRank - 1) * source.matchGroups.length + group.position,
+          resolved: snapshot !== null, empty: snapshot !== null && !standing?.qualified,
+        },
+        entry: participant,
+      };
     }
     if (dependency.sourceQualificationStandingId !== null) {
       const standing = standingsById.get(dependency.sourceQualificationStandingId);
@@ -1144,7 +1195,7 @@ function validateKnockoutProjection(
     (fixture) => fixture.roundNumber === roundCount && fixture.position === 1,
   );
   if (!final) {
-    integrity(source, "The knockout bracket has no terminal final Fixture.", snapshot.id);
+    integrity(source, "The knockout bracket has no terminal final Fixture.", source.id);
   }
   const rounds = Array.from({ length: roundCount }, (_, index) => {
     const roundNumber = index + 1;
@@ -1154,19 +1205,11 @@ function validateKnockoutProjection(
     };
   });
   return {
-    qualification: {
-      snapshotId: snapshot.id,
-      frozenAt: snapshot.createdAt.toISOString(),
-      sourceRevisionFingerprint: snapshot.sourceRevisionFingerprint,
-      standings: qualificationStandings,
-    } satisfies V2QualificationSnapshotReadModel,
-    knockout: {
-      fixtureCount: mappedFixtures.length,
-      roundCount,
-      finalFixtureId: final.fixtureId,
-      rounds,
-    } satisfies V2KnockoutBracketReadModel,
-  };
+    fixtureCount: mappedFixtures.length,
+    roundCount,
+    finalFixtureId: final.fixtureId,
+    rounds,
+  } satisfies V2KnockoutBracketReadModel;
 }
 
 function build(
@@ -1246,6 +1289,7 @@ function build(
           qualifiersPerGroup: null,
           managementState: "UNPUBLISHED",
           qualification: null,
+          knockoutProfile: null, groupQualifications: [],
           knockout: null,
         };
   }
@@ -1524,42 +1568,60 @@ function build(
   }
 
   const snapshot = grouping.qualificationSnapshot ?? null;
+  const schedule = grouping.knockoutSchedule ?? null;
   if (source.format === "group_only") {
-    if (
-      snapshot !== null ||
-      knockoutFixtureRows.length > 0 ||
-      knockoutDependencies.length > 0
-    ) {
-      integrity(source, "A group-only match contains knockout publication state.");
-    }
-  } else if (
-    (snapshot !== null ||
-      knockoutFixtureRows.length > 0 ||
-      knockoutDependencies.length > 0) &&
-    !(
-      snapshot !== null &&
-      knockoutFixtureRows.length > 0 &&
-      knockoutDependencies.length > 0
-    )
-  ) {
-    integrity(
-      source,
-      "The qualification snapshot and knockout graph are only partially materialized.",
-    );
+    if (snapshot !== null || schedule !== null || source.matchGroups.some(group => group.qualificationSnapshot != null) || knockoutFixtureRows.length > 0 || knockoutDependencies.length > 0) integrity(source, "A group-only match contains knockout publication state.");
+  } else if ((snapshot !== null && schedule !== null) ||
+      ((snapshot !== null || schedule !== null || knockoutFixtureRows.length > 0 || knockoutDependencies.length > 0) &&
+       !((snapshot !== null || schedule !== null) && knockoutFixtureRows.length > 0 && knockoutDependencies.length > 0)) ||
+      (!schedule && source.matchGroups.some(group => group.qualificationSnapshot != null))) {
+    integrity(source, "The knockout authority and graph are partially materialized or conflicting.");
   }
-
-  const knockoutPublication =
-    source.format === "group_then_knockout" && snapshot !== null
-      ? validateKnockoutProjection(
-          source,
-          grouping,
-          knockoutFixtureRows,
-          knockoutDependencies,
-          groups,
-          entriesById,
-          profile,
-        )
-      : null;
+  const groupQualifications = groups.map((group): V2GroupQualificationReadModel => {
+    const row = source.matchGroups.find(row => row.id === group.groupId)!;
+    const frozen = row.qualificationSnapshot ?? null;
+    const terminal = group.fixtures.every(fixture =>
+      (fixture.status === "COMPLETED" && fixture.activeResult.state === "CONFIRMED") ||
+      (fixture.status === "VOIDED" && fixture.activeResult.state === "NONE"));
+    const standings = frozen?.standings.map(standing => {
+      const entry = entriesById.get(standing.entryId);
+      if (!entry) integrity(source, "A frozen group standing points to a missing Entry.", standing.id);
+      const members = membersAtRoster(source, entry, standing.rosterVersion, profile);
+      validateSourceSnapshot(source, entry, members, profile);
+      return {
+        standingId: standing.id, snapshotId: frozen.id, groupId: group.groupId,
+        entryId: standing.entryId, frozenDisplayName: profile.entryKind === "DOUBLES" ? members.map(member => member.frozenDisplayName).join(" / ") : entry.displayNameSnapshot,
+        rosterVersion: standing.rosterVersion, members,
+        rank: standing.rank, played: standing.played, wins: standing.wins, losses: standing.losses,
+        scoreFor: standing.scoreFor, scoreAgainst: standing.scoreAgainst, scoreDifferential: standing.scoreDifferential,
+        qualified: standing.qualified, qualificationOrder: standing.qualificationOrder, ineligibilityReason: standing.ineligibilityReason,
+      } satisfies V2QualificationStandingReadModel;
+    }) ?? [];
+    return {
+      groupId: group.groupId, groupKey: group.groupKey, groupName: group.displayName,
+      status: frozen ? "FROZEN" : terminal ? "READY" : "PENDING",
+      canFreezeGroup: schedule !== null && frozen === null && terminal && source.status === "ongoing",
+      sourceHistoryFrozen: frozen !== null || snapshot !== null,
+      snapshotId: frozen?.id ?? null, frozenAt: frozen?.createdAt.toISOString() ?? null,
+      sourceRevisionFingerprint: frozen?.sourceRevisionFingerprint ?? null, standings,
+    };
+  });
+  let knockoutPublication: {qualification: V2QualificationSnapshotReadModel | null; knockout: V2KnockoutBracketReadModel} | null = snapshot !== null
+    ? validateKnockoutProjection(source, grouping, knockoutFixtureRows, knockoutDependencies, groups, entriesById, profile)
+    : null;
+  if (schedule !== null) {
+    const graph = {
+      match: source, grouping, schedule, groups: source.matchGroups,
+      fixtures: knockoutFixtureRows, dependencies: knockoutDependencies,
+      rosterMembers: source.entries.flatMap(entry => entry.members.map(member => ({ id: member.id, entryId: entry.id, rosterVersion: member.rosterVersion, slot: member.slot }))),
+    } satisfies V2ProgressiveKnockoutGraph;
+    try { validateV2ProgressiveKnockoutGraph(graph); }
+    catch (error) {
+      if (error instanceof V2ResultApplicationError) integrity(source, `The progressive knockout graph is malformed: ${error.message}`, typeof error.details.fixtureId === "string" ? error.details.fixtureId : schedule.id);
+      throw error;
+    }
+    knockoutPublication = { qualification: null, knockout: mapKnockoutFixtures(source, knockoutFixtureRows, knockoutDependencies, entriesById, profile, new Map()) };
+  }
   const allGroupFixturesConfirmed = groups.every((group) =>
     group.fixtures.every(
       (fixture) =>
@@ -1599,6 +1661,8 @@ function build(
             : allGroupFixturesConfirmed
               ? "READY_TO_FINALIZE"
               : "GROUP_IN_PROGRESS",
+        knockoutProfile: schedule !== null ? "PROGRESSIVE_GROUP_RANK" : snapshot !== null ? "GLOBAL_SNAPSHOT" : null,
+        groupQualifications,
         qualification: knockoutPublication?.qualification ?? null,
         knockout: knockoutPublication?.knockout ?? null,
       };

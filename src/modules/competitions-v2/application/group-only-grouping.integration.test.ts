@@ -4,6 +4,8 @@ import test from "node:test";
 import { PrismaClient } from "@prisma/client";
 import { createV2RelationalGroupTableLabelsApplicationService } from "./relational-group-table-labels";
 import { readGroupVenueAssignment } from "../domain/group-venue";
+import { createV2ProgressiveKnockoutPublicationApplicationService } from "./progressive-knockout-publication";
+import { createV2KnockoutTableLabelsApplicationService } from "./knockout-table-labels";
 
 import {
   createV2GroupOnlyGroupingApplicationService,
@@ -361,6 +363,30 @@ for (const fixtureCase of cases) {
           }),
           1,
         );
+        if (format === "group_then_knockout") {
+          const originalGroups = await db.matchFixture.findMany({where:{matchId,stage:"GROUP"},orderBy:{id:"asc"}});
+          const early = createV2ProgressiveKnockoutPublicationApplicationService({db});
+          await assert.rejects(early.publish({actor:{id:participantIds[0],role:"user"},matchId}));
+          const firstEarly = await early.publish({actor:{id:ownerId,role:"user"},matchId});
+          assert.equal(firstEarly.created,true);
+          assert.equal(firstEarly.fixtureCount,1);
+          const earlyModel = await getV2GroupOnlyGroupingReadModel(db,matchId,fixtureCase.readProfile);
+          if (earlyModel.kind !== "GROUP_THEN_KNOCKOUT_V2_MATCH") assert.fail("early schedule unreadable");
+          assert.equal(earlyModel.knockoutProfile,"PROGRESSIVE_GROUP_RANK");
+          assert.equal(earlyModel.knockout!.rounds[0].fixtures[0].status,"SCHEDULED");
+          assert.equal(earlyModel.knockout!.rounds[0].fixtures[0].sideA.entry,null);
+          const target = earlyModel.knockout!.rounds[0].fixtures[0];
+          const labels = createV2KnockoutTableLabelsApplicationService({db});
+          await labels.update({actor:{id:ownerId,role:"user"},matchId,fixtureId:target.fixtureId,expectedFixtureVersion:target.fixtureVersion,labels:["东区乒乓球馆","5 号台"]});
+          const afterLabels = await getV2GroupOnlyGroupingReadModel(db,matchId,fixtureCase.readProfile);
+          if (afterLabels.kind !== "GROUP_THEN_KNOCKOUT_V2_MATCH") assert.fail("early labels unreadable");
+          assert.deepEqual(afterLabels.knockout!.rounds[0].fixtures[0].tableLabels,["东区乒乓球馆","5 号台"]);
+          assert.equal((await early.publish({actor:{id:ownerId,role:"user"},matchId})).created,false);
+          assert.deepEqual(await db.matchFixture.findMany({where:{matchId,stage:"GROUP"},orderBy:{id:"asc"}}),originalGroups);
+          assert.equal(await db.matchQualificationSnapshot.count({where:{matchId}}),0);
+          assert.equal(await db.matchGroupQualificationSnapshot.count({where:{matchId}}),0);
+          assert.equal(await db.matchFixtureDependency.count({where:{matchId,sourceGroupId:{not:null}}}),2);
+        }
       } finally {
         await db.$disconnect();
       }
