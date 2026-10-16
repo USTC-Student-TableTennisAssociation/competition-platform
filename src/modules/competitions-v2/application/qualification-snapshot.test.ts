@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 
 import { V2CompetitionApplicationError } from "./entries";
 import {
@@ -53,6 +53,7 @@ function memberRows(type: MatchType, entryId: string) {
     effectiveFrom: PUBLISHED_AT,
     effectiveUntil: null as Date | null,
     endReason: null as string | null,
+    createdAt: PUBLISHED_AT,
   }));
 }
 
@@ -172,6 +173,8 @@ function initialState(type: MatchType = "single") {
     kind: entryKind(type),
     status: "ACTIVE" as "DRAFT" | "ACTIVE" | "WITHDRAWN" | "DISQUALIFIED" | "ARCHIVED",
     version: 0,
+    metadata: null as Prisma.JsonValue | null,
+    createdAt: PUBLISHED_AT,
   }));
   const members = entryIds.flatMap((entryId) => memberRows(type, entryId));
   const fixtures = [
@@ -937,4 +940,80 @@ test("rejects command over-posting before opening a transaction", async () => {
     "INVALID_INPUT",
   );
   assert.equal(state.isolationLevels.length, 0);
+});
+
+function markLateAdmission(state: State) {
+  const admittedAt = new Date(PUBLISHED_AT.getTime() + 60_000);
+  const marker = {
+    schemaVersion: 1, groupingId: state.grouping.id, groupId: "group-1",
+    admittedAt: admittedAt.toISOString(), requestKey: "late-entry-a", reason: "Approved late singles admission",
+  };
+  state.entries[0].metadata = { v2LateAdmission: marker };
+  state.entries[0].createdAt = admittedAt;
+  state.memberships[0].createdAt = admittedAt;
+  state.members[0].createdAt = admittedAt;
+  state.members[0].effectiveFrom = admittedAt;
+  return marker;
+}
+
+test("explicit late singles admission preserves true times through qualification and binds its facts", async () => {
+  const state = initialState();
+  const marker = markLateAdmission(state);
+  const first = await service(state).freeze(command());
+  assert.equal(first.created, true);
+  assert.ok(state.members[0].effectiveFrom > state.grouping.createdAt);
+  assert.equal((await service(state).freeze(command())).created, false);
+  state.entries[0].metadata = { v2LateAdmission: { ...marker, reason: "Changed after qualification froze" } };
+  await expectApplicationError(() => service(state).freeze(command()), "PERSISTENCE_CONFLICT");
+  assert.equal(state.snapshotWrites, 1);
+});
+
+test("unmarked late rosters retain the original publication-time rejection", async () => {
+  const state = initialState();
+  markLateAdmission(state);
+  state.entries[0].metadata = null;
+  await expectApplicationError(() => service(state).freeze(command()), "PERSISTENCE_CONFLICT");
+  assert.equal(state.snapshotWrites, 0);
+});
+
+test("invalid, cross-group, forged and non-singles admission markers fail closed", async () => {
+  const changes: Array<(state: State, marker: ReturnType<typeof markLateAdmission>) => void> = [
+    (state) => { state.entries[0].metadata = { v2LateAdmission: null }; },
+    (state, marker) => { state.entries[0].metadata = { v2LateAdmission: { ...marker, schemaVersion: 2 } }; },
+    (state, marker) => { state.entries[0].metadata = { v2LateAdmission: { ...marker, groupId: "group-2" } }; },
+    (state, marker) => { state.entries[0].metadata = { v2LateAdmission: { ...marker, groupingId: "another-grouping" } }; },
+    (state, marker) => { state.entries[0].metadata = { v2LateAdmission: { ...marker, admittedAt: PUBLISHED_AT.toISOString() } }; },
+    (state, marker) => { state.entries[0].metadata = { v2LateAdmission: { ...marker, admittedAt: marker.admittedAt.replace(".000Z", "Z") } }; },
+    (state) => { state.memberships[0].createdAt = NOW; },
+    (state) => { state.entries[0].createdAt = PUBLISHED_AT; },
+    (state) => { state.members[0].createdAt = PUBLISHED_AT; },
+    (state) => { state.members[0].effectiveFrom = NOW; },
+    (state, marker) => {
+      const future = new Date(NOW.getTime() + 1);
+      state.entries[0].metadata = { v2LateAdmission: { ...marker, admittedAt: future.toISOString() } };
+      state.entries[0].createdAt = future;
+      state.memberships[0].createdAt = future;
+      state.members[0].createdAt = future;
+      state.members[0].effectiveFrom = future;
+    },
+    (state) => { state.memberships[0].rosterVersion = 2; },
+    (state, marker) => { state.entries[0].metadata = { v2LateAdmission: { ...marker, requestKey: "" } }; },
+    (state, marker) => { state.entries[0].metadata = { v2LateAdmission: { ...marker, unexpected: true } }; },
+    (state) => { state.match.type = "double"; },
+  ];
+  for (const change of changes) {
+    const state = initialState();
+    const marker = markLateAdmission(state);
+    change(state, marker);
+    await expectApplicationError(() => service(state).freeze(command()), "PERSISTENCE_CONFLICT");
+    assert.equal(state.snapshotWrites, 0);
+  }
+});
+
+test("ordinary entry metadata remains outside the existing qualification fingerprint", async () => {
+  const original = await service(initialState()).freeze(command());
+  const state = initialState();
+  state.entries[0].metadata = { unrelated: "existing entry information" };
+  const result = await service(state).freeze(command());
+  assert.equal(result.sourceRevisionFingerprint, original.sourceRevisionFingerprint);
 });

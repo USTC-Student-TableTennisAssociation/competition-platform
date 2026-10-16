@@ -120,6 +120,8 @@ type EntryRow = Readonly<{
   kind: "INDIVIDUAL" | "DOUBLES" | "TEAM";
   status: "DRAFT" | "ACTIVE" | "WITHDRAWN" | "DISQUALIFIED" | "ARCHIVED";
   version: number;
+  metadata: Prisma.JsonValue | null;
+  createdAt: Date;
 }>;
 
 type EntryMemberRow = Readonly<{
@@ -134,6 +136,7 @@ type EntryMemberRow = Readonly<{
   effectiveFrom: Date;
   effectiveUntil: Date | null;
   endReason: string | null;
+  createdAt: Date;
 }>;
 
 type UserRow = Readonly<{
@@ -250,6 +253,57 @@ type LockedUsers = Readonly<{
   actor: UserRow;
   byId: ReadonlyMap<string, UserRow>;
 }>;
+
+type LateAdmission = Readonly<{
+  schemaVersion: 1;
+  groupingId: string;
+  groupId: string;
+  admittedAt: string;
+  requestKey: string;
+  reason: string;
+}>;
+
+/** Only an explicit server-owned late singles admission changes the original roster cutoff. */
+function lateAdmissionForMembership(
+  match: MatchRow,
+  grouping: GroupingRow,
+  membership: GroupEntryRow,
+  entry: EntryRow,
+  members: readonly EntryMemberRow[],
+): LateAdmission | null {
+  if (!isRecord(entry.metadata) || !Object.hasOwn(entry.metadata, "v2LateAdmission")) return null;
+  const value = entry.metadata.v2LateAdmission;
+  const fields = ["schemaVersion", "groupingId", "groupId", "admittedAt", "requestKey", "reason"];
+  const boundedText = (text: unknown, max: number): text is string =>
+    typeof text === "string" && text.length > 0 && text.length <= max &&
+    text === text.trim() && !/[\u0000-\u001f\u007f]/.test(text);
+  if (!isRecord(value) || Object.keys(value).length !== fields.length ||
+      Object.keys(value).some(key => !fields.includes(key)) || value.schemaVersion !== 1 ||
+      value.groupingId !== grouping.id || value.groupId !== membership.groupId ||
+      !boundedText(value.requestKey, MAX_IDENTIFIER_LENGTH) || !boundedText(value.reason, 500) ||
+      typeof value.admittedAt !== "string" || match.type !== "single" ||
+      entry.kind !== "INDIVIDUAL" || membership.rosterVersion !== 1 ||
+      members.length !== 1 || members[0].rosterVersion !== 1 ||
+      members[0].role !== "player" || members[0].slot !== 1) {
+    fail("PERSISTENCE_CONFLICT", "The late admission marker is invalid.", { entryId: entry.id });
+  }
+  const admittedAt = new Date(value.admittedAt);
+  const member = members[0];
+  assertDatabaseDate(entry.createdAt, "lateAdmission.entry.createdAt");
+  assertDatabaseDate(member.createdAt, "lateAdmission.member.createdAt");
+  assertDatabaseDate(member.effectiveFrom, "lateAdmission.member.effectiveFrom");
+  if (!Number.isFinite(admittedAt.getTime()) || admittedAt.toISOString() !== value.admittedAt ||
+      admittedAt.getTime() !== membership.createdAt.getTime() ||
+      admittedAt.getTime() <= grouping.createdAt.getTime() ||
+      [entry.createdAt, member.createdAt, member.effectiveFrom].some(date =>
+        date.getTime() <= grouping.createdAt.getTime() || date.getTime() > admittedAt.getTime())) {
+    fail("PERSISTENCE_CONFLICT", "The late admission timestamps do not match the admitted roster.", { entryId: entry.id });
+  }
+  return {
+    schemaVersion: 1, groupingId: grouping.id, groupId: membership.groupId,
+    admittedAt: admittedAt.toISOString(), requestKey: value.requestKey, reason: value.reason,
+  };
+}
 
 function fail(
   code: V2CompetitionApplicationError["code"],
@@ -1258,7 +1312,7 @@ async function freezeInTransaction(
   );
   const entries = (await tx.matchEntry.findMany({
     where: { id: { in: entryIds } },
-    select: { id: true, matchId: true, kind: true, status: true, version: true },
+    select: { id: true, matchId: true, kind: true, status: true, version: true, metadata: true, createdAt: true },
   })) as readonly EntryRow[];
   const entriesById = new Map(entries.map((entry) => [entry.id, entry]));
   if (entriesById.size !== entryIds.length) {
@@ -1281,6 +1335,7 @@ async function freezeInTransaction(
       effectiveFrom: true,
       effectiveUntil: true,
       endReason: true,
+      createdAt: true,
     },
   })) as readonly EntryMemberRow[];
   if (memberRows.length > MAX_MEMBER_HISTORY_COUNT) {
@@ -1325,6 +1380,8 @@ async function freezeInTransaction(
 
   const membershipsByGroup = new Map<string, GroupEntryRow[]>();
   const frozenRosters = new Map<string, FrozenRoster>();
+  const lateAdmissions = new Map<string, LateAdmission>();
+  const rosterSnapshotTimes = new Map<string, Date>();
   const frozenUserIds = new Set<string>();
   for (const membership of memberships) {
     const entry = entriesById.get(membership.entryId);
@@ -1351,6 +1408,11 @@ async function freezeInTransaction(
     const groupMemberships = membershipsByGroup.get(membership.groupId) ?? [];
     groupMemberships.push(membership);
     membershipsByGroup.set(membership.groupId, groupMemberships);
+    const allEntryMembers = [...(memberRowsByEntryRoster.get(membership.entryId)?.values() ?? [])].flat();
+    const lateAdmission = lateAdmissionForMembership(match, grouping, membership, entry, allEntryMembers);
+    const rosterSnapshotAt = lateAdmission ? new Date(lateAdmission.admittedAt) : grouping.createdAt;
+    if (lateAdmission) lateAdmissions.set(membership.entryId, lateAdmission);
+    rosterSnapshotTimes.set(membership.entryId, rosterSnapshotAt);
     const roster = validateFrozenRoster(
       match,
       grouping,
@@ -1359,6 +1421,7 @@ async function freezeInTransaction(
       memberRowsByEntryRoster
         .get(membership.entryId)
         ?.get(membership.rosterVersion) ?? [],
+      rosterSnapshotAt,
     );
     for (const member of roster.members) {
       if (frozenUserIds.has(member.userId)) {
@@ -1396,6 +1459,9 @@ async function freezeInTransaction(
   const frozenAt = clock();
   if (!(frozenAt instanceof Date) || !Number.isFinite(frozenAt.getTime())) {
     fail("INVALID_INPUT", "The qualification snapshot clock is invalid.");
+  }
+  if ([...lateAdmissions.values()].some(admission => new Date(admission.admittedAt) > frozenAt)) {
+    fail("PERSISTENCE_CONFLICT", "A late admission cannot be effective in the future.");
   }
   if (
     lockedUsers.actor.role !== "admin" &&
@@ -1525,7 +1591,7 @@ async function freezeInTransaction(
     fixtureKeys.add(fixture.fixtureKey);
     const fixtureRoster = (membership: GroupEntryRow, version: number) => {
       const members = memberRowsByEntryRoster.get(membership.entryId)?.get(version) ?? [];
-      const snapshotAt = version === membership.rosterVersion ? grouping.createdAt : new Date(Math.max(...members.map(member => member.effectiveFrom.getTime())));
+      const snapshotAt = version === membership.rosterVersion ? rosterSnapshotTimes.get(membership.entryId)! : new Date(Math.max(...members.map(member => member.effectiveFrom.getTime())));
       return validateFrozenRoster(match, grouping, { ...membership, rosterVersion: version }, entriesById.get(membership.entryId)!, members, snapshotAt);
     };
     const sideARoster = fixtureRoster(sideA, fixture.sideARosterVersion!);
@@ -1851,6 +1917,16 @@ async function freezeInTransaction(
       rosterVersion: membership.rosterVersion,
       currentEntryStatus: entriesById.get(membership.entryId)!.status,
       currentEntryVersion: entriesById.get(membership.entryId)!.version,
+      // Keep existing publication fingerprints byte-for-byte compatible for
+      // ordinary entries, while binding every explicit admission fact.
+      ...(lateAdmissions.has(membership.entryId) ? {
+        lateAdmission: {
+          ...lateAdmissions.get(membership.entryId)!,
+          membershipCreatedAt: membership.createdAt.toISOString(),
+          entryCreatedAt: entriesById.get(membership.entryId)!.createdAt.toISOString(),
+          memberCreatedAt: frozenRosters.get(membership.entryId)!.members[0].createdAt.toISOString(),
+        },
+      } : {}),
       members: frozenRosters.get(membership.entryId)!.members.map((member) => ({
         id: member.id,
         userId: member.userId,
