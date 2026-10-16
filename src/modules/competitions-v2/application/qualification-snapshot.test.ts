@@ -6,6 +6,7 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import { V2CompetitionApplicationError } from "./entries";
 import {
   createV2QualificationSnapshotApplicationService,
+  loadV2QualificationSourceInTransaction,
   type FreezeV2QualificationSnapshotCommand,
 } from "./qualification-snapshot";
 
@@ -358,6 +359,7 @@ function initialState(type: MatchType = "single") {
       createdAt: Date;
     }>,
     snapshotWrites: 0,
+    progressiveSchedule: false,
     standingWrites: 0,
     auditWrites: 0,
     auditDetails: null as unknown,
@@ -474,6 +476,7 @@ function fakeDatabase(state: State) {
         return { id: state.snapshot.id, createdAt: state.snapshot.createdAt };
       },
     },
+    matchKnockoutSchedule: { findUnique: async () => state.progressiveSchedule ? { id: "schedule-1" } : null },
     matchQualificationStanding: {
       findMany: async () => state.standings.map((standing) => ({ ...standing })),
       createMany: async (args: {
@@ -1016,4 +1019,48 @@ test("ordinary entry metadata remains outside the existing qualification fingerp
   state.entries[0].metadata = { unrelated: "existing entry information" };
   const result = await service(state).freeze(command());
   assert.equal(result.sourceRevisionFingerprint, original.sourceRevisionFingerprint);
+});
+
+function progressiveSource(state: State, groupId = "group-1") {
+  return fakeDatabase(state).$transaction(tx =>
+    loadV2QualificationSourceInTransaction(tx, command(), () => NOW, { groupId }));
+}
+
+test("shared qualification source freezes a completed group while another group is unplayed", async () => {
+  const state = initialState();
+  state.fixtures[1].status = "READY";
+  state.fixtures[1].completedAt = null;
+  state.revisions = state.revisions.filter(row => row.fixtureId !== "fixture-cd");
+  state.settlements = state.settlements.filter(row => row.resultRevisionId !== "revision-cd");
+  const source = await progressiveSource(state);
+  assert.deepEqual(source.evaluation.standings.map(row => row.entryId), ["entry-a", "entry-b"]);
+  assert.equal(source.evaluation.qualificationCount, 1);
+  assert.equal(source.memberships.length, 4);
+  assert.equal(state.snapshotWrites, 0);
+  await expectApplicationError(() => progressiveSource(state, "group-2"), "FIXTURE_RESULT_REQUIRED");
+});
+
+test("progressive group fingerprints ignore other groups' valid results but still validate their ledgers", async () => {
+  const state = initialState();
+  const first = await progressiveSource(state);
+  state.revisions[1].reason = "An unrelated group's result history changed";
+  const second = await progressiveSource(state);
+  assert.equal(first.sourceRevisionFingerprint, second.sourceRevisionFingerprint);
+  state.settlements[1].effects.pop();
+  await expectApplicationError(() => progressiveSource(state), "PERSISTENCE_CONFLICT");
+});
+
+test("progressive qualification uses real late-admission dates and rejects global seed corruption", async () => {
+  const state = initialState();
+  markLateAdmission(state);
+  assert.equal((await progressiveSource(state)).evaluation.qualificationCount, 1);
+  state.memberships[3].globalSeedRank = 100;
+  await expectApplicationError(() => progressiveSource(state), "PERSISTENCE_CONFLICT");
+});
+
+test("legacy full-snapshot freezing cannot overwrite an early published progressive schedule", async () => {
+  const state = initialState();
+  state.progressiveSchedule = true;
+  await expectApplicationError(() => service(state).freeze(command()), "FIXTURE_CREATION_NOT_ALLOWED");
+  assert.equal(state.snapshotWrites, 0);
 });

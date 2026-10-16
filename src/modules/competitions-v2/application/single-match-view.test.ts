@@ -365,7 +365,9 @@ function model(input: Readonly<{
             published: true,
             qualifiersPerGroup: 1,
             managementState: "GROUP_IN_PROGRESS",
-            qualification: null,
+            knockoutProfile: null,
+        groupQualifications: [],
+        qualification: null,
             knockout: null,
           },
   };

@@ -11,6 +11,7 @@ import {
   type V2Actor,
   type V2CompetitionTransaction,
 } from "./entries";
+import { loadAndValidateV2ProgressiveKnockoutGraph } from "./progressive-knockout-graph";
 
 const KNOCKOUT_PUBLICATION = "V2_KNOCKOUT_BRACKET";
 const KNOCKOUT_SCHEMA_VERSION = 1;
@@ -186,6 +187,7 @@ async function updateInTransaction(
         isQuickMatch: true,
         format: true,
         createdBy: true,
+        knockoutSchedule: true,
         groupingResult: {
           select: {
             qualificationSnapshot: {
@@ -209,7 +211,7 @@ async function updateInTransaction(
     match.status !== "ongoing" ||
     match.format !== "group_then_knockout" ||
     (match.type !== "single" && match.type !== "double" && match.type !== "team") ||
-    !match.groupingResult?.qualificationSnapshot
+    (!match.groupingResult?.qualificationSnapshot && !match.knockoutSchedule)
   ) {
     fail(
       "FIXTURE_CREATION_NOT_ALLOWED",
@@ -265,13 +267,21 @@ async function updateInTransaction(
       actualVersion: fixture.version,
     });
   }
-  const snapshot = match.groupingResult.qualificationSnapshot;
-  const metadata = parseKnockoutMetadata(fixture.metadata, {
-    snapshotId: snapshot.id,
-    sourceRevisionFingerprint: snapshot.sourceRevisionFingerprint,
-    roundNumber: fixture.roundNumber,
-    position: fixture.position,
-  });
+  let metadata: ReturnType<typeof parseKnockoutMetadata>;
+  if (match.knockoutSchedule) {
+    if (match.groupingResult?.qualificationSnapshot) fail("PERSISTENCE_CONFLICT", "Two knockout publication profiles cannot coexist.");
+    await loadAndValidateV2ProgressiveKnockoutGraph(tx,match);
+    const labels = parseV2SingleGroupTableLabelsFromMetadata(fixture.metadata);
+    metadata = isRecord(fixture.metadata) && labels !== null ? {value:fixture.metadata,labels} : null;
+  } else {
+    const snapshot = match.groupingResult!.qualificationSnapshot!;
+    metadata = parseKnockoutMetadata(fixture.metadata, {
+      snapshotId: snapshot.id,
+      sourceRevisionFingerprint: snapshot.sourceRevisionFingerprint,
+      roundNumber: fixture.roundNumber,
+      position: fixture.position,
+    });
+  }
   if (!metadata) {
     fail("FIXTURE_KEY_CONFLICT", "The knockout Fixture metadata is invalid.", {
       fixtureId: fixture.id,

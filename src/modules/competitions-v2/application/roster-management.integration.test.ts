@@ -11,6 +11,8 @@ import { createV2QualificationAndKnockoutPublicationApplicationService } from ".
 import { getV2DoubleRegistrationReadState } from "../read-model/double-registration";
 import { getV2TeamRegistrationReadState } from "../read-model/team-registration";
 import { getV2CertificateReadState } from "../read-model/single-certificate";
+import { createV2ProgressiveKnockoutPublicationApplicationService } from "./progressive-knockout-publication";
+import { createV2ProgressiveQualificationApplicationService } from "./progressive-qualification";
 
 const url = process.env.V2_CORE_INTEGRATION_DATABASE_URL;
 
@@ -66,6 +68,61 @@ async function setup(db: PrismaClient, type: "double" | "team", knockout = false
     await db.user.update({ where: { id: adminId }, data: { role: "user" } });
   }
   return { actor, adminId, matchId, entries, rosters, extras, results, fixture, submit, confirm, play, replace, read, cleanup };
+}
+
+for (const type of ["double", "team"] as const) {
+  test(`PostgreSQL progressive ${type}: frozen group history survives substitution and only future knockout rosters change`, { skip: !url }, async () => {
+    const db = new PrismaClient({ datasources: { db: { url } } });
+    const seeded = await setup(db, type, true);
+    const { matchId, actor, entries, rosters, extras, adminId } = seeded;
+    const entryId = entries[0].id;
+    try {
+      await createV2ProgressiveKnockoutPublicationApplicationService({ db }).publish({ actor, matchId });
+      const groups = await db.matchGroup.findMany({ where: { matchId }, orderBy: { position: "asc" } });
+      const groupFixtures = await db.matchFixture.findMany({ where: { matchId, stage: "GROUP" }, orderBy: { fixtureKey: "asc" } });
+      await seeded.play(groupFixtures[0].id, entryId);
+      const qualification = createV2ProgressiveQualificationApplicationService({ db });
+      await qualification.freezeGroup({ actor, matchId, groupId: groups[0].id });
+      const history = async () => ({
+        fixture: await db.matchFixture.findUniqueOrThrow({ where: { id: groupFixtures[0].id } }),
+        results: await db.resultRevision.findMany({ where: { fixtureId: groupFixtures[0].id }, orderBy: { id: "asc" } }),
+        lineup: await db.matchFixtureLineupMember.findMany({ where: { fixtureId: groupFixtures[0].id }, orderBy: { id: "asc" } }),
+        snapshot: await db.matchGroupQualificationSnapshot.findUniqueOrThrow({ where: { groupId: groups[0].id } }),
+        standings: await db.matchGroupQualificationStanding.findMany({ where: { groupId: groups[0].id }, orderBy: { id: "asc" } }),
+      });
+      const frozen = await history();
+      const first = await db.matchFixture.findFirstOrThrow({ where: { matchId, stage: "KNOCKOUT", OR: [{ sideAEntryId: entryId }, { sideBEntryId: entryId }] } });
+      assert.equal(first.status, "SCHEDULED");
+      await seeded.replace(entryId, [rosters[0][0], extras[0]]);
+      const rebound = await seeded.fixture(first.id);
+      assert.equal(rebound.sideAEntryId === entryId ? rebound.sideARosterVersion : rebound.sideBRosterVersion, 2);
+      assert.deepEqual(await history(), frozen);
+      await seeded.play(groupFixtures[1].id, groupFixtures[1].sideAEntryId!);
+      await qualification.freezeGroup({ actor, matchId, groupId: groups[1].id });
+      const ready = await seeded.fixture(first.id);
+      assert.equal(ready.status, "READY");
+      await startCompetitionFixture(db, { actor: { actorId: adminId, role: "admin" }, matchId,
+        fixtureId: ready.id, expectedFixtureVersion: ready.version, requiredFixtureStage: "KNOCKOUT" });
+      const started = await seeded.fixture(first.id);
+      const startedLineup = await db.matchFixtureLineupMember.findMany({ where: { fixtureId: first.id }, orderBy: { id: "asc" } });
+      await seeded.replace(entryId, [rosters[0][0], extras[1]]);
+      assert.deepEqual(await seeded.fixture(first.id), started);
+      assert.deepEqual(await db.matchFixtureLineupMember.findMany({ where: { fixtureId: first.id }, orderBy: { id: "asc" } }), startedLineup);
+      await seeded.play(first.id, entryId);
+      const other = await db.matchFixture.findFirstOrThrow({ where: { matchId, stage: "KNOCKOUT", roundNumber: 1, id: { not: first.id } } });
+      await seeded.play(other.id, other.sideAEntryId!);
+      const final = await db.matchFixture.findFirstOrThrow({ where: { matchId, stage: "KNOCKOUT", roundNumber: 2 } });
+      assert.equal(final.status, "READY");
+      assert.equal(final.sideAEntryId === entryId ? final.sideARosterVersion : final.sideBRosterVersion, 3);
+      await seeded.play(final.id, entryId);
+      assert.deepEqual(await history(), frozen);
+      assert.equal((await db.user.findUniqueOrThrow({ where: { id: rosters[0][1] } })).wins, 1);
+      assert.equal((await db.user.findUniqueOrThrow({ where: { id: extras[0] } })).wins, 1);
+      assert.equal((await db.user.findUniqueOrThrow({ where: { id: extras[1] } })).wins, 1);
+      assert.equal((await db.match.findUniqueOrThrow({ where: { id: matchId } })).status, "finished");
+      await seeded.read();
+    } finally { await seeded.cleanup(); await db.$disconnect(); }
+  });
 }
 
 for (const type of ["double", "team"] as const) {

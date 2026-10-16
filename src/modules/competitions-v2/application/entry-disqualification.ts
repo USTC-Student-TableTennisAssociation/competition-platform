@@ -14,6 +14,7 @@ import { finishV2GroupOnlyMatchIfTerminal } from "./match-completion";
 import { resolveV2KnockoutFixtureAdministratively } from "./knockout-advancement";
 import { confirmForfeitInTransaction } from "./results";
 import { lockAndLoadResultUsers } from "./settlements";
+import { reconcileV2ProgressiveKnockoutInTransaction } from "./progressive-knockout-graph";
 
 const MAX_MATCH_ENTRIES = 1_024;
 const MAX_MATCH_FIXTURES = 2_047;
@@ -284,6 +285,10 @@ export async function disqualifyV2EntriesInTransaction(
     fail("FORBIDDEN", "A finished competition cannot gain a new disqualification.");
   }
   await lockAggregateRows(tx, command.matchId);
+  const progressive = await tx.matchKnockoutSchedule?.findUnique({ where: { matchId: command.matchId }, select: { id: true } });
+  const frozenGroupIds = progressive
+    ? (await tx.matchGroupQualificationSnapshot.findMany({ where: { matchId: command.matchId }, select: { groupId: true } })).map(row => row.groupId)
+    : [];
   const entries = (await tx.matchEntry.findMany({
     where: { matchId: command.matchId },
     orderBy: { id: "asc" },
@@ -408,6 +413,7 @@ export async function disqualifyV2EntriesInTransaction(
   const affectedFixtures = await tx.matchFixture.findMany({
     where: {
       matchId: command.matchId,
+      ...(frozenGroupIds.length ? { NOT: { stage: "GROUP" as const, groupId: { in: frozenGroupIds } } } : {}),
       OR: [
         { sideAEntryId: { in: targetEntryIds } },
         { sideBEntryId: { in: targetEntryIds } },
@@ -455,6 +461,7 @@ export async function disqualifyV2EntriesInTransaction(
     where: {
       matchId: command.matchId,
       stage: "GROUP",
+      ...(frozenGroupIds.length ? { groupId: { notIn: frozenGroupIds } } : {}),
       status: { in: ["SCHEDULED", "READY"] },
       OR: [
         { sideAEntryId: { in: targetEntryIds } },
@@ -540,6 +547,9 @@ export async function disqualifyV2EntriesInTransaction(
     }
   }
 
+  if (progressive) {
+    await reconcileV2ProgressiveKnockoutInTransaction(tx, command.matchId, { actorId: context.actor.id, clock: () => now });
+  }
   for (let iteration = 0; iteration < MAX_MATCH_FIXTURES; iteration += 1) {
     const fixtures = await tx.matchFixture.findMany({
       where: {
@@ -698,6 +708,10 @@ export async function disqualifyV2EntriesInTransaction(
     if (iteration === MAX_MATCH_FIXTURES - 1) {
       fail("FIXTURE_DEPENDENCY_CYCLE", "Knockout disqualification did not converge.");
     }
+  }
+
+  if (progressive) {
+    await reconcileV2ProgressiveKnockoutInTransaction(tx, command.matchId, { actorId: context.actor.id, clock: () => now });
   }
 
   await finishV2GroupOnlyMatchIfTerminal(tx, context.match);

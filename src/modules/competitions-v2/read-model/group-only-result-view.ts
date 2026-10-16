@@ -217,9 +217,13 @@ export function buildV2GroupOnlyResultFixtureView(
   viewer: V2GroupOnlyResultViewer,
   isManager: boolean,
   profile: V2GroupOnlyResultViewProfile,
-  options: Readonly<{ stage?: "GROUP" | "KNOCKOUT" }> = {},
+  options: Readonly<{
+    stage?: "GROUP" | "KNOCKOUT";
+    sourceHistoryFrozen?: boolean;
+  }> = {},
 ): V2GroupOnlyResultFixtureView {
   const stage = options.stage ?? "GROUP";
+  const sourceHistoryMutable = stage !== "GROUP" || !options.sourceHistoryFrozen;
   const frozenUserIds = new Set([
     ...fixture.sideA.members.map((member) => member.userId),
     ...fixture.sideB.members.map((member) => member.userId),
@@ -277,16 +281,19 @@ export function buildV2GroupOnlyResultFixtureView(
     authoritativeResult: confirmedView,
     pendingResult: pending ? mapRevision(pending, profile) : null,
     canSubmitResult:
+      sourceHistoryMutable &&
       fixture.status === "READY" &&
       fixture.activeResult.state === "NONE" &&
       bothEntriesEligible &&
       (isManager || viewerMaySubmit),
     canVoidUnplayed:
+      sourceHistoryMutable &&
       stage === "GROUP" &&
       isManager &&
       (fixture.status === "SCHEDULED" || fixture.status === "READY") &&
       fixture.activeResult.state === "NONE",
     canConfirmPending: Boolean(
+      sourceHistoryMutable &&
       pending &&
         !eitherMemberBanned &&
         (correctionPending
@@ -295,8 +302,9 @@ export function buildV2GroupOnlyResultFixtureView(
             (isManager ||
               (viewerMayConfirm && viewer?.userId !== pending.reporter.userId))),
     ),
-    canRejectPending: Boolean(pending && isManager),
+    canRejectPending: Boolean(sourceHistoryMutable && pending && isManager),
     canSubmitCorrection: Boolean(
+      sourceHistoryMutable &&
       confirmedView?.resolutionKind === "PLAYED" &&
         (confirmedView.score || confirmedView.aggregateScore) &&
         fixture.status === "COMPLETED" &&
@@ -305,23 +313,26 @@ export function buildV2GroupOnlyResultFixtureView(
         isManager,
     ),
     canVoidConfirmed: Boolean(
+      sourceHistoryMutable &&
       stage === "GROUP" &&
         confirmed &&
         fixture.activeResult.state === "CONFIRMED" &&
         isManager,
     ),
     canConfirmForfeit:
+      sourceHistoryMutable &&
       isManager &&
       fixture.status === "READY" &&
       fixture.activeResult.state === "NONE" &&
       forfeitWinnerEntries.length > 0,
     canCorrectForfeit: Boolean(
+      sourceHistoryMutable &&
       isManager &&
         fixture.status === "COMPLETED" &&
         fixture.activeResult.state === "CONFIRMED" &&
         confirmedView?.resolutionKind === "FORFEIT" &&
         correctedForfeitWinnerEligible,
     ),
-    forfeitWinnerEntries,
+    forfeitWinnerEntries: sourceHistoryMutable ? forfeitWinnerEntries : [],
   };
 }

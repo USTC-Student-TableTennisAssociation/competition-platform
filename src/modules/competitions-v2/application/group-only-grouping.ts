@@ -2,11 +2,18 @@ import { Prisma, type CompetitionFormat, type PrismaClient } from "@prisma/clien
 
 import { assertEngineCanWrite } from "../domain";
 import {
+  getV2GroupOnlyGroupingReadModelInTransaction,
+  V2_SINGLE_GROUPING_READ_PROFILE,
+  V2_DOUBLE_GROUPING_READ_PROFILE,
+  V2_TEAM_GROUPING_READ_PROFILE,
+} from "../read-model/group-only-grouping";
+import {
   V2CompetitionApplicationError,
   runV2Transaction,
   type V2Actor,
   type V2CompetitionTransaction,
 } from "./entries";
+import { publishV2ProgressiveKnockoutInTransaction } from "./progressive-knockout-publication";
 
 export const V2_GROUP_ONLY_PUBLICATION_SCHEMA_VERSION = 1;
 export const V2_GROUP_ONLY_STANDINGS_POLICY_VERSION = 1;
@@ -57,6 +64,7 @@ export type V2GroupOnlyGroupingApplicationService = Readonly<{
 export type V2GroupOnlyGroupingApplicationServiceDependencies = Readonly<{
   db: Pick<PrismaClient, "$transaction">;
   clock?: () => Date;
+  publishKnockoutEarly?: boolean;
 }>;
 
 export type V2GroupOnlyGroupingProfile = Readonly<{
@@ -1027,6 +1035,7 @@ async function publishInTransaction(
   command: NormalizedCommand,
   profile: V2GroupOnlyGroupingProfile,
   clock: () => Date,
+  allowProgressiveReplay = false,
 ): Promise<PublishV2GroupOnlyGroupingResult> {
   const lockedMatch = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
     SELECT "id" FROM "Match" WHERE "id" = ${command.matchId} FOR UPDATE
@@ -1417,10 +1426,33 @@ async function publishInTransaction(
     const downstreamFixtures = existingFixtures.filter(
       (fixture) => fixture.stage !== "GROUP",
     );
-    // This command owns only the group publication. Once a downstream bracket
-    // exists, callers must use the bracket read model instead of replaying a
-    // stale grouping command that cannot validate the later aggregate.
-    const downstreamFixtureStateAllowed = downstreamFixtures.length === 0;
+    // A production publication creates both phases atomically, so its exact
+    // retry must validate the complete progressive graph before returning.
+    // The legacy snapshot profile retains its original fail-closed boundary.
+    let downstreamFixtureStateAllowed = downstreamFixtures.length === 0;
+    if (
+      !downstreamFixtureStateAllowed &&
+      allowProgressiveReplay &&
+      profile.format === "group_then_knockout" &&
+      downstreamFixtures.every((fixture) => fixture.stage === "KNOCKOUT")
+    ) {
+      const readProfile =
+        profile.matchType === "single"
+          ? V2_SINGLE_GROUPING_READ_PROFILE
+          : profile.matchType === "double"
+            ? V2_DOUBLE_GROUPING_READ_PROFILE
+            : V2_TEAM_GROUPING_READ_PROFILE;
+      const model = await getV2GroupOnlyGroupingReadModelInTransaction(
+        tx,
+        command.matchId,
+        readProfile,
+      );
+      downstreamFixtureStateAllowed =
+        model.kind === "GROUP_THEN_KNOCKOUT_V2_MATCH" &&
+        model.knockoutProfile === "PROGRESSIVE_GROUP_RANK" &&
+        model.knockout !== null &&
+        model.knockout.fixtureCount === downstreamFixtures.length;
+    }
     const exactFixtures =
       downstreamFixtureStateAllowed &&
       existingGroupFixtures.length === expectedFixturesByKey.size &&
@@ -1685,9 +1717,8 @@ async function publishInTransaction(
 }
 
 /**
- * Generic relational group-phase publication kernel. Existing production
- * facades pass only the group_only profiles; group_then_knockout profiles remain
- * internal until qualification and bracket materialization are fully connected.
+ * Generic relational group-phase publication kernel. Production facades enable
+ * the fixed early knockout graph in the same transaction as group publication.
  */
 export function createV2GroupOnlyGroupingApplicationService(
   dependencies: V2GroupOnlyGroupingApplicationServiceDependencies,
@@ -1697,9 +1728,19 @@ export function createV2GroupOnlyGroupingApplicationService(
   return Object.freeze({
     publish: async (rawCommand) => {
       const command = normalizeCommand(rawCommand, profile);
-      return runV2Transaction(dependencies.db, (tx) =>
-        publishInTransaction(tx, command, profile, clock),
-      );
+      return runV2Transaction(dependencies.db, async (tx) => {
+        const result = await publishInTransaction(
+          tx,
+          command,
+          profile,
+          clock,
+          dependencies.publishKnockoutEarly === true,
+        );
+        if (dependencies.publishKnockoutEarly && result.created && command.draft.format === "group_then_knockout") {
+          await publishV2ProgressiveKnockoutInTransaction(tx,{actor:command.actor,matchId:command.matchId},clock);
+        }
+        return result;
+      });
     },
   });
 }

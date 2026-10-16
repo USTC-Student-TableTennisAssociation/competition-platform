@@ -71,6 +71,7 @@ export function createV2TeamGroupingActionHandlers(
     dependencies.groupingService ??
     createV2TeamGroupingApplicationService({
       db: dependencies.db,
+      publishKnockoutEarly: true,
       ...(dependencies.clock === undefined
         ? {}
         : { clock: dependencies.clock }),

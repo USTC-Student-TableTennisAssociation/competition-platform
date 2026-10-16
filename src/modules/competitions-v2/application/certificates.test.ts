@@ -66,6 +66,7 @@ function eligibleSource(): V2CertificateMatchSource {
       bracketPolicyVersion: null,
       createdAt: NOW,
       qualificationSnapshot: null,
+      knockoutSchedule: null,
     },
     matchGroups: [{
       id: "group-1",
@@ -73,6 +74,7 @@ function eligibleSource(): V2CertificateMatchSource {
       groupingId: "grouping-1",
       groupKey: "group:0001",
       position: 1,
+      qualificationSnapshot: null,
       entries: [entryA, entryB].map((entry, index) => ({
         id: `membership-${entry.id}`,
         matchId: "match-1",
@@ -100,6 +102,10 @@ function eligibleSource(): V2CertificateMatchSource {
       sideARosterVersion: 1,
       sideBRosterVersion: 1,
       completedAt: NOW,
+      startedAt: null,
+      version: 0,
+      metadata: null,
+      administrativeResolution: null,
       lineupMembers: [
         {
           id: "lineup-a",

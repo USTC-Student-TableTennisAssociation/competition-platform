@@ -38,6 +38,7 @@ export type V2TeamGroupingApplicationService = Readonly<{
 export type V2TeamGroupingApplicationServiceDependencies = Readonly<{
   db: Pick<PrismaClient, "$transaction">;
   clock?: () => Date;
+  publishKnockoutEarly?: boolean;
 }>;
 
 /** Thin TEAM facade over the shared relational group-phase publication kernel. */

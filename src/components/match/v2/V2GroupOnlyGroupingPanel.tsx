@@ -7,6 +7,10 @@ import {
   readGroupVenueAssignment,
 } from "@/modules/competitions-v2/domain/group-venue";
 import V2GroupVenue from "./V2GroupVenue";
+import {
+  FreezeGroupQualificationForm,
+  PublishEarlyKnockoutScheduleForm,
+} from "./V2ProgressiveKnockoutForms";
 
 import {
   getV2GroupOnlyGroupingPublishIssues,
@@ -75,8 +79,10 @@ type Props = Readonly<{
     fixtureCount: number;
     roundCount: number;
   }> | null;
+  knockoutProfile?: "PROGRESSIVE_GROUP_RANK" | "GLOBAL_SNAPSHOT" | null;
   canEditTableLabels?: boolean;
   publishedGroups?: readonly Readonly<{
+    groupId?: string;
     groupKey: string;
     label: string;
     tableLabels: readonly string[];
@@ -85,6 +91,7 @@ type Props = Readonly<{
       version: number;
     }>[];
     competitorNames?: readonly string[];
+    qualificationState?: "PENDING" | "READY_TO_CONFIRM" | "FROZEN";
   }>[];
 }>;
 
@@ -338,6 +345,7 @@ export default function V2GroupOnlyGroupingPanel({
   managementState,
   finalizeAction,
   knockoutSummary = null,
+  knockoutProfile = null,
   canEditTableLabels = false,
   publishedGroups = [],
 }: Props) {
@@ -446,6 +454,10 @@ export default function V2GroupOnlyGroupingPanel({
   };
 
   if (locallyPublished) {
+    const progressive = knockoutProfile === "PROGRESSIVE_GROUP_RANK";
+    const confirmedGroups = publishedGroups.filter(
+      (group) => group.qualificationState === "FROZEN",
+    ).length;
     return (
       <section className="space-y-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4">
         <h3 className="font-semibold text-emerald-100">小组赛分组已发布</h3>
@@ -453,18 +465,22 @@ export default function V2GroupOnlyGroupingPanel({
           按小组安排东区或西区，同组全部对局使用相同场地，成员可在赛程中查看。签位和对阵不能重新排列；需要换人时，请联系平台管理员在比赛详情的赛事管理中操作。
         </p>
         {!published ? <StateMessage state={publishState} /> : null}
-        {format === "group_then_knockout" &&
-        managementState === "GROUP_IN_PROGRESS" ? (
+        {format === "group_then_knockout" && !knockoutSummary ? (
+          <PublishEarlyKnockoutScheduleForm matchId={matchId} />
+        ) : null}
+        {format === "group_then_knockout" && progressive ? (
           <p className="rounded-lg border border-sky-400/30 bg-sky-400/5 p-3 text-sm text-sky-100">
-            小组赛进行中：仍有未完成对局、待确认赛果或待处理的更正，暂不能生成淘汰签表。
+            淘汰赛程已发布，可提前安排场地。已确认晋级 {confirmedGroups} / {publishedGroups.length} 组；完成一组即可确认一组，双方确定的淘汰对局即可开打。
           </p>
         ) : null}
         {format === "group_then_knockout" &&
+        !progressive &&
         managementState === "READY_TO_FINALIZE" &&
         finalizeAction ? (
           <FinalizeGroupStageForm matchId={matchId} action={finalizeAction} />
         ) : null}
         {format === "group_then_knockout" &&
+        !progressive &&
         managementState === "KNOCKOUT_PUBLISHED" ? (
           <p className="rounded-lg border border-violet-400/30 bg-violet-400/5 p-3 text-sm text-violet-100">
             淘汰签表已生成
@@ -479,12 +495,24 @@ export default function V2GroupOnlyGroupingPanel({
         updateTableLabelsAction ? (
           <div className="grid gap-4 md:grid-cols-2">
             {publishedGroups.map((group) => (
-              <PublishedGroupTableLabelsForm
-                key={group.groupKey}
-                matchId={matchId}
-                group={group}
-                action={updateTableLabelsAction}
-              />
+              <div key={group.groupKey} className="space-y-3">
+                <PublishedGroupTableLabelsForm
+                  matchId={matchId}
+                  group={group}
+                  action={updateTableLabelsAction}
+                />
+                {progressive ? (
+                  <div className="space-y-2 px-1 text-xs">
+                    {group.qualificationState === "FROZEN" ? (
+                      <p className="text-emerald-300">本组晋级已确认，成绩已锁定。</p>
+                    ) : group.qualificationState === "READY_TO_CONFIRM" && group.groupId ? (
+                      <FreezeGroupQualificationForm matchId={matchId} groupId={group.groupId} groupName={group.label} />
+                    ) : (
+                      <p className="text-slate-400">完成本组比赛并确认成绩后，可单独确认本组晋级。</p>
+                    )}
+                  </div>
+                ) : null}
+              </div>
             ))}
           </div>
         ) : publishedGroups.length > 0 ? (
@@ -538,7 +566,7 @@ export default function V2GroupOnlyGroupingPanel({
         ) : null}
         <p className="mt-1 text-sm text-slate-300">
           {format === "group_then_knockout"
-            ? "先发布小组循环赛；全部成绩确认后，再确定排名并发布淘汰赛程。"
+            ? "发布分组时一并生成淘汰赛程。各组完成后分别确认晋级，双方确定的淘汰对局即可开打。"
             : "当前赛制为小组内单循环。"}
           {updateTableLabelsAction ? "发布后可按小组安排校区和桌号，同组统一场地。" : ""}
         </p>

@@ -139,6 +139,7 @@ export function createV2DoubleActionHandlers(
     dependencies.groupingService ??
     createV2DoubleGroupingApplicationService({
       db: dependencies.db,
+      publishKnockoutEarly: true,
       ...(dependencies.clock === undefined ? {} : { clock: dependencies.clock }),
     });
   const groupTableLabelsService =

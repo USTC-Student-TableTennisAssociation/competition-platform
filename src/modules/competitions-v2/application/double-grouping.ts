@@ -38,6 +38,7 @@ export type V2DoubleGroupingApplicationService = Readonly<{
 export type V2DoubleGroupingApplicationServiceDependencies = Readonly<{
   db: Pick<PrismaClient, "$transaction">;
   clock?: () => Date;
+  publishKnockoutEarly?: boolean;
 }>;
 
 /** Thin DOUBLE facade over the shared relational group-phase publication kernel. */

@@ -23,6 +23,10 @@ import type {
 import V2FixtureCard from "./V2FixtureCard";
 import V2GroupVenue from "./V2GroupVenue";
 import V2KnockoutTableLabelsForm from "./V2KnockoutTableLabelsForm";
+import {
+  FreezeGroupQualificationForm,
+  PublishEarlyKnockoutScheduleForm,
+} from "./V2ProgressiveKnockoutForms";
 
 function feederLabel(
   side: V2KnockoutFixtureSideReadModel,
@@ -30,8 +34,10 @@ function feederLabel(
   roundCount: number,
 ) {
   const feeder = side.feeder;
-  if (feeder.kind === "QUALIFIER")
-    return `${groupNames.get(feeder.sourceGroupId) ?? "小组"}第 ${feeder.sourceRank} 名`;
+  if (feeder.kind === "QUALIFIER") {
+    const label = `${groupNames.get(feeder.sourceGroupId) ?? "小组"}第 ${feeder.sourceRank} 名`;
+    return "empty" in feeder && feeder.empty ? `${label}（无晋级者）` : label;
+  }
   return `${bracketRoundLabel(feeder.sourceRoundNumber, roundCount)}第 ${feeder.sourcePosition} 场${feeder.empty ? "无晋级者" : "胜者"}`;
 }
 
@@ -100,6 +106,13 @@ export default function V2Schedule({
       : null;
   const knockout =
     grouping.kind === "GROUP_THEN_KNOCKOUT_V2_MATCH" ? grouping.knockout : null;
+  const progressive = grouping.kind === "GROUP_THEN_KNOCKOUT_V2_MATCH" &&
+    grouping.knockoutProfile === "PROGRESSIVE_GROUP_RANK";
+  const groupQualifications = new Map(
+    grouping.kind === "GROUP_THEN_KNOCKOUT_V2_MATCH"
+      ? grouping.groupQualifications.map((group) => [group.groupId, group])
+      : [],
+  );
   const groupNames = new Map(
     grouping.groups.map((group) => [group.groupId, group.displayName]),
   );
@@ -113,7 +126,10 @@ export default function V2Schedule({
         viewer,
         isManager,
         profile,
-        { stage: "GROUP" },
+        {
+          stage: "GROUP",
+          sourceHistoryFrozen: groupQualifications.get(group.groupId)?.sourceHistoryFrozen ?? Boolean(qualification),
+        },
       ),
     })),
   );
@@ -236,10 +252,18 @@ export default function V2Schedule({
               {[fixture.sideA, fixture.sideB].map((side, index) => (
                 <div key={index} className="rounded-lg bg-white/5 px-4 py-3">
                   <p className="text-sm font-medium">
-                    {side.entry?.frozenDisplayName ?? "待定"}
+                    {side.entry?.frozenDisplayName ?? feederLabel(side, groupNames, knockout!.roundCount)}
                   </p>
                   <p className="mt-1 text-xs text-slate-400">
-                    {feederLabel(side, groupNames, knockout!.roundCount)}
+                    {side.entry
+                      ? feederLabel(side, groupNames, knockout!.roundCount)
+                      : side.feeder.kind === "QUALIFIER"
+                        ? "empty" in side.feeder && side.feeder.empty
+                          ? "本席无晋级者"
+                          : "等待本组确认晋级"
+                        : side.feeder.empty
+                          ? "前场无晋级者"
+                          : "等待前场胜者"}
                   </p>
                 </div>
               ))}
@@ -287,6 +311,11 @@ export default function V2Schedule({
               : ""}
             {" · 点击比分查看单场"}
           </p>
+          {progressive ? (
+            <p className="mt-2 text-xs leading-5 text-slate-400">
+              各组分别确认晋级，已确认 {grouping.groupQualifications.filter((group) => group.sourceHistoryFrozen).length} / {grouping.groups.length} 组。双方确定的淘汰对局即可开打。
+            </p>
+          ) : null}
         </div>
         <p className="text-xs tabular-nums text-slate-400">
           已结束 {groupFixtures.filter(({ fixture }) => ended(fixture)).length}{" "}
@@ -295,9 +324,12 @@ export default function V2Schedule({
       </div>
       <div className="grid items-start gap-4 xl:grid-cols-2">
         {grouping.groups.map((group) => {
-          const standings = qualification?.standings.filter(
-            (standing) => standing.groupId === group.groupId,
-          );
+          const groupQualification = groupQualifications.get(group.groupId);
+          const standings = progressive && groupQualification?.sourceHistoryFrozen
+            ? groupQualification.standings
+            : qualification?.standings.filter(
+                (standing) => standing.groupId === group.groupId,
+              );
           const standingsByEntry = new Map(
             standings?.map((standing) => [standing.entryId, standing]),
           );
@@ -327,6 +359,9 @@ export default function V2Schedule({
                     {competitionType === "single" ? "人" : "队"}
                   </span>
                   <V2GroupVenue labels={group.tableLabels} showUnassigned />
+                  {progressive && groupQualification?.sourceHistoryFrozen ? (
+                    <span className="text-xs text-emerald-300">晋级已确认</span>
+                  ) : null}
                 </div>
               </div>
               <div
@@ -513,6 +548,21 @@ export default function V2Schedule({
                   行选手对列选手 · 编号对应左侧参赛方
                   <span className="sm:hidden"> · 左右滑动查看</span>
                 </p>
+                {progressive ? (
+                  <div className="mt-3 space-y-2 pb-1 text-xs">
+                    {groupQualification?.sourceHistoryFrozen ? (
+                      <p className="text-emerald-300">本组成绩已锁定，晋级选手已进入淘汰签位。</p>
+                    ) : isManager && groupQualification?.canFreezeGroup ? (
+                      <FreezeGroupQualificationForm matchId={grouping.match.id} groupId={group.groupId} groupName={group.displayName} />
+                    ) : (
+                      <p className="text-slate-400">
+                        {groupQualification?.canFreezeGroup
+                          ? "本组成绩已齐，等待组织者确认晋级。"
+                          : "本组晋级待确认，完成比赛并核实成绩后再锁定名次。"}
+                      </p>
+                    )}
+                  </div>
+                ) : null}
                 {standings ? (
                   <details className="mt-1">
                     <summary className="w-fit cursor-pointer text-slate-400 hover:text-slate-200">
@@ -562,6 +612,11 @@ export default function V2Schedule({
             <p className="mt-1 text-xs text-slate-400">
               {knockout.roundCount} 轮 · 胜者沿连线晋级，左右汇聚至决赛
             </p>
+            {progressive ? (
+              <p className="mt-2 text-xs leading-5 text-slate-400">
+                来源签位已固定，可提前安排场地。各组确认晋级后自动入位，双方确定后即可比赛。
+              </p>
+            ) : null}
           </div>
           <p className="text-xs tabular-nums text-slate-400">
             已结束{" "}
@@ -683,7 +738,9 @@ export default function V2Schedule({
                     <span
                       className={`flex h-8 items-center justify-between gap-2 border-t border-white/6 px-3 text-[10px] ${display.pending ? "text-amber-300" : "text-slate-500"}`}
                     >
-                      <span>第 {fixture.position} 场</span>
+                      <span className="min-w-0 truncate" title={fixture.tableLabels.join("、")}>
+                        第 {fixture.position} 场{fixture.tableLabels.length ? ` · ${fixture.tableLabels.join("、")}` : ""}
+                      </span>
                       <span>{status}</span>
                     </span>
                   </FixtureTrigger>
@@ -701,7 +758,7 @@ export default function V2Schedule({
     <ScheduleFixtureDialog fixtures={fixtureDetails}>
       <ScheduleStages
         key={knockout ? "knockout-published" : "groups"}
-        defaultId={knockoutContent ? "knockout" : "group"}
+        defaultId="group"
         stages={[
           { id: "group", label: "小组赛", content: groupContent },
           ...(knockoutContent
@@ -710,11 +767,13 @@ export default function V2Schedule({
         ]}
       />
       {!knockoutContent && grouping.kind === "GROUP_THEN_KNOCKOUT_V2_MATCH" ? (
-        <p className="mt-5 text-xs leading-6 text-slate-400">
-          {grouping.managementState === "READY_TO_FINALIZE"
-            ? "小组成绩已全部确认，等待管理员发布晋级名单与淘汰赛程。"
-            : "淘汰赛程将在小组成绩全部确认后发布。"}
-        </p>
+        <div className="mt-5">
+          {isManager && grouping.match.status === "ongoing" ? (
+            <PublishEarlyKnockoutScheduleForm matchId={grouping.match.id} />
+          ) : (
+            <p className="text-xs leading-6 text-slate-400">等待组织者发布淘汰赛程，发布后即可查看完整来源签位。</p>
+          )}
+        </div>
       ) : null}
     </ScheduleFixtureDialog>
   );

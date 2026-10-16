@@ -141,6 +141,7 @@ export function createV2SingleActionHandlers(
     dependencies.groupingService ??
     createV2SingleGroupingApplicationService({
       db: dependencies.db,
+      publishKnockoutEarly: true,
       ...(dependencies.clock === undefined ? {} : { clock: dependencies.clock }),
     });
   const groupTableLabelsService =
