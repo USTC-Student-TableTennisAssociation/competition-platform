@@ -918,6 +918,42 @@ test("home accepts an early real knockout graph while group results remain unfin
   assert.throws(() => buildHomeUserCompetitionProjection(baseInput({ v2Entries: [{ ...progressive, match: { ...progressive.match, qualificationSnapshots: [{ id: "legacy-snapshot" }] } }] })), /progressive knockout authority/);
 });
 
+test("home requires one complete frozen slot permutation on every policy-3 fixture", () => {
+  const matchId = "match-custom-progressive-home";
+  const group = formalFixture({ id: "custom-group-pending", matchId, type: "single", format: "group_then_knockout", stage: "GROUP", status: "READY" });
+  const publishedAt = new Date("2026-10-16T00:00:00.000Z");
+  const schedule = { id: "custom-schedule", matchId, groupingId: "custom-grouping", schemaVersion: 1, bracketPolicyVersion: 3, layoutFingerprint: "c".repeat(64), createdAt: publishedAt };
+  const order = [1, 2, 3, 4];
+  const knockouts: V2Fixture[] = [[1, 1], [1, 2], [2, 1]].map(([roundNumber, position]) => ({
+    ...group, id: `custom-ko-${roundNumber}-${position}`, stage: "KNOCKOUT", status: "SCHEDULED", groupKey: null,
+    fixtureKey: `knockout:r${String(roundNumber).padStart(4, "0")}:m${String(position).padStart(4, "0")}`,
+    roundNumber, position,
+    metadata: { publication: "V2_PROGRESSIVE_KNOCKOUT_BRACKET", schemaVersion: 1, bracketPolicyVersion: 3,
+      groupingId: schedule.groupingId, layoutFingerprint: schedule.layoutFingerprint, publishedAt: publishedAt.toISOString(),
+      roundNumber, position, qualificationOrderBySlot: order },
+    sideAEntryId: null, sideBEntryId: null, sideARosterVersion: null, sideBRosterVersion: null,
+    sideAEntry: null, sideBEntry: null, lineupMembers: [], resultRevisions: [],
+  }));
+  const entry = formalEntry({ matchId, type: "single", format: "group_then_knockout", fixtures: [group, ...knockouts] });
+  const project = (fixtures: readonly V2Fixture[], authority = schedule) => buildHomeUserCompetitionProjection(baseInput({
+    v2Entries: [{ ...entry, match: { ...entry.match, knockoutSchedule: authority, fixtures: [group, ...fixtures] } }],
+  }));
+  assert.equal(project(knockouts).myMatches[0].phase, "小组赛 0/1 · 淘汰签表已发布");
+  for (const malformed of [null, [], [1, 2], [1, 2, 3, 3], [0, 1, 2, 3], [1, 2, 3, 5], [1, 2, 3, 3.5], ["1", 2, 3, 4]]) {
+    assert.throws(() => project(knockouts.map((fixture, index) => index !== 0 ? fixture : {
+      ...fixture, metadata: { ...(fixture.metadata as Record<string, unknown>), qualificationOrderBySlot: malformed },
+    })), /invalid frozen slot order/);
+  }
+  assert.throws(() => project(knockouts.map((fixture, index) => index !== 2 ? fixture : {
+    ...fixture, metadata: { ...(fixture.metadata as Record<string, unknown>), qualificationOrderBySlot: [4, 3, 2, 1] },
+  })), /conflicting frozen slot order/);
+  assert.throws(() => project(knockouts.map(fixture => ({
+    ...fixture, metadata: { ...(fixture.metadata as Record<string, unknown>), bracketPolicyVersion: 2 },
+  })), { ...schedule, bracketPolicyVersion: 2 }), /default progressive knockout layout/);
+  assert.throws(() => project(knockouts, { ...schedule, bracketPolicyVersion: 2 }), /inconsistent layout metadata/);
+  assert.throws(() => project(knockouts, { ...schedule, bracketPolicyVersion: 4 }), /progressive knockout authority/);
+});
+
 test("same Entry roster history is deduplicated while multiple current Entries fail closed", () => {
   const matchId = "match-roster-history";
   const group = formalFixture({

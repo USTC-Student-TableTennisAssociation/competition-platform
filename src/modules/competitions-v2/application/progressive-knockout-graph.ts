@@ -90,17 +90,29 @@ export function validateV2ProgressiveKnockoutGraph(
       (match.status !== "ongoing" && match.status !== "finished") ||
       grouping.matchId !== match.id || grouping.v2SchemaVersion !== 1 || grouping.standingsPolicyVersion !== 1 || grouping.bracketPolicyVersion !== 1 ||
       schedule.matchId !== match.id || schedule.groupingId !== grouping.id ||
-      schedule.schemaVersion !== 1 || schedule.bracketPolicyVersion !== 2 ||
+      schedule.schemaVersion !== 1 || ![2, 3].includes(schedule.bracketPolicyVersion) ||
       !/^[a-f0-9]{64}$/.test(schedule.layoutFingerprint) || !Number.isFinite(schedule.createdAt.getTime())) {
     fail("The progressive knockout schedule has incompatible authority fields.", { matchId: match.id });
   }
+  let qualificationOrderBySlot: readonly number[] | undefined;
+  if (schedule.bracketPolicyVersion === 3) {
+    const first = graph.fixtures.find(fixture => fixture.fixtureKey === "knockout:r0001:m0001");
+    const metadata = first?.metadata;
+    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata) ||
+        !Array.isArray(metadata.qualificationOrderBySlot)) {
+      fail("An explicit progressive schedule has no frozen qualification slot order.", { matchId: match.id });
+    }
+    // The plan builder verifies the complete integer permutation before it is used.
+    qualificationOrderBySlot = metadata.qualificationOrderBySlot as readonly number[];
+  }
   let plan;
   try {
-    plan = buildV2ProgressiveKnockoutPlan({ groupingId: grouping.id, groups: graph.groups, qualifiersPerGroup: grouping.qualifiersPerGroup! });
+    plan = buildV2ProgressiveKnockoutPlan({ groupingId: grouping.id, groups: graph.groups,
+      qualifiersPerGroup: grouping.qualifiersPerGroup!, qualificationOrderBySlot });
   } catch (error) {
     fail("The progressive grouping cannot produce a complete knockout layout.", { matchId: match.id, reason: error instanceof Error ? error.message : "invalid layout" });
   }
-  if (plan.layoutFingerprint !== schedule.layoutFingerprint ||
+  if (plan.bracketPolicyVersion !== schedule.bracketPolicyVersion || plan.layoutFingerprint !== schedule.layoutFingerprint ||
       graph.fixtures.length !== plan.fixtureCount || graph.fixtures.length > 1_023 ||
       graph.dependencies.length !== plan.fixtureCount * 2 || graph.rosterMembers.length > 51_200) {
     fail("The progressive knockout graph does not match its published layout.", { matchId: match.id });
@@ -149,12 +161,16 @@ export function validateV2ProgressiveKnockoutGraph(
     const metadata = fixture.metadata;
     const keys = metadata && typeof metadata === "object" && !Array.isArray(metadata)
       ? Object.keys(metadata).filter(key => key !== "v2Display").sort().join("|") : "";
-    const expectedKeys = ["publication", "schemaVersion", "bracketPolicyVersion", "groupingId", "layoutFingerprint", "publishedAt", "roundNumber", "position"].sort().join("|");
+    const expectedKeys = ["publication", "schemaVersion", "bracketPolicyVersion", "groupingId", "layoutFingerprint", "publishedAt", "roundNumber", "position",
+      ...(schedule.bracketPolicyVersion === 3 ? ["qualificationOrderBySlot"] : [])].sort().join("|");
     if (!metadata || typeof metadata !== "object" || Array.isArray(metadata) || keys !== expectedKeys ||
         metadata.publication !== "V2_PROGRESSIVE_KNOCKOUT_BRACKET" || metadata.schemaVersion !== 1 ||
-        metadata.bracketPolicyVersion !== 2 || metadata.groupingId !== grouping.id ||
+        metadata.bracketPolicyVersion !== schedule.bracketPolicyVersion || metadata.groupingId !== grouping.id ||
         metadata.layoutFingerprint !== schedule.layoutFingerprint || metadata.publishedAt !== schedule.createdAt.toISOString() ||
         metadata.roundNumber !== fixture.roundNumber || metadata.position !== fixture.position ||
+        (schedule.bracketPolicyVersion === 3 && (!Array.isArray(metadata.qualificationOrderBySlot) ||
+          metadata.qualificationOrderBySlot.length !== qualificationOrderBySlot!.length ||
+          Array.from(metadata.qualificationOrderBySlot).some((order, index) => order !== qualificationOrderBySlot![index]))) ||
         parseV2SingleGroupTableLabelsFromMetadata(metadata) === null) {
       fail("A progressive fixture has inconsistent publication metadata.", { fixtureId: fixture.id });
     }

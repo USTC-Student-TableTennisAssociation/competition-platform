@@ -10,11 +10,17 @@ import { createV2ProgressiveQualificationApplicationService } from "./progressiv
 import { V2ResultApplicationError } from "./results-errors";
 import { createV2ProgressiveKnockoutPublicationApplicationService } from "./progressive-knockout-publication";
 import { getV2GroupOnlyGroupingReadModel, V2_SINGLE_GROUPING_READ_PROFILE } from "../read-model/group-only-grouping";
+import { buildV2ProgressiveKnockoutPlan } from "../domain/progressive-knockout-plan";
 
 const integrationDatabaseUrl = process.env.V2_CORE_INTEGRATION_DATABASE_URL;
 
-for (const admissionCase of ["complete", "short", "empty"] as const) {
-test(`real progressive qualification ${admissionCase} advances while unrelated groups are still unplayed`, {
+for (const { admissionCase, policyVersion } of [
+  { admissionCase: "complete", policyVersion: 2 },
+  { admissionCase: "short", policyVersion: 2 },
+  { admissionCase: "empty", policyVersion: 2 },
+  { admissionCase: "complete", policyVersion: 3 },
+] as const) {
+test(`real progressive qualification ${admissionCase} policy ${policyVersion} advances while unrelated groups are still unplayed`, {
   skip: integrationDatabaseUrl === undefined,
 }, async () => {
   const db = new PrismaClient({ datasourceUrl: integrationDatabaseUrl });
@@ -146,6 +152,52 @@ test(`real progressive qualification ${admissionCase} advances while unrelated g
     }
     const publication = await createV2ProgressiveKnockoutPublicationApplicationService({ db }).publish({ actor: { id: ownerId, role: "user" }, matchId });
     assert.equal(publication.fixtureCount, qualifiersPerGroup * 4 - 1);
+    if (policyVersion === 3) {
+      const groups = await db.matchGroup.findMany({ where: { matchId }, orderBy: { position: "asc" } });
+      const defaultPlan = buildV2ProgressiveKnockoutPlan({ groupingId: grouping.id, groups, qualifiersPerGroup });
+      const qualificationOrderBySlot = defaultPlan.fixtures.filter(fixture => fixture.roundNumber === 1)
+        .flatMap(fixture => [fixture.sideA, fixture.sideB]).map(source => {
+          assert.equal(source.kind, "GROUP_RANK");
+          if (source.kind !== "GROUP_RANK") assert.fail();
+          return source.qualificationOrder;
+        }).reverse();
+      const plan = buildV2ProgressiveKnockoutPlan({ groupingId: grouping.id, groups, qualifiersPerGroup, qualificationOrderBySlot });
+      await db.$transaction(async tx => {
+        const fixtures = await tx.matchFixture.findMany({ where: { matchId, stage: "KNOCKOUT" } });
+        const dependencies = await tx.matchFixtureDependency.findMany({ where: { matchId, sourceGroupId: { not: null } } });
+        await tx.matchFixtureDependency.deleteMany({ where: { id: { in: dependencies.map(row => row.id) } } });
+        for (const fixture of fixtures) {
+          const expected = plan.fixtures.find(row => row.fixtureKey === fixture.fixtureKey)!;
+          await tx.matchFixture.update({ where: { id: fixture.id }, data: {
+            metadata: { ...(fixture.metadata as Prisma.JsonObject), bracketPolicyVersion: 3,
+              layoutFingerprint: plan.layoutFingerprint, qualificationOrderBySlot },
+            version: { increment: 1 },
+          } });
+          for (const dependency of dependencies.filter(row => row.targetFixtureId === fixture.id)) {
+            const source = dependency.targetSide === "SIDE_A" ? expected.sideA : expected.sideB;
+            if (source.kind !== "GROUP_RANK") assert.fail();
+            await tx.matchFixtureDependency.create({ data: {
+              ...dependency, sourceGroupId: source.groupId, sourceGroupRank: source.rank,
+            } });
+          }
+        }
+        await tx.matchKnockoutSchedule.update({ where: { matchId }, data: {
+          bracketPolicyVersion: 3, layoutFingerprint: plan.layoutFingerprint,
+        } });
+      });
+      const state = () => Promise.all([
+        db.matchKnockoutSchedule.findUniqueOrThrow({ where: { matchId } }),
+        db.matchFixture.findMany({ where: { matchId }, orderBy: { id: "asc" } }),
+        db.matchFixtureDependency.findMany({ where: { matchId }, orderBy: { id: "asc" } }),
+        db.auditLog.findMany({ where: { entityId: matchId }, orderBy: { id: "asc" } }),
+      ]);
+      const beforeRetry = await state();
+      const retry = await createV2ProgressiveKnockoutPublicationApplicationService({ db }).publish({ actor: { id: ownerId, role: "user" }, matchId });
+      assert.equal(retry.created, false);
+      assert.equal(retry.fixtureCount, plan.fixtureCount);
+      assert.equal(retry.publishedAt.getTime(), publication.publishedAt.getTime());
+      assert.deepEqual(await state(), beforeRetry);
+    }
     const qualification = createV2ProgressiveQualificationApplicationService({ db });
     const freeze = () => qualification.freezeGroup({ actor: { id: ownerId, role: "user" }, matchId, groupId: group.id });
     const expectConflict = () => assert.rejects(freeze, (error: unknown) => error instanceof V2CompetitionApplicationError && error.code === "PERSISTENCE_CONFLICT");
