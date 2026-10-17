@@ -1152,21 +1152,39 @@ function buildV2MatchItem(
   const schedule = match.knockoutSchedule ?? null;
   const hasProgressiveSchedule = schedule !== null;
   if (schedule) {
-    if (schedule.matchId !== match.id || schedule.schemaVersion !== 1 || schedule.bracketPolicyVersion !== 2 ||
+    if (schedule.matchId !== match.id || schedule.schemaVersion !== 1 || ![2, 3].includes(schedule.bracketPolicyVersion) ||
         !/^[a-f0-9]{64}$/.test(schedule.layoutFingerprint) || !Number.isFinite(schedule.createdAt.getTime()) ||
         hasQualificationSnapshot || knockoutFixtures.length === 0) integrity("A V2 progressive knockout authority is malformed.", match.id);
     const keys = new Set<string>();
+    const qualificationCount = knockoutFixtures.filter(({ fixture }) => fixture.roundNumber === 1).length * 2;
+    let frozenSlotOrder: string | null = null;
     let maxRound = 0;
     for (const {fixture} of knockoutFixtures) {
       const metadata = fixture.metadata;
       if (metadata === null || typeof metadata !== "object" || Array.isArray(metadata) ||
-          metadata.publication !== "V2_PROGRESSIVE_KNOCKOUT_BRACKET" || metadata.schemaVersion !== 1 || metadata.bracketPolicyVersion !== 2 ||
+          metadata.publication !== "V2_PROGRESSIVE_KNOCKOUT_BRACKET" || metadata.schemaVersion !== 1 || metadata.bracketPolicyVersion !== schedule.bracketPolicyVersion ||
           metadata.groupingId !== schedule.groupingId || metadata.layoutFingerprint !== schedule.layoutFingerprint || metadata.publishedAt !== schedule.createdAt.toISOString() ||
           !Number.isSafeInteger(fixture.roundNumber) || (fixture.roundNumber ?? 0) < 1 ||
           !Number.isSafeInteger(fixture.position) || (fixture.position ?? 0) < 1 ||
           metadata.roundNumber !== fixture.roundNumber || metadata.position !== fixture.position ||
           fixture.fixtureKey !== `knockout:r${String(fixture.roundNumber).padStart(4,"0")}:m${String(fixture.position).padStart(4,"0")}` || keys.has(fixture.fixtureKey)) {
         integrity("A V2 progressive knockout fixture has inconsistent layout metadata.", fixture.id);
+      }
+      if (schedule.bracketPolicyVersion === 3) {
+        const order = metadata.qualificationOrderBySlot;
+        if (qualificationCount < 2 || qualificationCount > 1024 || !Number.isInteger(Math.log2(qualificationCount)) ||
+            !Array.isArray(order) || order.length !== qualificationCount ||
+            order.some(value => typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > qualificationCount) ||
+            new Set(order).size !== qualificationCount) {
+          integrity("A V2 progressive knockout fixture has an invalid frozen slot order.", fixture.id);
+        }
+        const serialized = JSON.stringify(order);
+        if (frozenSlotOrder !== null && frozenSlotOrder !== serialized) {
+          integrity("A V2 progressive knockout fixture has a conflicting frozen slot order.", fixture.id);
+        }
+        frozenSlotOrder = serialized;
+      } else if (metadata.qualificationOrderBySlot !== undefined) {
+        integrity("A default progressive knockout layout cannot contain a frozen slot order.", fixture.id);
       }
       keys.add(fixture.fixtureKey!); maxRound = Math.max(maxRound, fixture.roundNumber!);
     }

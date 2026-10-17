@@ -4,6 +4,7 @@ import { buildSingleEliminationSeedPositions } from "./knockout-bracket";
 export const V2_PROGRESSIVE_KNOCKOUT_PUBLICATION = "V2_PROGRESSIVE_KNOCKOUT_BRACKET";
 export const V2_PROGRESSIVE_KNOCKOUT_SCHEMA_VERSION = 1;
 export const V2_PROGRESSIVE_KNOCKOUT_POLICY_VERSION = 2;
+export const V2_PROGRESSIVE_KNOCKOUT_EXPLICIT_POLICY_VERSION = 3;
 
 export type V2ProgressiveKnockoutSource =
   | Readonly<{
@@ -21,6 +22,7 @@ export type V2ProgressiveKnockoutFixturePlan = Readonly<{
   sideB: V2ProgressiveKnockoutSource;
 }>;
 export type V2ProgressiveKnockoutPlan = Readonly<{
+  bracketPolicyVersion: 2 | 3;
   layoutFingerprint: string;
   qualificationCount: number;
   roundCount: number;
@@ -33,6 +35,7 @@ export function buildV2ProgressiveKnockoutPlan(input: Readonly<{
   groupingId: string;
   groups: readonly Readonly<{ id: string; groupKey: string; position: number }>[];
   qualifiersPerGroup: number;
+  qualificationOrderBySlot?: readonly number[];
 }>): V2ProgressiveKnockoutPlan {
   const stable = (id: unknown): id is string =>
     typeof id === "string" &&
@@ -59,7 +62,19 @@ export function buildV2ProgressiveKnockoutPlan(input: Readonly<{
   const qualificationCount = groups.length * input.qualifiersPerGroup;
   if (qualificationCount > 1024)
     throw new Error("The progressive qualifier count exceeds the competition limit.");
-  const slots = buildSingleEliminationSeedPositions(qualificationCount);
+  const conventionalSlots = buildSingleEliminationSeedPositions(qualificationCount);
+  const explicitSlots = input.qualificationOrderBySlot;
+  if (explicitSlots !== undefined && (
+    !Array.isArray(explicitSlots) || explicitSlots.length !== qualificationCount ||
+    new Set(explicitSlots).size !== qualificationCount ||
+    Array.from(explicitSlots).some(order => !Number.isSafeInteger(order) || order < 1 || order > qualificationCount)
+  )) {
+    throw new Error("An explicit progressive layout requires every qualification order exactly once.");
+  }
+  const slots = explicitSlots === undefined ? conventionalSlots : [...explicitSlots];
+  const bracketPolicyVersion = explicitSlots === undefined
+    ? V2_PROGRESSIVE_KNOCKOUT_POLICY_VERSION
+    : V2_PROGRESSIVE_KNOCKOUT_EXPLICIT_POLICY_VERSION;
   const roundCount = Math.log2(qualificationCount);
   const fixtures: V2ProgressiveKnockoutFixturePlan[] = [];
   const key = (round: number, position: number) =>
@@ -87,7 +102,7 @@ export function buildV2ProgressiveKnockoutPlan(input: Readonly<{
   const layoutFingerprint = createHash("sha256")
     .update(JSON.stringify({
       schemaVersion: V2_PROGRESSIVE_KNOCKOUT_SCHEMA_VERSION,
-      bracketPolicyVersion: V2_PROGRESSIVE_KNOCKOUT_POLICY_VERSION,
+      bracketPolicyVersion,
       groupingId: input.groupingId,
       qualifiersPerGroup: input.qualifiersPerGroup,
       groups: groups.map(g => ({ id: g.id, groupKey: g.groupKey, position: g.position })),
@@ -95,6 +110,7 @@ export function buildV2ProgressiveKnockoutPlan(input: Readonly<{
     }))
     .digest("hex");
   return {
+    bracketPolicyVersion,
     layoutFingerprint,
     qualificationCount,
     roundCount,

@@ -57,7 +57,7 @@ export async function freezeV2ProgressiveGroupQualificationInTransaction(
   const { match, grouping, groups, evaluation, frozenAt, sourceRevisionFingerprint } = source;
   const schedule = await tx.matchKnockoutSchedule.findUnique({ where: { matchId: match.id } });
   if (!schedule || schedule.groupingId !== grouping.id || schedule.schemaVersion !== 1 ||
-      schedule.bracketPolicyVersion !== 2 || !/^[a-f0-9]{64}$/.test(schedule.layoutFingerprint) ||
+      ![2, 3].includes(schedule.bracketPolicyVersion) || !/^[a-f0-9]{64}$/.test(schedule.layoutFingerprint) ||
       !(schedule.createdAt instanceof Date) || !Number.isFinite(schedule.createdAt.getTime()) ||
       schedule.createdAt < grouping.createdAt || schedule.createdAt > frozenAt) {
     fail("FIXTURE_CREATION_NOT_ALLOWED", "Publish the fixed knockout schedule before confirming a group.");

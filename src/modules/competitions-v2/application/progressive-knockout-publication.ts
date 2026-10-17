@@ -83,6 +83,32 @@ export async function publishV2ProgressiveKnockoutInTransaction(
       matchId: command.matchId
     }
   });
+  const existing = await tx.matchKnockoutSchedule.findUnique({
+    where: {
+      matchId: command.matchId
+    }
+  });
+  if (existing) {
+    if (
+      existing.schemaVersion !== V2_PROGRESSIVE_KNOCKOUT_SCHEMA_VERSION ||
+      ![2, 3].includes(existing.bracketPolicyVersion) ||
+      existing.groupingId !== grouping.id || !model.knockout
+    ) {
+      throw new V2CompetitionApplicationError(
+        "PERSISTENCE_CONFLICT", "The early bracket identity is inconsistent.",
+      );
+    }
+    return {
+      matchId: command.matchId,
+      scheduleId: existing.id,
+      created: false,
+      // The read model has validated the persisted layout, including any frozen
+      // policy-3 slot order. Retrying publication must not rebuild default slots.
+      roundCount: model.knockout.roundCount,
+      fixtureCount: model.knockout.fixtureCount,
+      publishedAt: existing.createdAt
+    };
+  }
   const groups = await tx.matchGroup.findMany({
     where: {
       matchId: command.matchId
@@ -96,29 +122,6 @@ export async function publishV2ProgressiveKnockoutInTransaction(
     groups,
     qualifiersPerGroup: grouping.qualifiersPerGroup!
   });
-  const existing = await tx.matchKnockoutSchedule.findUnique({
-    where: {
-      matchId: command.matchId
-    }
-  });
-  if (existing) {
-    if (
-      existing.layoutFingerprint !== plan.layoutFingerprint ||
-      existing.groupingId !== grouping.id || !model.knockout
-    ) {
-      throw new V2CompetitionApplicationError(
-        "PERSISTENCE_CONFLICT", "The early bracket identity is inconsistent.",
-      );
-    }
-    return {
-      matchId: command.matchId,
-      scheduleId: existing.id,
-      created: false,
-      roundCount: plan.roundCount,
-      fixtureCount: plan.fixtureCount,
-      publishedAt: existing.createdAt
-    };
-  }
   if (
     model.qualification || model.knockout ||
     await tx.matchFixture.count({ where: { matchId: command.matchId, stage: "KNOCKOUT" } }) ||
