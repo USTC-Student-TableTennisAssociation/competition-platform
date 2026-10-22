@@ -4,14 +4,12 @@ normalizeIdentityInput
 } from "@/lib/certificate";
 import { validateCsrfToken } from "@/lib/csrf";
 import { prisma } from "@/lib/prisma";
+import { buildCertificatePdf } from "@/lib/server/certificate-pdf";
 import {
 createV2CertificateApplicationService,
 V2CertificateApplicationError,
 } from "@/modules/competitions-v2/application/certificates";
 import { NextResponse } from "next/server";
-import { existsSync } from "node:fs";
-import path from "node:path";
-import PDFDocument from "pdfkit";
 
 export const runtime = "nodejs";
 
@@ -40,70 +38,6 @@ function v2CertificateErrorResponse(error: V2CertificateApplicationError) {
     return NextResponse.json({ error: error.message }, { status: 409 });
   }
   return NextResponse.json({ error: error.message }, { status: 500 });
-}
-
-function buildPdfBuffer(params: {
-  matchTitle: string;
-  email: string;
-  fullName: string;
-  studentId: string;
-  certificateNo: string;
-}) {
-  const { matchTitle, email, fullName, studentId, certificateNo } = params;
-  console.info("certificate-export-cwd", process.cwd());
-  console.info(
-    "certificate-export-font-config",
-    process.env.CERTIFICATE_FONT_PATH ?? "(unset)",
-  );
-
-  const fontPath = process.env.CERTIFICATE_FONT_PATH;
-  if (!fontPath) {
-    throw new Error("CERTIFICATE_FONT_PATH is not set.");
-  }
-
-  const resolvedFontPath = path.isAbsolute(fontPath)
-    ? fontPath
-    : path.resolve(process.cwd(), fontPath);
-  if (!existsSync(resolvedFontPath)) {
-    throw new Error(`Certificate font not found: ${resolvedFontPath}`);
-  }
-
-  const doc = new PDFDocument({
-    size: "A4",
-    margin: 50,
-    // Avoid default Helvetica lookup by using the custom font as default.
-    font: resolvedFontPath,
-  });
-  const chunks: Buffer[] = [];
-
-  doc.on("data", (chunk: Buffer) => chunks.push(chunk));
-  doc.font(resolvedFontPath);
-
-  doc.fontSize(20).text("参赛证明", { align: "center" });
-  doc.moveDown(1.5);
-
-  doc.fontSize(12);
-  doc.text(`比赛名称：${matchTitle}`);
-  doc.moveDown(0.5);
-  doc.text(`用户邮箱：${email}`);
-  doc.moveDown(0.5);
-  doc.text(`用户姓名：${fullName}`);
-  doc.moveDown(0.5);
-  doc.text(`用户学号：${studentId}`);
-  doc.moveDown(0.5);
-  doc.text(`证明编号：${certificateNo}`);
-
-  doc.moveDown(2);
-  doc.fontSize(10).fillColor("gray");
-  doc.text("注：姓名与学号仅用于生成参赛证明，系统会以加密格式保存，无法在数据库中反查。", {
-    align: "left",
-  });
-
-  return new Promise<Buffer>((resolve, reject) => {
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
-    doc.end();
-  });
 }
 
 export async function POST(
@@ -170,7 +104,7 @@ export async function POST(
 
       // The durable number is committed before rendering. A font/PDF failure
       // therefore retains the same retry behavior as the legacy branch.
-      const pdfBuffer = await buildPdfBuffer({
+      const pdfBuffer = await buildCertificatePdf({
         matchTitle: issued.matchTitle,
         email: issued.email,
         fullName: rawName,

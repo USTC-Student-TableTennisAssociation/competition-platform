@@ -45,7 +45,7 @@ jobs:
       NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME: ci-placeholder
 
       V2_COMPETITIONS_CREATION_MODE: V2
-      CERTIFICATE_FONT_PATH: assets/fonts/NotoSansSC-Regular.ttf
+      CERTIFICATE_SERIF_FONT_PATH: assets/fonts/NotoSerifSC-Regular.otf
 
     steps:
       - name: Checkout

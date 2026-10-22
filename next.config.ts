@@ -8,6 +8,7 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/api/matchs/[id]/certificate": [
       "./assets/fonts/**",
+      "./public/SVG/tta-wordmark.svg",
       "./node_modules/pdfkit/js/data/**",
     ],
   },

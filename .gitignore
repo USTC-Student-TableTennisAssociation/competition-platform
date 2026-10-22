@@ -13,6 +13,7 @@
 # testing
 /coverage
 /output/playwright/
+/output/pdf/
 /.domain-test-build/
 /.v2-test-build/
 /.local-postgres/
