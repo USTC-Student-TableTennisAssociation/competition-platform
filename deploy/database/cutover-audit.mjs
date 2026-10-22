@@ -7,6 +7,23 @@ import { pathToFileURL } from 'node:url';
 import { createConnectionEnvironment } from './export-neon.mjs';
 
 const BIN = '/usr/lib/postgresql/17/bin/psql';
+// A dump/restore can flatten this exact grouping of three AND terms. Only
+// canonicalize the observed equivalent definition of this one public CHECK.
+export const REASON_CHECK_CANONICALIZATION = Object.freeze({
+  schema: 'public',
+  table: 'match_fixture_administrative_resolution',
+  constraint: 'fixture_administrative_resolution_reason_check',
+  source: 'CHECK ((((char_length(btrim(reason)) >= 1) AND (char_length(btrim(reason)) <= 500)) AND (reason = btrim(reason))))',
+  canonical: 'CHECK (((char_length(btrim(reason)) >= 1) AND (char_length(btrim(reason)) <= 500) AND (reason = btrim(reason))))',
+});
+const sqlLiteral=value=>`'${value.replaceAll("'","''")}'`;
+export const CONSTRAINT_FINGERPRINT_SQL = `CASE
+ WHEN schema_name=${sqlLiteral(REASON_CHECK_CANONICALIZATION.schema)}
+  AND relation_name=${sqlLiteral(REASON_CHECK_CANONICALIZATION.table)}
+  AND constraint_name=${sqlLiteral(REASON_CHECK_CANONICALIZATION.constraint)}
+  AND definition=${sqlLiteral(REASON_CHECK_CANONICALIZATION.source)}
+ THEN ${sqlLiteral(REASON_CHECK_CANONICALIZATION.canonical)}
+ ELSE definition END`;
 export const AUDIT_SQL = String.raw`
 BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SET LOCAL statement_timeout='60s';
@@ -21,7 +38,9 @@ SELECT jsonb_build_object('kind','catalog','tables',(SELECT count(*) FROM pg_tab
  'unvalidatedConstraints',(SELECT count(*) FROM pg_constraint c JOIN pg_namespace n ON n.oid=c.connamespace WHERE n.nspname='public' AND NOT c.convalidated),
  'definitionHash',(SELECT encode(sha256(convert_to(coalesce(string_agg(definition,E'\n' ORDER BY definition COLLATE "C"),''),'UTF8')),'hex') FROM (
    SELECT 'index:'||c.relname||':'||pg_get_indexdef(i.indexrelid) AS definition FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'
-   UNION ALL SELECT 'constraint:'||c.relname||':'||con.conname||':'||pg_get_constraintdef(con.oid) FROM pg_constraint con JOIN pg_class c ON c.oid=con.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'
+   UNION ALL SELECT 'constraint:'||relation_name||':'||constraint_name||':'||(${CONSTRAINT_FINGERPRINT_SQL})
+    FROM (SELECT n.nspname AS schema_name,c.relname AS relation_name,con.conname AS constraint_name,pg_get_constraintdef(con.oid) AS definition
+      FROM pg_constraint con JOIN pg_class c ON c.oid=con.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public') constraint_definitions
    UNION ALL SELECT 'column:'||c.relname||':'||a.attname||':'||format_type(a.atttypid,a.atttypmod)||':'||a.attnotnull::text||':'||coalesce(pg_get_expr(d.adbin,d.adrelid),'')||':'||a.attidentity::text||':'||a.attgenerated::text||':'||coalesce(coll.collname,'')
     FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum LEFT JOIN pg_collation coll ON coll.oid=a.attcollation
     WHERE n.nspname='public' AND c.relkind IN ('r','p') AND a.attnum>0 AND NOT a.attisdropped
