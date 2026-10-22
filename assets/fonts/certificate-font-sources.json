@@ -1,0 +1,22 @@
+{
+  "upstream": "https://github.com/notofonts/noto-cjk",
+  "commit": "985fa52c81c1d6692ccdd82bc3656e8fb932fd89",
+  "license": "NotoSerifSC-LICENSE.txt",
+  "fonts": [
+    {
+      "file": "NotoSerifSC-Regular.otf",
+      "upstreamPath": "Serif/SubsetOTF/SC/NotoSerifSC-Regular.otf",
+      "sha256": "e8f396decc1f0963a016a989c3d8852e863d1350996f573860a80767c83a1cd3",
+      "modified": false
+    },
+    {
+      "file": "TTACertificateHeading-Bold.otf",
+      "upstreamPath": "Serif/SubsetOTF/SC/NotoSerifSC-Bold.otf",
+      "upstreamSha256": "24693d48bdb9152f0a06b02af625638a1097abd6de4010ebba027f6e82710527",
+      "sha256": "7093c5d2f769f31790277bbaabeec2a85d04712a066506f1188ff4cbe8d4c1ac",
+      "modified": true,
+      "modification": "Subset with fontTools 4.67.0 and rename family to TTA Certificate Heading",
+      "characters": "中国科学技术大学学生乒乓球协会参赛证明"
+    }
+  ]
+}

@@ -92,7 +92,7 @@ jobs:
           NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME: ${{ vars.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME }}
 
           V2_COMPETITIONS_CREATION_MODE: V2
-          CERTIFICATE_FONT_PATH: assets/fonts/NotoSansSC-Regular.ttf
+          CERTIFICATE_SERIF_FONT_PATH: assets/fonts/NotoSerifSC-Regular.otf
         run: npm run build
 
       - name: Package immutable release
@@ -122,7 +122,9 @@ jobs:
           test -f .next/standalone/ecosystem.config.cjs
           test -f .next/standalone/activate-release.sh
           test -f .next/standalone/verify-pm2-release.mjs
-          test -f .next/standalone/assets/fonts/NotoSansSC-Regular.ttf
+          test -f .next/standalone/assets/fonts/NotoSerifSC-Regular.otf
+          test -f .next/standalone/assets/fonts/TTACertificateHeading-Bold.otf
+          test -f .next/standalone/public/SVG/tta-wordmark.svg
           test -s .next/standalone/REVISION
           test ! -e .next/standalone/.env
 
