@@ -114,7 +114,7 @@ jobs:
 
           cp -R assets .next/standalone/assets
           cp deploy/ecosystem.config.cjs .next/standalone/ecosystem.config.cjs
-          cp deploy/activate-release.sh deploy/verify-pm2-release.mjs .next/standalone/
+          cp deploy/activate-release.sh deploy/verify-pm2-release.mjs deploy/start-release.mjs .next/standalone/
 
           printf '%s\n' "$SHA" > .next/standalone/REVISION
 
@@ -122,6 +122,7 @@ jobs:
           test -f .next/standalone/ecosystem.config.cjs
           test -f .next/standalone/activate-release.sh
           test -f .next/standalone/verify-pm2-release.mjs
+          test -f .next/standalone/start-release.mjs
           test -f .next/standalone/assets/fonts/NotoSerifSC-Regular.otf
           test -f .next/standalone/assets/fonts/TTACertificateHeading-Bold.otf
           test -f .next/standalone/public/SVG/tta-wordmark.svg
@@ -225,87 +226,10 @@ jobs:
           mv "$STAGING" "$RELEASE"
           REMOTE
 
-      - name: Migrate production database
+      # Hold the server's database-operation lock through migration, activation,
+      # smoke verification and any rollback. Read the same shared/.env as runtime.
+      - name: Migrate, activate and verify production
         env:
-          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL_UNPOOLED }}
-          DATABASE_URL_UNPOOLED: ${{ secrets.PROD_DATABASE_URL_UNPOOLED }}
-        run: npx prisma migrate deploy
-
-      - name: First V2 cutover preflight
-        if: steps.stage.outputs.first_deploy == 'true'
-        env:
-          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL_UNPOOLED }}
-          DATABASE_URL_UNPOOLED: ${{ secrets.PROD_DATABASE_URL_UNPOOLED }}
-          V2_COMPETITIONS_CREATION_MODE: PAUSED
-        run: npm run preflight:v2-cutover
-
-      - name: Activate release
-        id: activate
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          ssh \
-            -i ~/.ssh/deploy_key \
-            -p "$PROD_PORT" \
-            "$PROD_USER@$PROD_HOST" \
-            "bash -s -- '$SHA' '$PROD_APP_ROOT'" <<'REMOTE'
-          set -euo pipefail
-
-          SHA="$1"
-          APP_ROOT="$2"
-          RELEASE="$APP_ROOT/releases/$SHA"
-
-          bash "$RELEASE/activate-release.sh" "$SHA" "$APP_ROOT"
-          REMOTE
-
-      - name: Production smoke test
-        id: smoke
-        env:
+          FIRST_DEPLOY: ${{ steps.stage.outputs.first_deploy }}
           SITE_URL: ${{ vars.NEXT_PUBLIC_APP_URL }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          HEALTH_URL="${SITE_URL%/}/api/health"
-
-          for attempt in $(seq 1 12); do
-            if curl --fail --silent --show-error "$HEALTH_URL" > /tmp/kedapp-health.json &&
-              node -e '
-                const result = require("/tmp/kedapp-health.json");
-                if (result.status !== "ok" || result.revision !== process.env.SHA) process.exit(1);
-              '; then
-              echo "Production health check passed for $SHA."
-              exit 0
-            fi
-
-            echo "Waiting for production... ($attempt/12)"
-            sleep 5
-          done
-
-          echo "Production health check failed."
-          exit 1
-
-      - name: Roll back application on failed smoke test
-        if: failure() && (steps.activate.outcome == 'success' || steps.activate.outcome == 'failure')
-        shell: bash
-        run: |
-          ssh \
-            -i ~/.ssh/deploy_key \
-            -p "$PROD_PORT" \
-            "$PROD_USER@$PROD_HOST" \
-            "bash -s -- '$PROD_APP_ROOT' '$SHA'" <<'REMOTE'
-          set -euo pipefail
-
-          APP_ROOT="$1"
-          FAILED_SHA="$2"
-
-          if [ -L "$APP_ROOT/previous" ]; then
-            PREVIOUS_RELEASE="$(readlink -f "$APP_ROOT/previous")"
-
-            PREVIOUS_SHA="$(cat "$PREVIOUS_RELEASE/REVISION")"
-            bash "$APP_ROOT/releases/$FAILED_SHA/activate-release.sh" "$PREVIOUS_SHA" "$APP_ROOT"
-          else
-            pm2 stop kedapp || true
-          fi
-          REMOTE
+        run: node deploy/remote-database.mjs

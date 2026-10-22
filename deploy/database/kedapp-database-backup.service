@@ -1,0 +1,28 @@
+[Unit]
+Description=Back up the active kedapp PostgreSQL database
+Wants=postgresql@17-kedapp.service
+After=postgresql@17-kedapp.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/var/www/kedapp/operations/database
+ExecStart=/usr/bin/node /var/www/kedapp/operations/database/backup-local.mjs
+UMask=0077
+TimeoutStartSec=15min
+TimeoutStopSec=20s
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/www/kedapp/shared/database-backups /var/www/kedapp/shared/database-standby
+StandardOutput=journal
+StandardError=journal

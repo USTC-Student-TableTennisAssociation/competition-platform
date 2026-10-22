@@ -25,6 +25,7 @@ if (config.apps?.length !== 1 || app.name !== 'kedapp' ||
   throw new Error('Invalid kedapp release declaration.');
 }
 NODE
+node "$SCRIPT_DIR/start-release.mjs" --check "$RELEASE"
 
 # The symlink may already point to a release that PM2 never started.
 # Keep the actual running release as the rollback target.
@@ -63,6 +64,6 @@ mv -Tf "$APP_ROOT/current.new" "$APP_ROOT/current"
 if [ -n "$RUNNING_RELEASE" ]; then
   pm2 delete kedapp
 fi
-pm2 start "$RELEASE/ecosystem.config.cjs" --only kedapp
+node "$SCRIPT_DIR/start-release.mjs" "$RELEASE"
 pm2 jlist | node "$SCRIPT_DIR/verify-pm2-release.mjs" "$RELEASE" "$SHA"
 pm2 save
