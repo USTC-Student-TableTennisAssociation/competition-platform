@@ -26,3 +26,29 @@ test('fingerprints use a read-only snapshot and stable textual representations',
   assert.match(AUDIT_SQL,/REPEATABLE READ READ ONLY/);assert.match(AUDIT_SQL,/timezone='UTC'/);
   assert.match(AUDIT_SQL,/ORDER BY row_hash COLLATE "C"/);assert.match(AUDIT_SQL,/last_value::text/);
 });
+
+const integrationUrl=process.env.V2_CORE_INTEGRATION_DATABASE_URL;
+test('catalog fingerprint SQL executes with PostgreSQL internal character columns', {skip:!integrationUrl}, async()=>{
+  const url=new URL(integrationUrl);
+  assert.ok(['localhost','127.0.0.1','[::1]'].includes(url.hostname),'audit regression requires loopback');
+  assert.ok(['/ustctta_ci','/ustctta_v2_test'].includes(url.pathname),'audit regression requires the isolated test database');
+  const {PrismaClient}=await import('@prisma/client');
+  const db=new PrismaClient({datasourceUrl:integrationUrl});
+  try {
+    // Execute the actual catalog statement: pg_attribute.attidentity and
+    // attgenerated are PostgreSQL internal "char", not SQL character/text.
+    const query=AUDIT_SQL.slice(
+      AUDIT_SQL.indexOf("SELECT jsonb_build_object('kind','catalog'"),
+      AUDIT_SQL.indexOf('SELECT format($query$'),
+    );
+    const rows=await db.$transaction(async tx=>{
+      await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');
+      return tx.$queryRawUnsafe(query);
+    });
+    assert.equal(rows.length,1);
+    const result=rows[0].jsonb_build_object;
+    assert.equal(result.kind,'catalog');
+    assert.ok(result.tables>0);
+    assert.match(result.definitionHash,/^[a-f0-9]{64}$/);
+  } finally {await db.$disconnect();}
+});
