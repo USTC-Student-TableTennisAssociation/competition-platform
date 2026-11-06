@@ -1,7 +1,10 @@
 import type { PrismaClient, UserRole } from "@prisma/client";
+import { readRegistrationIdentity } from "./registration-identity-form";
 
 import {
   createV2Entry,
+  registerWithPersonalIdentity,
+  withdrawPendingDoublesIdentity,
   transitionV2EntryStatus,
   V2CompetitionApplicationError,
   type V2Actor,
@@ -96,18 +99,19 @@ export type V2DoubleActionHandlers = Readonly<{
   correctForfeit(matchId: unknown, formData: FormData): Promise<V2DoubleActionState>;
 }>;
 
-const ALLOWED_FORM_FIELDS = new Set(["csrfToken"]);
+const REGISTER_FIELDS = new Set(["csrfToken", "realName", "idNumber", "identityConsent"]);
+const CANCEL_FIELDS = new Set(["csrfToken", "pendingIdentityOnly"]);
 const RETRYABLE_CODES = new Set([
   "CONCURRENT_WRITE_CONFLICT",
   "PERSISTENCE_CONFLICT",
   "ENTRY_VERSION_CONFLICT",
 ]);
 
-function assertOnlyRegistrationFields(formData: FormData) {
+function assertOnlyRegistrationFields(formData: FormData, allowed: ReadonlySet<string>) {
   for (const field of formData.keys()) {
     // React server-action routing metadata is not a competition field.
     if (field.startsWith("$ACTION_")) continue;
-    if (!ALLOWED_FORM_FIELDS.has(field)) {
+    if (!allowed.has(field)) {
       throw new V2ActionBoundaryError(
         "INVALID_FORM_FIELD",
         `${field} is not accepted by V2 doubles registration.`,
@@ -209,6 +213,7 @@ export function createV2DoubleActionHandlers(
         type: true,
         format: true,
         engineVersion: true,
+        collectIdentityInfo: true,
         isQuickMatch: true,
       },
     });
@@ -239,6 +244,7 @@ export function createV2DoubleActionHandlers(
         "This adapter accepts supported formal V2 competition formats only.",
       );
     }
+    return match.collectIdentityInfo;
   };
 
   const findActorSource = async (matchId: string, actorId: string) => {
@@ -307,7 +313,7 @@ export function createV2DoubleActionHandlers(
   const resultActions = createV2GroupOnlyResultActions(
     {
       db: dependencies.db,
-      assertMatch: assertDoubleMatch,
+      assertMatch: async id => { await assertDoubleMatch(id); },
       revalidatePaths,
       ...(dependencies.resultService === undefined
         ? {}
@@ -323,8 +329,15 @@ export function createV2DoubleActionHandlers(
     register: (rawMatchId, formData) =>
       execute(formData, async (actor) => {
         const matchId = parseStableIdentifier(rawMatchId, "matchId");
-        await assertDoubleMatch(matchId);
+        const collectIdentityInfo = await assertDoubleMatch(matchId);
         const sourceId = await findActorSource(matchId, actor.id);
+        if (collectIdentityInfo) {
+          const result = await registerWithPersonalIdentity(dependencies.db, {
+            actor, matchId, sourceId, kind: "DOUBLES", identity: readRegistrationIdentity(formData),
+          });
+          await revalidate(matchId);
+          return { success: result === "waiting" ? "本人的报名资料已提交，等待搭档提交后完成小队报名。" : "双打小队报名成功。" };
+        }
         try {
           await ensureActive(matchId, sourceId, actor);
         } catch (error) {
@@ -336,13 +349,18 @@ export function createV2DoubleActionHandlers(
         }
         await revalidate(matchId);
         return { success: "双打小队报名成功。" };
-      }, assertOnlyRegistrationFields),
+      }, form => assertOnlyRegistrationFields(form, REGISTER_FIELDS)),
 
     cancelRegistration: (rawMatchId, formData) =>
       execute(formData, async (actor) => {
         const matchId = parseStableIdentifier(rawMatchId, "matchId");
         await assertDoubleMatch(matchId);
         const sourceId = await findActorSource(matchId, actor.id);
+        if (formData.get("pendingIdentityOnly") === "1") {
+          await withdrawPendingDoublesIdentity(dependencies.db, matchId, actor, sourceId);
+          await revalidate(matchId);
+          return { success: "已撤回本人的报名资料。" };
+        }
         const entry = await findSourceEntry(matchId, sourceId);
         if (!entry || entry.kind !== "DOUBLES") {
           throw new V2ActionBoundaryError(
@@ -377,7 +395,7 @@ export function createV2DoubleActionHandlers(
         }
         await revalidate(matchId);
         return { success: "双打小队已退出报名。" };
-      }, assertOnlyRegistrationFields),
+      }, form => assertOnlyRegistrationFields(form, CANCEL_FIELDS)),
 
     previewGrouping: (rawMatchId, formData) =>
       execute(formData, async (actor) => {

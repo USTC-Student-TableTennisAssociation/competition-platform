@@ -1,6 +1,7 @@
 import type { PrismaClient, UserRole } from "@prisma/client";
 
 import { normalizeMatchLocation } from "../../../lib/locations";
+import { RegistrationIdentityError } from "../../../lib/server/registration-identity";
 import { V2_COMPETITION_TIMEZONE_OFFSET_MINUTES } from "../competition-time";
 import {
   V2_GROUP_ONLY_MATCH_TEXT_LIMITS,
@@ -23,6 +24,7 @@ import {
 const FORM_FIELDS = [
   "csrfToken",
   "creationRequestKey",
+  "collectIdentityInfo",
   "title",
   "description",
   "location",
@@ -381,6 +383,11 @@ function parseCreationCommand<
   }
   const groupBestOf = preset("groupBestOf");
   const knockoutBestOf = preset("knockoutBestOf");
+  const identityField = readOptionalSingleTextField(formData, "collectIdentityInfo");
+  if (identityField !== undefined && identityField !== "true" && identityField !== "false") {
+    fail("INVALID_FORM_FIELD", "请选择有效的报名身份信息设置。", "collectIdentityInfo");
+  }
+  const identitySetting = identityField === "true" ? { collectIdentityInfo: true } : {};
   if (config.type === "team") {
     const teamRegistrationStart = parseV2GroupOnlyLocalDateTime(
       readSingleTextField(formData, "teamRegistrationStart"),
@@ -414,6 +421,7 @@ function parseCreationCommand<
       );
     }
     return {
+      ...identitySetting,
       actor,
       requestKey,
       title,
@@ -433,6 +441,7 @@ function parseCreationCommand<
   }
 
   return {
+    ...identitySetting,
     actor,
     requestKey,
     title,
@@ -495,6 +504,7 @@ export function createV2MatchCreationBoundary<
       if (!created) return { error: config.closedMessage };
       return { success: "比赛创建成功。", createdMatchId: created.id };
     } catch (error) {
+      if (error instanceof RegistrationIdentityError) return { error: error.message };
       const safe =
         error instanceof V2ActionBoundaryError &&
         error.code === "FEATURE_NOT_AVAILABLE"

@@ -1,5 +1,7 @@
 "use client";
 
+import RegistrationIdentityFields from "@/components/match/RegistrationIdentityFields";
+
 import { useActionState, useEffect, useRef, useState } from "react";
 import { formatV2CompetitionDateTime } from "@/modules/competitions-v2/competition-time";
 import {
@@ -54,6 +56,7 @@ export type TeamRegistrationItem = {
 
 type Props = {
   matchId: string;
+  collectIdentityInfo: boolean;
   currentUserId?: string | null;
   isAdmin: boolean;
   registrationOpen: boolean;
@@ -141,9 +144,11 @@ function ActionMessage({ state }: { state: MatchFormState }) {
 function CreateTeamForm({
   matchId,
   disabled,
+  collectIdentityInfo,
 }: {
   matchId: string;
   disabled: boolean;
+  collectIdentityInfo: boolean;
 }) {
   const action = createMatchTeamAction.bind(null, matchId);
   const [state, formAction, pending] = useActionState(action, initialState);
@@ -186,6 +191,7 @@ function CreateTeamForm({
           className="input-dark w-full rounded-2xl px-3 py-2 text-slate-100 placeholder:text-slate-600"
         />
       </label>
+      {!disabled && collectIdentityInfo ? <RegistrationIdentityFields /> : null}
       <button
         type="submit"
         disabled={disabled || pending}
@@ -202,9 +208,11 @@ function CreateTeamForm({
 function JoinTeamForm({
   matchId,
   disabled,
+  collectIdentityInfo,
 }: {
   matchId: string;
   disabled: boolean;
+  collectIdentityInfo: boolean;
 }) {
   const action = joinMatchTeamByInviteAction.bind(null, matchId);
   const [state, formAction, pending] = useActionState(action, initialState);
@@ -222,6 +230,7 @@ function JoinTeamForm({
           className="input-dark min-h-12 w-full rounded-xl px-3 py-2 uppercase text-slate-100 placeholder:text-slate-600"
         />
       </label>
+      {!disabled && collectIdentityInfo ? <RegistrationIdentityFields /> : null}
       <button
         type="submit"
         disabled={disabled || pending}
@@ -431,18 +440,21 @@ function JoinByInviteButton({
   matchId,
   inviteCode,
   disabled,
+  collectIdentityInfo,
 }: {
   matchId: string;
   inviteCode: string;
   disabled: boolean;
+  collectIdentityInfo: boolean;
 }) {
   const action = joinMatchTeamByInviteAction.bind(null, matchId);
   const [state, formAction, pending] = useActionState(action, initialState);
 
-  return (
+  const form = (
     <form action={formAction} className="space-y-2">
       <input type="hidden" name="csrfToken" defaultValue="" />
       <input type="hidden" name="inviteCode" defaultValue={inviteCode} />
+      {!disabled && collectIdentityInfo ? <RegistrationIdentityFields /> : null}
       <button
         type="submit"
         disabled={disabled || pending}
@@ -453,6 +465,13 @@ function JoinByInviteButton({
       </button>
       <ActionMessage state={state} />
     </form>
+  );
+  if (!collectIdentityInfo || disabled) return form;
+  return (
+    <details>
+      <summary className="w-fit cursor-pointer py-2 text-sm text-cyan-200">填写资料并加入队伍</summary>
+      <div className="mt-2">{form}</div>
+    </details>
   );
 }
 
@@ -515,6 +534,7 @@ function PaginationControls({
 function PublicTeamCard({
   team,
   matchId,
+  collectIdentityInfo,
   minMembers,
   maxMembers,
   canJoin,
@@ -524,6 +544,7 @@ function PublicTeamCard({
 }: {
   team: TeamRegistrationItem;
   matchId: string;
+  collectIdentityInfo: boolean;
   minMembers: number;
   maxMembers: number;
   canJoin: boolean;
@@ -554,6 +575,7 @@ function PublicTeamCard({
         {canJoin && !isFull ? (
           <div className="mt-3">
             <JoinByInviteButton
+              collectIdentityInfo={collectIdentityInfo}
               matchId={matchId}
               inviteCode={team.inviteCode}
               disabled={!registrationOpen}
@@ -631,6 +653,7 @@ function PublicTeamCard({
       {canJoin && !isFull ? (
         <div className="mt-4">
           <JoinByInviteButton
+            collectIdentityInfo={collectIdentityInfo}
             matchId={matchId}
             inviteCode={team.inviteCode}
             disabled={!registrationOpen}
@@ -643,6 +666,7 @@ function PublicTeamCard({
 
 export default function TeamRegistrationPanel({
   matchId,
+  collectIdentityInfo,
   currentUserId,
   isAdmin,
   registrationOpen,
@@ -871,6 +895,7 @@ export default function TeamRegistrationPanel({
               ) : (
                 <div className="mt-4 space-y-3">
                   <JoinTeamForm
+                    collectIdentityInfo={collectIdentityInfo}
                     matchId={matchId}
                     disabled={!registrationOpen}
                   />
@@ -879,6 +904,7 @@ export default function TeamRegistrationPanel({
                       创建一支新队伍
                     </summary>
                     <CreateTeamForm
+                      collectIdentityInfo={collectIdentityInfo}
                       matchId={matchId}
                       disabled={!registrationOpen}
                     />
@@ -908,6 +934,7 @@ export default function TeamRegistrationPanel({
               ) : (
                 buildingPagination.pagedTeams.map((team) => (
                   <PublicTeamCard
+                    collectIdentityInfo={collectIdentityInfo}
                     key={team.id}
                     team={team}
                     matchId={matchId}
@@ -944,6 +971,7 @@ export default function TeamRegistrationPanel({
               ) : (
                 formedPagination.pagedTeams.map((team) => (
                   <PublicTeamCard
+                    collectIdentityInfo={collectIdentityInfo}
                     key={team.id}
                     team={team}
                     matchId={matchId}

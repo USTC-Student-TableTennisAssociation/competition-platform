@@ -11,6 +11,7 @@ import { assertEngineCanWrite, assertEntryCanActivate } from "../domain";
 import {
   V2CompetitionApplicationError,
   createV2EntryKernel,
+  requireRosterIdentities,
   replaceV2EntryRosterKernel,
   runV2Transaction,
   synchronizeV2EntryDisplayNameKernel,
@@ -750,6 +751,9 @@ export async function reconcileV2TeamEntryRegistrationInTransaction(
   assertCompleteSource(context, team);
   const members = sourceRoster(team);
   const memberIds = members.map((member) => member.userId);
+  if (context.match.collectIdentityInfo) {
+    await requireRosterIdentities(tx, context.match.id, memberIds);
+  }
   if (members.length > limits.maximum) {
     throw new V2CompetitionApplicationError(
       "ENTRY_SOURCE_NOT_ACTIVE",

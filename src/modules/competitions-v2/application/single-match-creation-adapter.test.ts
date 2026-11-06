@@ -169,6 +169,17 @@ test("multiple venues are canonicalized before creation and durable-request look
   assert.deepEqual(commands[0], commands[1]);
 });
 
+test("identity collection requires an explicit valid opt-in when publishing", async () => {
+  const commands: CreateV2SingleMatchCommand[] = [];
+  const handlers = handlerWith({ commands });
+  assert.ok((await handlers.create(creationForm({ collectIdentityInfo: "invalid" }))).error);
+  assert.equal(commands.length, 0);
+  assert.ok((await handlers.create(creationForm({ collectIdentityInfo: "false" }))).success);
+  assert.equal(commands[0].collectIdentityInfo ?? false, false);
+  assert.ok((await handlers.create(creationForm({ collectIdentityInfo: "true" }))).success);
+  assert.equal(commands[1].collectIdentityInfo, true);
+});
+
 test("the disabled-flag boundary resolves only an existing durable request", async () => {
   const commands: CreateV2SingleMatchCommand[] = [];
   const calls: string[] = [];

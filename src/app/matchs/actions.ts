@@ -4,6 +4,8 @@ import { getAuditContext } from '@/lib/audit-log'
 import { getCurrentUser } from '@/lib/auth'
 import { validateCsrfToken } from '@/lib/csrf'
 import { prisma } from '@/lib/prisma'
+import { RegistrationIdentityError, saveRegistrationIdentity } from '@/lib/server/registration-identity'
+import { readRegistrationIdentity } from '@/modules/competitions-v2/adapters/registration-identity-form'
 import {
 isRetryableTeamSourceConflict,
 lockTeamSourceMatch,
@@ -323,6 +325,9 @@ export async function createMatchTeamAction(matchId: string, _: MatchFormState, 
         }
 
         const minMembers = lockedMatch.match.teamMinMembers ?? DEFAULT_TEAM_MIN_MEMBERS
+        if (lockedMatch.match.collectIdentityInfo) {
+          await saveRegistrationIdentity(tx, { matchId, userId: currentUser.id, identity: readRegistrationIdentity(formData) })
+        }
         const created = await tx.matchTeam.create({
           data: {
             ...(v2Context ? { id: teamId } : {}),
@@ -402,6 +407,7 @@ export async function createMatchTeamAction(matchId: string, _: MatchFormState, 
         return { error: TEAM_SOURCE_CHANGED_MESSAGE }
       }
 
+      if (error instanceof RegistrationIdentityError) return { error: error.message }
       console.error('createMatchTeamAction failed', error)
       return { error: '创建队伍失败，请稍后重试。' }
     }
@@ -690,6 +696,9 @@ export async function joinMatchTeamByInviteAction(matchId: string, _: MatchFormS
         return { ok: false, error: '该队伍已满员。' }
       }
 
+      if (lockedMatch.match.collectIdentityInfo) {
+        await saveRegistrationIdentity(tx, { matchId, userId: currentUser.id, identity: readRegistrationIdentity(formData) })
+      }
       await tx.matchTeamMember.create({
         data: {
           teamId: targetBinding.id,
@@ -728,6 +737,7 @@ export async function joinMatchTeamByInviteAction(matchId: string, _: MatchFormS
     if (isRetryableTeamSourceConflict(error)) {
       return { error: TEAM_SOURCE_CHANGED_MESSAGE }
     }
+    if (error instanceof RegistrationIdentityError) return { error: error.message }
     console.error('joinMatchTeamByInviteAction failed', error)
     return { error: '加入队伍失败，请稍后重试。' }
   }
@@ -831,6 +841,9 @@ export async function leaveMatchTeamAction(teamId: string, _: MatchFormState, fo
         return { ok: false as const, error: '队长请使用解散队伍。' }
       }
 
+      if (lockedMatch.match.collectIdentityInfo) {
+        await tx.matchRegistrationIdentity.deleteMany({ where: { matchId: binding.matchId, userId: currentUser.id } })
+      }
       await tx.matchTeamMember.delete({
         where: {
           matchId_userId: {
@@ -969,6 +982,9 @@ export async function removeMatchTeamMemberAction(teamId: string, userId: string
         return { ok: false as const, error: '该成员不在队伍中。' }
       }
 
+      if (lockedMatch.match.collectIdentityInfo) {
+        await tx.matchRegistrationIdentity.deleteMany({ where: { matchId: binding.matchId, userId } })
+      }
       await tx.matchTeamMember.delete({
         where: {
           matchId_userId: {
@@ -1297,6 +1313,10 @@ export async function cancelMatchTeamAction(teamId: string, _: MatchFormState, f
           })
           if (cancelled.count !== 1) {
             return { ok: false, error: '队伍状态已发生变化，请重试。' }
+          }
+          if (context.match.collectIdentityInfo) {
+            const memberIds = context.lockedSourceMembers.filter(member => member.teamId === team.id).map(member => member.userId)
+            await tx.matchRegistrationIdentity.deleteMany({ where: { matchId: match.id, userId: { in: memberIds } } })
           }
           await tx.auditLog.create({
             data: {

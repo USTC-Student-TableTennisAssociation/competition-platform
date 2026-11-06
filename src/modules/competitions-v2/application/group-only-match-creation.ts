@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
+import { assertRegistrationIdentityConfigured } from "../../../lib/server/registration-identity";
 
 import {
   V2CompetitionApplicationError,
@@ -38,6 +39,7 @@ type V2MatchCreationBaseCommand<
 > = Readonly<{
   actor: V2Actor;
   requestKey: string;
+  collectIdentityInfo?: boolean;
   title: string;
   description: string | null;
   location: string;
@@ -271,6 +273,7 @@ function normalizeCommand<
     [
       "actor",
       "requestKey",
+      "collectIdentityInfo",
       "title",
       "description",
       "location",
@@ -333,7 +336,11 @@ function normalizeCommand<
       fail("INVALID_INPUT", "局制必须是三局两胜、五局三胜或七局四胜。");
     }
   }
+  if (rawCommand.collectIdentityInfo !== undefined && typeof rawCommand.collectIdentityInfo !== "boolean") {
+    fail("INVALID_INPUT", "collectIdentityInfo must be a boolean.");
+  }
   const normalizedBase = {
+    collectIdentityInfo: rawCommand.collectIdentityInfo ?? false,
     actor: { id: rawCommand.actor.id, role: rawCommand.actor.role },
     requestKey: rawCommand.requestKey,
     title: rawCommand.title,
@@ -428,6 +435,8 @@ export function fingerprintV2MatchCreation<
           teamFields.teamMaxMembers,
         ]
       : []),
+    // Preserve pre-feature fingerprints for requests that do not collect identity.
+    ...(command.collectIdentityInfo ? ["collectIdentityInfo"] : []),
   ]);
   return createHash("sha256").update(canonicalPayload, "utf8").digest("hex");
 }
@@ -563,8 +572,10 @@ async function createInTransaction<
   );
   if (existing) return existing;
 
+  if (command.collectIdentityInfo) assertRegistrationIdentityConfigured();
   const created = await tx.match.create({
     data: {
+      ...(command.collectIdentityInfo ? { collectIdentityInfo: true } : {}),
       title: command.title,
       description: command.description,
       location: command.location,
@@ -611,6 +622,7 @@ async function createInTransaction<
       entityType: "Match",
       entityId: created.id,
       details: {
+        ...(command.collectIdentityInfo ? { collectIdentityInfo: true } : {}),
         targetLabel: created.title,
         title: created.title,
         type: created.type,

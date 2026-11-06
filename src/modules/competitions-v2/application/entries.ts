@@ -1,4 +1,7 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
+import {
+  RegistrationIdentityError, saveRegistrationIdentity, type RegistrationIdentityInput,
+} from "../../../lib/server/registration-identity";
 
 import {
   CompetitionDomainError,
@@ -112,6 +115,7 @@ export type V2WriteContext = Readonly<{
     createdBy: string;
     createdAt: Date;
     registrationDeadline: Date;
+    collectIdentityInfo: boolean;
     teamRegistrationStart: Date | null;
     teamRegistrationDeadline: Date | null;
     teamMinMembers: number | null;
@@ -244,6 +248,7 @@ export async function loadV2WriteContext(
       createdBy: true,
       createdAt: true,
       registrationDeadline: true,
+      collectIdentityInfo: true,
       teamRegistrationStart: true,
       teamRegistrationDeadline: true,
       teamMinMembers: true,
@@ -412,6 +417,16 @@ function assertMemberAccountsActive(source: V2ResolvedEntrySource) {
     "ENTRY_SOURCE_NOT_ACTIVE",
     "The entry source has no eligible members.",
   );
+}
+
+/** Only test existence; roster commands must never load other members' personal details. */
+export async function requireRosterIdentities(
+  tx: V2CompetitionTransaction, matchId: string, userIds: readonly string[],
+) {
+  const ids = [...new Set(userIds)];
+  if (await tx.matchRegistrationIdentity.count({ where: { matchId, userId: { in: ids } } }) !== ids.length) {
+    throw new RegistrationIdentityError("本场比赛要求每位参赛者亲自提交姓名和身份证号，不能代为报名或加入名单。");
+  }
 }
 
 async function resolveEntrySource(
@@ -802,6 +817,10 @@ export async function createV2EntryInTransaction(
     input,
   );
 
+  if (context.match.collectIdentityInfo) {
+    await requireRosterIdentities(tx, input.matchId, source.members.map(member => member.userId));
+  }
+
   return createV2EntryKernel(
     tx,
     {
@@ -841,6 +860,76 @@ export async function createV2Entry(
   return runV2Transaction(db, (tx) =>
     createV2EntryInTransaction(tx, input, settlementPort),
   );
+}
+
+/** Identity-required singles/doubles registration. No points or active Entry are
+ * created for an incomplete pair; both people must submit independently. */
+export async function registerWithPersonalIdentity(
+  db: V2CompetitionDatabase,
+  input: { matchId: string; actor: V2Actor; kind: "INDIVIDUAL" | "DOUBLES"; sourceId: string; identity?: RegistrationIdentityInput },
+) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await runV2Transaction(db, async tx => {
+        const { matchId, actor, kind, sourceId } = input;
+        const context = await loadV2WriteContext(tx, matchId, actor);
+        if (!context.match.collectIdentityInfo) throw new RegistrationIdentityError("本场比赛的报名要求已变更，请刷新。");
+        assertKindMatchesMatch(context.match.type, kind);
+        await assertRegistrationMutationAllowed(tx, context, {}, "entry_create", matchId);
+        const source = await resolveEntrySource(tx, matchId, kind, sourceId);
+        assertMemberAccountsActive(source);
+        const origin = assertActorParticipates(context, kind, source, {});
+        const memberIds = source.members.map(member => member.userId);
+        assertEntryCanActivate({ kind, memberIds });
+        const existing = await tx.matchEntry.findUnique({
+          where: { matchId_sourceKey: { matchId, sourceKey: createEntrySourceKey(kind, sourceId) } },
+          select: { id: true, status: true, version: true },
+        });
+        if (existing && existing.status !== "DRAFT" && existing.status !== "ACTIVE") {
+          throw new RegistrationIdentityError("该参赛记录已结束，不能再次报名。");
+        }
+        const saved = await tx.matchRegistrationIdentity.findUnique({
+          where: { matchId_userId: { matchId, userId: actor.id } }, select: { userId: true },
+        });
+        if (!saved) await saveRegistrationIdentity(tx, { matchId, userId: actor.id, identity: input.identity });
+        if (kind === "DOUBLES" && await tx.matchRegistrationIdentity.count({
+          where: { matchId, userId: { in: memberIds } },
+        }) !== memberIds.length) return "waiting" as const;
+        if (!existing) {
+          await createV2EntryKernel(tx, { match: context.match, command: { kind, sourceId, status: "ACTIVE" }, source, settlementOrigin: origin });
+        } else if (existing.status === "DRAFT") {
+          await transitionV2EntryStatusInTransaction(tx, { actor, matchId, entryId: existing.id, expectedVersion: existing.version, to: "ACTIVE" });
+        }
+        return "active" as const;
+      });
+    } catch (error) {
+      // Concurrent partners can start with the same serializable snapshot.
+      // Retry with a new snapshot so the last confirmation activates both.
+      if (attempt >= 2 || !(error instanceof V2CompetitionApplicationError) ||
+        !["CONCURRENT_WRITE_CONFLICT", "PERSISTENCE_CONFLICT"].includes(error.code)) throw error;
+    }
+  }
+}
+
+export async function withdrawPendingDoublesIdentity(
+  db: V2CompetitionDatabase, matchId: string, actor: V2Actor, sourceId: string,
+) {
+  return runV2Transaction(db, async tx => {
+    const context = await loadV2WriteContext(tx, matchId, actor);
+    assertKindMatchesMatch(context.match.type, "DOUBLES");
+    if (!context.match.collectIdentityInfo) throw new RegistrationIdentityError("本场比赛未收集身份信息。");
+    // One person withdrawing their own uncommitted data does not require
+    // their partner to remain eligible, nor the registration window to be open.
+    const membership = await tx.matchDoublesTeamMember.findFirst({
+      where: { teamId: sourceId, matchId, userId: actor.id }, select: { id: true },
+    });
+    if (!membership) throw new RegistrationIdentityError("小队成员已发生变化，请刷新。");
+    const entry = await tx.matchEntry.findUnique({
+      where: { matchId_sourceDoublesTeamId: { matchId, sourceDoublesTeamId: sourceId } }, select: { status: true },
+    });
+    if (entry && entry.status !== "DRAFT") throw new RegistrationIdentityError("小队的报名状态已变化，请刷新后重试。");
+    await tx.matchRegistrationIdentity.deleteMany({ where: { matchId, userId: actor.id } });
+  });
 }
 
 export type TransitionV2EntryStatusInput = Readonly<{
@@ -1247,6 +1336,9 @@ export async function transitionV2EntryStatusInTransaction(
         activationSource,
         input,
       );
+      if (context.match.collectIdentityInfo) {
+        await requireRosterIdentities(tx, input.matchId, activationSource.members.map(member => member.userId));
+      }
       assertEntryCanActivate({
         kind: entry.kind,
         memberIds: activationSource.members.map((member) => member.userId),
@@ -1337,7 +1429,7 @@ export async function transitionV2EntryStatusInTransaction(
       );
     }
 
-    return transitionV2EntryStatusKernel(
+    const transitioned = await transitionV2EntryStatusKernel(
       tx,
       {
         matchId: input.matchId,
@@ -1349,6 +1441,12 @@ export async function transitionV2EntryStatusInTransaction(
       },
       settlementPort,
     );
+    if (context.match.collectIdentityInfo && entry.kind !== "TEAM" && (isRegistrationCancellation || input.to === "WITHDRAWN")) {
+      await tx.matchRegistrationIdentity.deleteMany({ where: {
+        matchId: input.matchId, userId: { in: activeMembers.map(member => member.userId) },
+      } });
+    }
+    return transitioned;
 }
 
 export async function transitionV2EntryStatus(
@@ -1810,6 +1908,9 @@ export async function replaceV2EntryRosterInTransaction(
       };
     });
 
+    if (context.match.collectIdentityInfo) {
+      await requireRosterIdentities(tx, input.matchId, input.memberIds);
+    }
     return replaceV2EntryRosterKernel(
       tx,
       {

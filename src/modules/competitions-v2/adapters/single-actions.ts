@@ -1,7 +1,9 @@
 import type { PrismaClient, UserRole } from "@prisma/client";
+import { readRegistrationIdentity } from "./registration-identity-form";
 
 import {
   createV2Entry,
+  registerWithPersonalIdentity,
   transitionV2EntryStatus,
   type V2Actor,
 } from "../application/entries";
@@ -221,6 +223,7 @@ export function createV2SingleActionHandlers(
         type: true,
         format: true,
         engineVersion: true,
+        collectIdentityInfo: true,
         isQuickMatch: true,
       },
     });
@@ -251,6 +254,7 @@ export function createV2SingleActionHandlers(
         "This adapter accepts supported formal V2 competition formats only.",
       );
     }
+    return match.collectIdentityInfo;
   };
 
   const createGroupingPreview = async (
@@ -273,7 +277,7 @@ export function createV2SingleActionHandlers(
   const resultActions = createV2GroupOnlyResultActions(
     {
       db: dependencies.db,
-      assertMatch: assertSingleMatch,
+      assertMatch: async id => { await assertSingleMatch(id); },
       revalidatePaths: revalidate,
       ...(dependencies.resultService === undefined
         ? {}
@@ -289,7 +293,14 @@ export function createV2SingleActionHandlers(
     register: (rawMatchId, formData) =>
       execute(formData, async (actor) => {
         const matchId = parseMatchId(rawMatchId);
-        await assertSingleMatch(matchId);
+        const collectIdentityInfo = await assertSingleMatch(matchId);
+        if (collectIdentityInfo) {
+          await registerWithPersonalIdentity(dependencies.db, {
+            actor, matchId, sourceId: actor.id, kind: "INDIVIDUAL", identity: readRegistrationIdentity(formData),
+          });
+          await revalidate(["/", "/matchs", `/matchs/${matchId}`]);
+          return { success: "报名成功。" };
+        }
         const entry = await createV2Entry(dependencies.db, {
           actor,
           matchId,

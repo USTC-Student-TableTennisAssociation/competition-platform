@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import test from "node:test";
 import { PrismaClient } from "@prisma/client";
 
@@ -14,7 +14,13 @@ const integrationDatabaseUrl = process.env.V2_CORE_INTEGRATION_DATABASE_URL;
 test(
   "a real PostgreSQL transaction creates an audited V2 match without implicit registration",
   { skip: integrationDatabaseUrl === undefined },
-  async () => {
+  async (t) => {
+    const oldKey = process.env.REGISTRATION_IDENTITY_KEY;
+    t.after(() => {
+      if (oldKey === undefined) delete process.env.REGISTRATION_IDENTITY_KEY;
+      else process.env.REGISTRATION_IDENTITY_KEY = oldKey;
+    });
+    process.env.REGISTRATION_IDENTITY_KEY = randomBytes(32).toString("base64");
     process.env.DATABASE_URL = integrationDatabaseUrl;
     process.env.DATABASE_URL_UNPOOLED = integrationDatabaseUrl;
     const db = new PrismaClient();
@@ -94,6 +100,7 @@ test(
       assert.equal(created.maxParticipants, V2_SINGLE_MATCH_UNLIMITED_PARTICIPANTS);
       assert.equal(created.createdBy, actorId);
       assert.equal(created.created, true);
+      assert.equal(await db.match.count({ where: { id: created.id, collectIdentityInfo: false } }), 1);
 
       const retried = await service.create({
         actor: { id: actorId, role: "user" },
@@ -163,6 +170,7 @@ test(
       const concurrentCommand = {
         actor: { id: actorId, role: "user" as const },
         requestKey: concurrentRequestKey,
+        collectIdentityInfo: true,
         title: "V2 concurrent retry integration",
         description: "Both requests describe one command",
         location: "West Campus Gym",
@@ -182,7 +190,7 @@ test(
       );
       assert.equal(
         await db.match.count({
-          where: { createdBy: actorId, creationRequestKey: concurrentRequestKey },
+          where: { createdBy: actorId, creationRequestKey: concurrentRequestKey, collectIdentityInfo: true },
         }),
         1,
       );

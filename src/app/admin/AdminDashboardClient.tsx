@@ -52,6 +52,8 @@ function resolveAuditActionLabel(
       return "批量加入比赛";
     case "match.create":
       return "创建比赛";
+    case "match.registration-identity.read":
+      return "查看参赛者报名身份资料";
     case "match.update":
       return "更新比赛";
     case "match.format.update":
@@ -303,6 +305,9 @@ export default function AdminDashboardClient() {
           className="btn-secondary mt-4 inline-flex rounded-xl px-4 py-2 text-sm font-semibold"
         >
           积分超市管理
+        </Link>
+        <Link href="/admin/registration-identities" className="btn-secondary ml-2 mt-4 inline-flex rounded-xl px-4 py-2 text-sm font-semibold">
+          报名身份资料
         </Link>
         {state.success ? (
           <p className="mt-3 text-sm text-emerald-300">{state.success}</p>
