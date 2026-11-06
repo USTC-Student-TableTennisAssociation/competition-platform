@@ -17,6 +17,7 @@ export type LockedTeamSourceMatch = {
   isQuickMatch: boolean
   createdAt: Date
   registrationDeadline: Date
+  collectIdentityInfo: boolean
   teamRegistrationStart: Date | null
   teamRegistrationDeadline: Date | null
   teamMinMembers: number | null
@@ -73,6 +74,7 @@ export async function lockTeamSourceMatch(
       "isQuickMatch",
       "createdAt",
       "registrationDeadline",
+      collect_identity_info AS "collectIdentityInfo",
       "teamRegistrationStart",
       "teamRegistrationDeadline",
       "teamMinMembers",

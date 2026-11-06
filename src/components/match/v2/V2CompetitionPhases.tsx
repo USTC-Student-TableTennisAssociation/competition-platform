@@ -32,6 +32,7 @@ export default function V2CompetitionPhases({
   currentUserId,
   isManager,
   canReplaceRoster = false,
+  rosterRequiresIdentity = false,
   canFinishMatch = false,
   registrationContent,
   rosterContent,
@@ -43,6 +44,7 @@ export default function V2CompetitionPhases({
   currentUserId: string | null;
   isManager: boolean;
   canReplaceRoster?: boolean;
+  rosterRequiresIdentity?: boolean;
   canFinishMatch?: boolean;
   registrationContent?: ReactNode;
   rosterContent?: ReactNode;
@@ -257,6 +259,11 @@ export default function V2CompetitionPhases({
               <summary className="cursor-pointer text-sm font-semibold text-teal-200">
                 更换双打搭档或团体成员
               </summary>
+              {rosterRequiresIdentity ? (
+                <p className="mt-3 text-xs leading-5 text-slate-400">
+                  本场比赛需要身份信息，只能加入已亲自提交过本场报名资料的选手。
+                </p>
+              ) : null}
               {grouping.activeEntries.map((entry) => {
                 const fixtures = [
                   ...grouping.groups.flatMap((group) =>

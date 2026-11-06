@@ -1,3 +1,4 @@
+import type { RegistrationIdentityRequirement } from "@/modules/competitions-v2/read-model/competition-detail";
 import Link from "next/link";
 import BackLinkButton from "@/components/navigation/BackLinkButton";
 import MatchDetailHeader from "@/components/match/detail/MatchDetailHeader";
@@ -17,7 +18,7 @@ export default function V2SingleMatchDetail({
   certificate,
   now = new Date(),
 }: {
-  model: V2SingleMatchModel;
+  model: V2SingleMatchModel & RegistrationIdentityRequirement;
   currentUser: V2SingleViewer;
   certificate: Readonly<{
     currentUserEmail: string;
@@ -63,7 +64,7 @@ export default function V2SingleMatchDetail({
             ) : null}
           </div>
         ) : view.registration.action === "REGISTER" ? (
-          <V2SingleRegistrationForm matchId={match.id} mode="register" />
+          <V2SingleRegistrationForm matchId={match.id} mode="register" collectIdentityInfo={model.collectIdentityInfo} />
         ) : view.registration.action === "CANCEL" ? (
           <V2SingleRegistrationForm matchId={match.id} mode="cancel" />
         ) : (

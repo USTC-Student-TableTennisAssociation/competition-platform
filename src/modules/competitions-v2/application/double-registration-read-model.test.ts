@@ -7,6 +7,8 @@ import {
   getV2DoubleRegistrationReadState,
 } from "../read-model/double-registration";
 
+import { getV2CompetitionDetailReadModel } from "../read-model/competition-detail";
+
 function profile(id: string, nickname: string) {
   return {
     id,
@@ -99,12 +101,17 @@ function source(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function database(value: unknown, selection?: unknown[]) {
+function database(
+  value: unknown,
+  selection?: unknown[],
+  readIdentityStatus?: (args: unknown) => Promise<readonly { userId: string }[]>,
+) {
   return {
     $transaction: async <T>(
       operation: (tx: {
         match: { findUnique(args: unknown): Promise<unknown> };
         matchFixtureDependency: { findMany(args: unknown): Promise<unknown[]> };
+        matchRegistrationIdentity: { findMany(args: unknown): Promise<readonly { userId: string }[]> };
       }) => Promise<T>,
       options: unknown,
     ) => {
@@ -115,6 +122,9 @@ function database(value: unknown, selection?: unknown[]) {
             selection?.push(args);
             return value;
           },
+        },
+        matchRegistrationIdentity: {
+          findMany: readIdentityStatus ?? (async () => { throw new Error("Unexpected private identity query"); }),
         },
         matchFixtureDependency: {
           findMany: async (args) => {
@@ -306,4 +316,37 @@ test("missing and unsupported matches remain explicit fail-closed states", async
     ),
     { kind: "UNSUPPORTED_V2_MATCH" },
   );
+});
+
+
+test("doubles identity progress is private to a waiting pair and never selects the identity payload", async () => {
+  const now = new Date("2026-09-01T00:00:00Z");
+  const waiting = source({ entries: [], collectIdentityInfo: true });
+  for (const [viewer, flag] of [["outsider", true], [null, true], ["user-a", false]] as const) {
+    const result = await getV2CompetitionDetailReadModel(
+      database({ ...waiting, collectIdentityInfo: flag }), "match-1", viewer, now,
+    );
+    assert.equal(result.kind, "DOUBLE_V2_DETAIL");
+    if (result.kind !== "DOUBLE_V2_DETAIL") throw new Error("Missing detail");
+    assert.equal(result.model.collectIdentityInfo, flag);
+    assert.equal(result.model.identityStatus, null);
+  }
+  const db = database(waiting, [], async (args) => {
+    assert.deepEqual(args, {
+      where: { matchId: "match-1", userId: { in: ["user-a", "user-b"] } },
+      select: { userId: true },
+    });
+    return [{ userId: "user-a" }];
+  });
+  for (const [viewer, selfSubmitted] of [["user-a", true], ["user-b", false]] as const) {
+    const result = await getV2CompetitionDetailReadModel(db, "match-1", viewer, now);
+    if (result.kind !== "DOUBLE_V2_DETAIL") throw new Error("Missing detail");
+    assert.deepEqual(result.model.identityStatus, { selfSubmitted, partnerSubmitted: !selfSubmitted });
+  }
+  const closed = await getV2CompetitionDetailReadModel(
+    db, "match-1", "user-a", new Date("2026-10-01T00:00:00Z"),
+  );
+  if (closed.kind !== "DOUBLE_V2_DETAIL") throw new Error("Missing detail");
+  assert.equal(closed.model.viewer.action, "NONE");
+  assert.equal(closed.model.identityStatus?.selfSubmitted, true);
 });

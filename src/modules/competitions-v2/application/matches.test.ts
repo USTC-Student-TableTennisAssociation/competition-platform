@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import test from "node:test";
 import type { PrismaClient } from "@prisma/client";
+import { RegistrationIdentityError } from "../../../lib/server/registration-identity";
 
 import {
   V2CompetitionApplicationError,
@@ -262,6 +264,30 @@ test("a durable request key returns the original match without another audit", a
   );
   assert.equal(state.calls.filter((call) => call === "create-match").length, 0);
   assert.equal(state.calls.filter((call) => call === "create-audit").length, 0);
+});
+
+test("identity opt-in requires configuration, is persisted and participates in idempotency", async (t) => {
+  const oldKey = process.env.REGISTRATION_IDENTITY_KEY;
+  t.after(() => {
+    if (oldKey === undefined) delete process.env.REGISTRATION_IDENTITY_KEY;
+    else process.env.REGISTRATION_IDENTITY_KEY = oldKey;
+  });
+  delete process.env.REGISTRATION_IDENTITY_KEY;
+  const state = initialState();
+  const service = createV2SingleMatchApplicationService({ db: fakeDatabase(state) });
+  const optedIn = command({ collectIdentityInfo: true });
+  assert.equal(fingerprintV2SingleMatchCreation(command()), fingerprintV2SingleMatchCreation(command({ collectIdentityInfo: false })));
+  await assert.rejects(service.create(optedIn), RegistrationIdentityError);
+  assert.ok(!state.calls.includes("create-match"));
+  process.env.REGISTRATION_IDENTITY_KEY = randomBytes(32).toString("base64");
+  await service.create(optedIn);
+  assert.equal(state.matchData?.collectIdentityInfo, true);
+  assert.equal((await service.create(optedIn)).created, false);
+  await expectApplicationError(() => service.create(command()), "PERSISTENCE_CONFLICT");
+  await expectApplicationError(
+    () => service.create(unsafeCommand({ ...command(), collectIdentityInfo: "false" })),
+    "INVALID_INPUT",
+  );
 });
 
 test("resolveExisting never creates a missing request and validates an existing fingerprint", async () => {

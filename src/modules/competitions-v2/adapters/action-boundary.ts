@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { RegistrationIdentityError } from "../../../lib/server/registration-identity";
 
 import { CompetitionDomainError } from "../domain";
 import {
@@ -514,6 +515,9 @@ function mapKnownV2ErrorCode(code: string): SafeV2ActionError {
 
 /** Converts internal errors to stable messages without leaking details. */
 export function mapV2ActionError(error: unknown): SafeV2ActionError {
+  if (error instanceof RegistrationIdentityError) {
+    return { message: error.message, shouldLog: false };
+  }
   if (error instanceof V2ActionBoundaryError) {
     if (error.code === "INVALID_CSRF_FIELD") {
       return {

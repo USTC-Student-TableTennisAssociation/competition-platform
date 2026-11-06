@@ -1,3 +1,4 @@
+import type { RegistrationIdentityRequirement, DoublesIdentityStatus } from "@/modules/competitions-v2/read-model/competition-detail";
 import Link from "next/link";
 
 import {
@@ -28,7 +29,7 @@ export default function V2DoubleMatchDetail({
   isAdmin = false,
   certificate,
 }: Readonly<{
-  model: DoubleState;
+  model: DoubleState & RegistrationIdentityRequirement & Readonly<{ identityStatus: DoublesIdentityStatus | null }>;
   currentUserId: string | null;
   inviteQuery: string;
   inviteCandidates: readonly Readonly<{
@@ -62,8 +63,22 @@ export default function V2DoubleMatchDetail({
           </p>
         ) : null}
         <div className="mt-4">
-          {viewer.action === "REGISTER" ? (
-            <V2DoubleRegistrationForm matchId={match.id} mode="register" />
+          {model.identityStatus?.selfSubmitted ? (
+            <div className="space-y-3">
+              <p className="text-sm text-slate-300">
+                {viewer.action === "REGISTER"
+                  ? "你已提交本人的报名资料，正在等待搭档确认。双方确认后，小队才会报名成功。"
+                  : "小队未完成报名。你可以撤回已提交的本人资料。"}
+              </p>
+              <V2DoubleRegistrationForm matchId={match.id} mode="withdrawIdentity" />
+            </div>
+          ) : viewer.action === "REGISTER" ? (
+            <V2DoubleRegistrationForm
+              matchId={match.id}
+              mode="register"
+              collectIdentityInfo={model.collectIdentityInfo}
+              partnerSubmitted={model.identityStatus?.partnerSubmitted ?? false}
+            />
           ) : viewer.action === "CANCEL" ? (
             <V2DoubleRegistrationForm matchId={match.id} mode="cancel" />
           ) : (
@@ -88,7 +103,7 @@ export default function V2DoubleMatchDetail({
             <div>
               <h2 className="text-lg font-bold text-white">双打组队</h2>
               <p className="mt-1 text-xs text-slate-400">
-                队友接受邀请后，由任一伙伴点击“小队报名”完成报名。
+                {model.collectIdentityInfo ? "队友接受邀请后，双方各自填写本人的身份信息并确认，小队即完成报名。" : "队友接受邀请后，由任一伙伴点击“小队报名”完成报名。"}
               </p>
             </div>
             <Link
@@ -245,10 +260,11 @@ export default function V2DoubleMatchDetail({
         competitionType="double"
         currentUserId={currentUserId}
         isManager={canManageGrouping}
+        rosterRequiresIdentity={model.collectIdentityInfo}
         canReplaceRoster={isAdmin}
         canFinishMatch={isAdmin}
         registrationContent={
-          !model.grouping.published ? registration : undefined
+          !model.grouping.published || model.identityStatus?.selfSubmitted ? registration : undefined
         }
         rosterContent={roster}
         certificateContent={

@@ -1,5 +1,7 @@
 "use client";
 
+import RegistrationIdentityFields from "@/components/match/RegistrationIdentityFields";
+
 import { useActionState, type ComponentProps } from "react";
 
 import {
@@ -47,9 +49,11 @@ function ActionStateMessage({ state }: { state: V2SingleActionState }) {
 export function V2SingleRegistrationForm({
   matchId,
   mode,
+  collectIdentityInfo = false,
 }: {
   matchId: string;
   mode: "register" | "cancel";
+  collectIdentityInfo?: boolean;
 }) {
   const action =
     mode === "register"
@@ -60,6 +64,7 @@ export function V2SingleRegistrationForm({
   return (
     <form action={formAction} className="space-y-2">
       <input type="hidden" name="csrfToken" defaultValue="" />
+      {mode === "register" && collectIdentityInfo ? <RegistrationIdentityFields /> : null}
       <button
         type="submit"
         disabled={pending}

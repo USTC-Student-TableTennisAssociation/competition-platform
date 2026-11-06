@@ -7,6 +7,7 @@ import {
   V2CompetitionApplicationError,
   loadV2WriteContext,
   replaceV2EntryRosterKernel,
+  requireRosterIdentities,
   runV2Transaction,
   type V2Actor,
 } from "./entries";
@@ -78,6 +79,11 @@ export async function replaceCompetitionRoster(
     if (entry.kind === "TEAM" && !command.memberIds.includes(captainId)) fail("队长必须在新名单中。");
     const members = command.memberIds.map(userId => ({ userId, displayNameSnapshot: byId.get(userId)!.nickname, role: entry.kind === "TEAM" && userId === captainId ? "captain" as const : "player" as const }));
     if (entry.members.length === members.length && entry.members.every((member, index) => member.userId === members[index].userId && member.role === members[index].role)) fail("新名单与当前名单相同。");
+    if (context.match.collectIdentityInfo) {
+      await requireRosterIdentities(tx, command.matchId, command.memberIds);
+      const removed = entry.members.filter(member => !command.memberIds.includes(member.userId));
+      await tx.matchRegistrationIdentity.deleteMany({ where: { matchId: command.matchId, userId: { in: removed.map(member => member.userId) } } });
+    }
     const replacement = await replaceV2EntryRosterKernel(tx, {
       matchId: command.matchId, entry, expectedVersion: command.expectedEntryVersion, members,
       settlementOrigin: "ADMIN_BULK",

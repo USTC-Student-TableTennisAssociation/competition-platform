@@ -188,6 +188,21 @@ export default function CreateMatchForm({
             />
           </div>
           <MatchVenueSelect id="location" />
+          <div className="rounded-2xl border border-white/10 px-4 py-3">
+            <label className="flex cursor-pointer items-center gap-3 text-sm font-semibold text-slate-100">
+              <input
+                type="checkbox"
+                name="collectIdentityInfo"
+                value="true"
+                aria-describedby="collect-identity-hint"
+                className="h-4 w-4 accent-teal-500"
+              />
+              报名时收集身份信息
+            </label>
+            <p id="collect-identity-hint" className="mt-2 text-xs leading-5 text-slate-400">
+              开启后，每位参赛者报名时须填写本人姓名和中国大陆居民身份证号。仅后台管理员可查看。
+            </p>
+          </div>
         </div>
       </section>
 

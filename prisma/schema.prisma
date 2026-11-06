@@ -244,6 +244,7 @@ model User {
 
   adminTrustedDevices              AdminTrustedDevice[]
   identity                         UserIdentity?
+  registrationIdentities           MatchRegistrationIdentity[]
   certificates                     ParticipationCertificate[]
   doublesTeamsCreated              MatchDoublesTeam[]                     @relation("DoublesTeamCreator")
   doublesTeamMembers               MatchDoublesTeamMember[]
@@ -291,6 +292,7 @@ model Match {
   dateTime                   DateTime
   location                   String?
   isQuickMatch               Boolean            @default(false)
+  collectIdentityInfo        Boolean            @default(false) @map("collect_identity_info")
   type                       MatchType
   status                     MatchStatus        @default(registration)
   engineVersion              MatchEngineVersion @default(LEGACY) @map("engine_version")
@@ -323,6 +325,7 @@ model Match {
   doublesInvites                   MatchDoublesInvite[]
   teamRegistrations                MatchTeam[]
   teamMembers                      MatchTeamMember[]
+  registrationIdentities           MatchRegistrationIdentity[]
   entries                          MatchEntry[]
   fixtures                         MatchFixture[]
   matchEntryMembers                MatchEntryMember[]
@@ -337,6 +340,20 @@ model Match {
 
   @@unique([createdBy, creationRequestKey], map: "match_creator_creation_request_key_unique")
   @@index([isQuickMatch])
+}
+
+/// Sensitive details supplied by a member for one competition, never profile data.
+model MatchRegistrationIdentity {
+  matchId       String   @map("match_id")
+  userId        String   @map("user_id")
+  encryptedData String   @map("encrypted_data")
+  consentedAt   DateTime @map("consented_at")
+  match         Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([matchId, userId])
+  @@index([userId])
+  @@map("match_registration_identity")
 }
 
 /// A stable competitor identity within one match. `sourceKey` is an immutable

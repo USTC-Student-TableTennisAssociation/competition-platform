@@ -1,3 +1,4 @@
+import type { RegistrationIdentityRequirement } from "@/modules/competitions-v2/read-model/competition-detail";
 import TeamRegistrationPanel from "@/components/match/TeamRegistrationPanel";
 import V2CompetitionPhases from "@/components/match/v2/V2CompetitionPhases";
 import ExportCertificateSection from "@/components/match/detail/ExportCertificateSection";
@@ -19,7 +20,7 @@ export default function V2TeamMatchDetail({
   canManageGrouping,
   certificate,
 }: Readonly<{
-  model: TeamState;
+  model: TeamState & RegistrationIdentityRequirement;
   currentUserId: string | null;
   currentUserRole: "user" | "admin" | null;
   canManageGrouping: boolean;
@@ -53,6 +54,7 @@ export default function V2TeamMatchDetail({
 
   const registrationProps: ComponentProps<typeof TeamRegistrationPanel> = {
     matchId: match.id,
+    collectIdentityInfo: model.collectIdentityInfo,
     currentUserId,
     isAdmin: currentUserRole === "admin",
     registrationOpen: model.registration.open,
@@ -80,6 +82,7 @@ export default function V2TeamMatchDetail({
         competitionType="team"
         currentUserId={currentUserId}
         isManager={canManageGrouping}
+        rosterRequiresIdentity={model.collectIdentityInfo}
         canReplaceRoster={currentUserRole === "admin"}
         canFinishMatch={currentUserRole === "admin"}
         registrationContent={

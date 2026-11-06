@@ -18,6 +18,7 @@ function match(overrides: Partial<LockedTeamSourceMatch> = {}): LockedTeamSource
     status: MatchStatus.registration,
     engineVersion: MatchEngineVersion.V2,
     isQuickMatch: false,
+    collectIdentityInfo: false,
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     registrationDeadline: new Date('2026-02-01T00:00:00.000Z'),
     teamRegistrationStart: null,
